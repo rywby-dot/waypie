@@ -22,6 +22,16 @@ connector {
   width: 2px;
 }
 
+/* Fixed direction from a submenu towards its parent in the configurator. */
+parent-link {
+  /* Parent direction indicator color. */
+  color: #ff8c00;
+  /* Parent direction indicator transparency. */
+  opacity: 0.35;
+  /* Parent direction indicator thickness. */
+  width: 12px;
+}
+
 /* Base appearance and geometry shared by every menu circle. */
 circle {
   /* Fill color inside each circle. */
