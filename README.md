@@ -2,7 +2,8 @@
 Kando-like pie menu for wayland using shell's overlay layer
 
 
-https://github.com/user-attachments/assets/5a31691c-a953-49e6-b464-1d88c86aa38a
+https://github.com/user-attachments/assets/e75f9d29-e1e5-4616-b96a-955b666a2e6a
+
 
 > [!WARNING]
 > This is experimental software, primarily built with AI.
