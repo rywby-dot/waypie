@@ -951,7 +951,7 @@ class Waypie(Gtk.Application):
             self.display_centers = self.display_centers[: index + 1]
             self.hovered_hit = None
             self.reset_item_animations()
-            self.start_menu_animation(reveal_items=False)
+            self.start_menu_animation(reveal_items=True)
             self.canvas.queue_draw()
             return
 
