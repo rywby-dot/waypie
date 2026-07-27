@@ -7,17 +7,22 @@ import cairo
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("GdkPixbuf", "2.0")
 
-from gi.repository import Gtk
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
 from waypie_common import (
     CONFIG_DIR,
     CONFIG_PATH,
+    ICON_DIR,
     Item,
     angular_delta,
     angular_distance,
     computed_style,
     direction_angle,
+    icon_path,
+    icon_themes,
     largest_gap_angle,
     load_config,
     load_styles,
@@ -25,6 +30,7 @@ from waypie_common import (
     resolve_radius,
     rounded_rectangle,
     set_source_color,
+    theme_icons,
     truncate,
 )
 
@@ -50,6 +56,7 @@ class Configurator(Gtk.Application):
         self.label_entry = None
         self.command_entry = None
         self.angle_spin = None
+        self.icon_button = None
         self.preserve_check = None
         self.alignment_check = None
         self.selected_path = ()
@@ -146,6 +153,9 @@ class Configurator(Gtk.Application):
             Gtk.SpinButton.new_with_range(0, 359, 1),
         )
         self.angle_spin.set_digits(0)
+        self.icon_button = Gtk.Button(label="Choose icon…")
+        self.icon_button.connect("clicked", self.on_choose_icon)
+        self.add_property(properties, "Icon", self.icon_button)
         hint = Gtk.Label(
             label=(
                 "Drag a circle to change its angle.\n"
@@ -228,6 +238,9 @@ class Configurator(Gtk.Application):
         self.command_entry.set_sensitive(not is_root and not item.items)
         self.angle_spin.set_value(item.angle or 0)
         self.angle_spin.set_sensitive(not is_root)
+        self.icon_button.set_label(
+            f"{item.icon_theme}: {item.icon}" if item.icon else "Choose icon…"
+        )
         self.updating_fields = False
 
     def on_property_changed(self, _widget):
@@ -432,12 +445,22 @@ class Configurator(Gtk.Application):
             self.preview_size(menu, center_style),
             menu,
             center_style,
+            active=False,
         )
-        for _index, item, style, x, y, size in circles:
-            self.draw_preview_item(context, x, y, size, item, style)
+        selected = self.selected_target()
+        for index, item, style, x, y, size in circles:
+            self.draw_preview_item(
+                context,
+                x,
+                y,
+                size,
+                item,
+                style,
+                active=selected == ("item", index),
+            )
 
     @staticmethod
-    def draw_preview_item(context, x, y, size, item, style):
+    def draw_preview_item(context, x, y, size, item, style, active=False):
         radius = resolve_radius(style["border-radius"], size)
         rounded_rectangle(
             context,
@@ -455,6 +478,26 @@ class Configurator(Gtk.Application):
             context.stroke()
         else:
             context.new_path()
+        if item.icon and not active:
+            path = icon_path(item.icon_theme, item.icon)
+            if path is not None:
+                icon_size = round(style.get("icon-size") or size * 0.55)
+                try:
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                        str(path), icon_size, icon_size, True
+                    )
+                    context.save()
+                    Gdk.cairo_set_source_pixbuf(
+                        context,
+                        pixbuf,
+                        x - pixbuf.get_width() / 2,
+                        y - pixbuf.get_height() / 2,
+                    )
+                    context.paint_with_alpha(style["opacity"])
+                    context.restore()
+                    return
+                except (GLib.Error, OSError):
+                    pass
         if not item.label:
             return
         context.select_font_face(
@@ -712,6 +755,102 @@ class Configurator(Gtk.Application):
             child.y = None
             self.rotate_descendants(child, delta)
 
+    def on_choose_icon(self, _button):
+        themes = icon_themes()
+        if not themes:
+            ICON_DIR.mkdir(parents=True, exist_ok=True)
+            self.set_status(f"Add icon folders to {ICON_DIR}", error=True)
+            return
+
+        item = self.item_at(self.selected_path)
+        window = Gtk.Window(
+            title="Choose icon",
+            transient_for=self.window,
+            modal=True,
+            default_width=720,
+            default_height=620,
+        )
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.set_margin_top(10)
+        content.set_margin_bottom(10)
+        content.set_margin_start(10)
+        content.set_margin_end(10)
+
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        theme_select = Gtk.ComboBoxText()
+        for theme in themes:
+            theme_select.append(theme, theme)
+        theme_select.set_active_id(
+            item.icon_theme if item.icon_theme in themes else themes[0]
+        )
+        theme_select.set_hexpand(True)
+        search = Gtk.SearchEntry(placeholder_text="Search icons…")
+        search.set_hexpand(True)
+        clear = Gtk.Button(label="Remove icon")
+        controls.append(theme_select)
+        controls.append(search)
+        controls.append(clear)
+        content.append(controls)
+
+        result_label = Gtk.Label(xalign=0)
+        content.append(result_label)
+        flow = Gtk.FlowBox(
+            selection_mode=Gtk.SelectionMode.NONE,
+            homogeneous=True,
+            row_spacing=6,
+            column_spacing=6,
+            max_children_per_line=8,
+            min_children_per_line=4,
+        )
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        scroll.set_child(flow)
+        content.append(scroll)
+
+        def choose(icon):
+            item.icon_theme = theme_select.get_active_id()
+            item.icon = icon
+            self.sync_fields()
+            self.canvas.queue_draw()
+            self.set_status("Unsaved changes")
+            window.close()
+
+        def rebuild(*_args):
+            while child := flow.get_child_at_index(0):
+                flow.remove(child)
+            theme = theme_select.get_active_id()
+            term = search.get_text().strip().casefold()
+            icons = theme_icons(theme)
+            matches = [icon for icon in icons if not term or term in icon.casefold()]
+            visible = matches[:400]
+            result_label.set_text(
+                f"{len(matches)} icons"
+                + (" — refine the search to see more" if len(matches) > 400 else "")
+            )
+            for icon in visible:
+                path = icon_path(theme, icon)
+                button = Gtk.Button(tooltip_text=icon)
+                picture = Gtk.Picture.new_for_filename(str(path))
+                picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+                picture.set_size_request(56, 56)
+                button.set_child(picture)
+                button.connect("clicked", lambda _button, name=icon: choose(name))
+                flow.append(button)
+
+        def remove_icon(_button):
+            item.icon_theme = None
+            item.icon = None
+            self.sync_fields()
+            self.canvas.queue_draw()
+            self.set_status("Unsaved changes")
+            window.close()
+
+        theme_select.connect("changed", rebuild)
+        search.connect("search-changed", rebuild)
+        clear.connect("clicked", remove_icon)
+        window.set_child(content)
+        rebuild()
+        window.present()
+
     def on_save(self, _button):
         try:
             validate_editable_tree(self.settings.root)
@@ -769,6 +908,9 @@ def serialize_config(settings):
         lines.extend(("", header, f"label = {json.dumps(item.label)}"))
         if item.command is not None:
             lines.append(f"command = {json.dumps(item.command)}")
+        if item.icon_theme and item.icon:
+            lines.append(f"icon-theme = {json.dumps(item.icon_theme)}")
+            lines.append(f"icon = {json.dumps(item.icon)}")
         for name in ("angle", "x", "y", "size"):
             value = getattr(item, name)
             if value is not None:

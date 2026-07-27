@@ -46,6 +46,28 @@ preview. Saving rewrites `~/.config/waypie/config` and keeps the previous file
 as `~/.config/waypie/config.bak`. The configurator does not modify
 `~/.config/waypie/style.css`.
 
+## Icon themes
+
+Put each icon set in its own directory below
+`~/.config/waypie/icons/`. Subdirectories are scanned recursively for SVG,
+PNG, WebP, JPEG, and GIF files:
+
+```text
+~/.config/waypie/icons/
+├── tabler/
+│   ├── home.svg
+│   └── terminal.svg
+└── papirus/
+    └── apps/
+        └── utilities-terminal.svg
+```
+
+Use the icon button in the configurator to select a directory and search its
+icons. An item with an icon shows the icon normally and replaces it with the
+item label while hovered. SVG files using `currentColor` use the circle's CSS
+`color`; raster and multicolor SVG files retain their original colors.
+`icon-size` controls the rendered size.
+
 ## Inspired by:
   - [Kando](https://github.com/kando-menu/kando)
   - [Driftmap](https://github.com/rywby-dot/driftwm-minimap)

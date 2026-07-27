@@ -7,6 +7,8 @@ from pathlib import Path
 CONFIG_DIR = Path.home() / ".config" / "waypie"
 CONFIG_PATH = CONFIG_DIR / "config"
 STYLE_PATH = CONFIG_DIR / "style.css"
+ICON_DIR = CONFIG_DIR / "icons"
+ICON_EXTENSIONS = {".svg", ".png", ".webp", ".jpg", ".jpeg", ".gif"}
 
 
 @dataclass
@@ -16,6 +18,8 @@ class Item:
     angle: float | None = None
     return_angle: float | None = None
     proportion_angle: float | None = None
+    icon_theme: str | None = None
+    icon: str | None = None
     x: float | None = None
     y: float | None = None
     size: float | None = None
@@ -42,6 +46,7 @@ DEFAULT_STYLE = {
     "distance": None,
     "font-size": 14.0,
     "font-family": "Sans",
+    "icon-size": None,
     "opacity": 1.0,
     "scale": 1.0,
     "width": None,
@@ -119,6 +124,16 @@ def parse_item(source, location, root=False):
     )
     if proportion_angle is not None:
         proportion_angle = round(proportion_angle) % 360
+    icon_theme = source.get("icon-theme")
+    icon = source.get("icon")
+    if icon_theme is not None and not isinstance(icon_theme, str):
+        raise SystemExit(f"waypie: {location}.icon-theme must be text")
+    if icon is not None and not isinstance(icon, str):
+        raise SystemExit(f"waypie: {location}.icon must be text")
+    if bool(icon_theme) != bool(icon):
+        raise SystemExit(
+            f"waypie: {location}.icon-theme and .icon must be used together"
+        )
     x = optional_number(source.get("x"), f"{location}.x")
     y = optional_number(source.get("y"), f"{location}.y")
     size = optional_positive(source.get("size"), f"{location}.size")
@@ -130,6 +145,8 @@ def parse_item(source, location, root=False):
         command=command,
         angle=angle,
         proportion_angle=proportion_angle,
+        icon_theme=icon_theme,
+        icon=icon,
         x=x,
         y=y,
         size=size,
@@ -244,7 +261,13 @@ def computed_style(rules, selectors):
         for name, value in rules.get(selector, {}).items():
             if name in {"background-color", "border-color", "color"}:
                 style[name] = parse_color(value, name)
-            elif name in {"border-width", "distance", "font-size", "width"}:
+            elif name in {
+                "border-width",
+                "distance",
+                "font-size",
+                "icon-size",
+                "width",
+            }:
                 style[name] = parse_pixels(value, name)
             elif name == "opacity":
                 style[name] = parse_opacity(value)
@@ -255,6 +278,43 @@ def computed_style(rules, selectors):
             elif name == "font-family":
                 style[name] = value.strip("\"'")
     return style
+
+
+def icon_themes():
+    try:
+        return sorted(
+            entry.name
+            for entry in ICON_DIR.iterdir()
+            if entry.is_dir() and not entry.name.startswith(".")
+        )
+    except OSError:
+        return []
+
+
+def theme_icons(theme):
+    directory = ICON_DIR / theme
+    if not directory.is_dir() or directory.parent != ICON_DIR:
+        return []
+    try:
+        return sorted(
+            path.relative_to(directory).as_posix()
+            for path in directory.rglob("*")
+            if path.is_file() and path.suffix.lower() in ICON_EXTENSIONS
+        )
+    except OSError:
+        return []
+
+
+def icon_path(theme, icon):
+    if not theme or not icon:
+        return None
+    directory = (ICON_DIR / theme).resolve()
+    try:
+        path = (directory / icon).resolve()
+        path.relative_to(directory)
+    except (OSError, ValueError):
+        return None
+    return path if path.is_file() and path.suffix.lower() in ICON_EXTENSIONS else None
 
 
 def parse_pixels(value, name):
