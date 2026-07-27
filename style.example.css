@@ -1,13 +1,39 @@
+/* Full-screen surface behind the menu circles. */
 overlay {
+  /* Transparent keeps the desktop visible outside the menu. */
   background-color: transparent;
 }
 
+/* Base appearance and geometry shared by every menu circle. */
 circle {
+  /* Fill color inside each circle. */
   background-color: #242424;
+  /* Color of the circle outline. */
   border-color: #ff8c00;
+  /* Thickness of the circle outline. */
   border-width: 2px;
+  /* 50% turns the square drawing area into a circle. */
   border-radius: 50%;
+  /* Label text color. */
   color: #ffffff;
+  /* Diameter of every circle unless a more specific selector overrides it. */
+  width: 100px;
+  /* Distance from a menu center to every radial circle. */
+  distance: 170px;
+  /* Font used for circle labels. */
   font-family: Sans;
+  /* Size of circle label text. */
   font-size: 14px;
+}
+
+/* Non-interactive menu shown two levels behind the current menu. */
+circle.ancestor {
+  /* Opacity of the inactive history circle: 0 is hidden, 1 is opaque. */
+  opacity: 0.35;
+}
+
+/* Circle whose action would run if the primary mouse button were clicked now. */
+circle.active {
+  /* Multiplier applied to the normal circle diameter while it is selected. */
+  scale: 1.15;
 }
