@@ -52,6 +52,8 @@ circle {
   font-family: Sans;
   /* Size of circle label text. */
   font-size: 14px;
+  /* Maximum icon width and height inside a circle. */
+  icon-size: 56px;
 }
 
 /* The circle at the center of the currently open menu. */
@@ -74,6 +76,8 @@ circle.center {
   font-family: Sans;
   /* Font size of the open menu label. */
   font-size: 14px;
+  /* Maximum icon width and height inside the open menu circle. */
+  icon-size: 56px;
 }
 
 /* Non-interactive menu shown two levels behind the current menu. */

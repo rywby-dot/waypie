@@ -3,6 +3,7 @@
 import ctypes.util
 import math
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from waypie_common import (
     computed_style,
     direction_angle,
     ease_out_cubic,
+    icon_path,
     load_config,
     load_styles,
     resolve_radius,
@@ -83,13 +85,14 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
+gi.require_version("GdkPixbuf", "2.0")
 if CONFIGURATOR_MODE:
-    from gi.repository import Gdk, GLib, Gtk
+    from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
     Gtk4LayerShell = None
 else:
     gi.require_version("Gtk4LayerShell", "1.0")
-    from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell
+    from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Gtk4LayerShell
 
 Gtk.Window.set_auto_startup_notification(False)
 
@@ -124,6 +127,7 @@ class Waypie(Gtk.Application):
         self.menu_centers = []
         self.control_socket = None
         self.control_source = None
+        self.icon_cache = {}
 
     def do_activate(self):
         if self.window is not None:
@@ -319,6 +323,7 @@ class Waypie(Gtk.Application):
             size,
             current,
             style,
+            active=self.hovered_hit == ("center", None),
         )
         scene.append((center_x, center_y, size, current, style, 1.0))
         hitbox_size = (
@@ -370,6 +375,7 @@ class Waypie(Gtk.Application):
                 parent_size,
                 parent,
                 style,
+                active=self.hovered_hit == ("parent", depth),
             )
             self.hits.append(
                 (
@@ -416,6 +422,7 @@ class Waypie(Gtk.Application):
                 item,
                 style,
                 reveal,
+                active=self.hovered_hit == ("item", index),
             )
             scene.append((x, y, size * reveal, item, style, reveal))
             self.visual_positions[("item", index)] = (x, y)
@@ -617,7 +624,17 @@ class Waypie(Gtk.Application):
             center[1] - distance * math.cos(radians),
         )
 
-    def draw_item(self, context, x, y, size, item, style, opacity=1.0):
+    def draw_item(
+        self,
+        context,
+        x,
+        y,
+        size,
+        item,
+        style,
+        opacity=1.0,
+        active=False,
+    ):
         if size <= 0:
             return
         radius = resolve_radius(style["border-radius"], size)
@@ -642,6 +659,12 @@ class Waypie(Gtk.Application):
         else:
             context.new_path()
 
+        if (
+            item.icon
+            and not active
+            and self.draw_icon(context, x, y, size, item, style, opacity)
+        ):
+            return
         if not item.label:
             return
         context.select_font_face(
@@ -656,6 +679,60 @@ class Waypie(Gtk.Application):
             y - extents.height / 2 - extents.y_bearing,
         )
         context.show_text(label)
+
+    def draw_icon(self, context, x, y, circle_size, item, style, opacity):
+        path = icon_path(item.icon_theme, item.icon)
+        if path is None:
+            return False
+        size = round(style.get("icon-size") or circle_size * 0.55)
+        if size <= 0:
+            return False
+        color = style["color"]
+        key = (str(path), path.stat().st_mtime_ns, size, color)
+        pixbuf = self.icon_cache.get(key)
+        if pixbuf is None:
+            try:
+                if path.suffix.lower() == ".svg":
+                    red, green, blue, _alpha = color
+                    replacement = (
+                        f"#{round(red * 255):02x}{round(green * 255):02x}"
+                        f"{round(blue * 255):02x}"
+                    )
+                    source = path.read_text(encoding="utf-8")
+                    if "currentColor" in source:
+                        source = source.replace("currentColor", replacement)
+                    elif not re.search(
+                        r"""(?:fill|stroke)\s*=\s*["'](?:#|rgb|hsl)""",
+                        source,
+                        re.IGNORECASE,
+                    ):
+                        source = source.replace(
+                            "<svg",
+                            f'<svg fill="{replacement}"',
+                            1,
+                        )
+                    loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+                    loader.set_size(size, size)
+                    loader.write(source.encode())
+                    loader.close()
+                    pixbuf = loader.get_pixbuf()
+                else:
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                        str(path), size, size, True
+                    )
+            except (GLib.Error, OSError, UnicodeError):
+                return False
+            self.icon_cache[key] = pixbuf
+        context.save()
+        Gdk.cairo_set_source_pixbuf(
+            context,
+            pixbuf,
+            x - pixbuf.get_width() / 2,
+            y - pixbuf.get_height() / 2,
+        )
+        context.paint_with_alpha(style["opacity"] * opacity)
+        context.restore()
+        return True
 
     def on_click(self, _gesture, _presses, x, y):
         if not self.hits:
