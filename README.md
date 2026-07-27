@@ -31,6 +31,21 @@ git pull
 pipx upgrade waypie
 ```
 
+## Visual configurator
+
+Open the menu editor with either command:
+
+```sh
+waypie --configure
+waypie-config
+```
+
+The configurator can add and remove commands and submenus, edit labels and
+commands, and change item angles by dragging circles on the
+preview. Saving rewrites `~/.config/waypie/config` and keeps the previous file
+as `~/.config/waypie/config.bak`. The configurator does not modify
+`~/.config/waypie/style.css`.
+
 ## Inspired by:
   - [Kando](https://github.com/kando-menu/kando)
   - [Driftmap](https://github.com/rywby-dot/driftwm-minimap)

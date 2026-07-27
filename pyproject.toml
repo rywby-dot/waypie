@@ -17,6 +17,7 @@ only-include = ["waypie.py"]
 
 [project.scripts]
 waypie = "waypie:main"
+waypie-config = "waypie:configurator_main"
 
 [tool.ruff]
 target-version = "py311"
