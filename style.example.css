@@ -1,0 +1,13 @@
+overlay {
+  background-color: transparent;
+}
+
+circle {
+  background-color: #242424;
+  border-color: #ff8c00;
+  border-width: 2px;
+  border-radius: 50%;
+  color: #ffffff;
+  font-family: Sans;
+  font-size: 14px;
+}

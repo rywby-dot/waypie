@@ -1,0 +1,38 @@
+circle-size = 100
+menu-radius = 170
+
+[menu]
+label = "Waypie"
+
+[[menu.items]]
+label = "Foot"
+command = "foot"
+angle = 270
+
+[[menu.items]]
+label = "Apps"
+angle = 90
+
+[[menu.items.items]]
+label = "St"
+command = "st"
+angle = 0
+
+[[menu.items.items]]
+label = "Kitty"
+command = "kitty"
+angle = 120
+
+[[menu.items.items]]
+label = "More"
+angle = 240
+
+[[menu.items.items.items]]
+label = "Alacritty"
+command = "alacritty"
+angle = 315
+
+[[menu.items.items.items]]
+label = "Dolphin"
+command = "dolphin"
+angle = 45
