@@ -21,18 +21,18 @@ angle = 0
 [[menu.items.items]]
 label = "Kitty"
 command = "kitty"
-angle = 120
+angle = 90
 
 [[menu.items.items]]
 label = "More"
-angle = 240
+angle = 180
 
 [[menu.items.items.items]]
 label = "Alacritty"
 command = "alacritty"
-angle = 315
+angle = 100
 
 [[menu.items.items.items]]
 label = "Dolphin"
 command = "dolphin"
-angle = 45
+angle = 260

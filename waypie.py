@@ -11,7 +11,6 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 LAYER_SHELL_LIBRARY = "libgtk4-layer-shell.so"
 CONFIG_DIR = Path.home() / ".config" / "waypie"
 CONFIG_PATH = CONFIG_DIR / "config"
@@ -82,6 +81,7 @@ class Item:
     label: str
     command: str | None = None
     angle: float | None = None
+    return_angle: float | None = None
     distance: float | None = None
     x: float | None = None
     y: float | None = None
@@ -102,8 +102,12 @@ DEFAULT_STYLE = {
     "border-width": 0.0,
     "border-radius": "50%",
     "color": (1.0, 1.0, 1.0, 1.0),
+    "distance": None,
     "font-size": 14.0,
     "font-family": "Sans",
+    "opacity": 1.0,
+    "scale": 1.0,
+    "width": None,
 }
 
 
@@ -122,7 +126,9 @@ def load_config():
 
     circle_size = positive_number(source.get("circle-size", 100), "circle-size")
     menu_radius = positive_number(source.get("menu-radius", 150), "menu-radius")
-    return Settings(circle_size, menu_radius, parse_item(menu, "menu", True))
+    root = parse_item(menu, "menu", True)
+    resolve_angles(root, root=True)
+    return Settings(circle_size, menu_radius, root)
 
 
 def parse_item(source, location, root=False):
@@ -190,6 +196,37 @@ def optional_number(value, location):
     return value
 
 
+def resolve_angles(item, root=False):
+    extra_items = 0 if root else 1
+    count = len(item.items) + extra_items
+    step = 360 / count if count else 0
+    for index, child in enumerate(item.items):
+        if child.angle is None:
+            child.angle = index * step
+        resolve_angles(child)
+    if not root and item.items:
+        item.return_angle = largest_gap_angle(
+            [child.angle % 360 for child in item.items]
+        )
+
+
+def largest_gap_angle(angles):
+    if not angles:
+        return None
+    ordered = sorted(angles)
+    best_start = ordered[0]
+    best_gap = -1.0
+    for index, start in enumerate(ordered):
+        end = ordered[(index + 1) % len(ordered)]
+        if index == len(ordered) - 1:
+            end += 360
+        gap = end - start
+        if gap > best_gap:
+            best_start = start
+            best_gap = gap
+    return (best_start + best_gap / 2) % 360
+
+
 def load_styles():
     try:
         source = STYLE_PATH.read_text(encoding="utf-8")
@@ -212,13 +249,16 @@ def load_styles():
 
 def computed_style(rules, selectors):
     style = dict(DEFAULT_STYLE)
-    style["background-color"] = (0x24 / 255, 0x24 / 255, 0x24 / 255, 1.0)
     for selector in selectors:
         for name, value in rules.get(selector, {}).items():
             if name in {"background-color", "border-color", "color"}:
                 style[name] = parse_color(value, name)
-            elif name in {"border-width", "font-size"}:
+            elif name in {"border-width", "distance", "font-size", "width"}:
                 style[name] = parse_pixels(value, name)
+            elif name == "opacity":
+                style[name] = parse_opacity(value)
+            elif name == "scale":
+                style[name] = positive_number_string(value, name)
             elif name == "border-radius":
                 style[name] = value
             elif name == "font-family":
@@ -257,27 +297,45 @@ def parse_color(value, name):
     raise SystemExit(f"waypie: invalid {name}: {value}")
 
 
+def parse_opacity(value):
+    try:
+        opacity = float(value)
+    except ValueError:
+        raise SystemExit(f"waypie: invalid opacity: {value}") from None
+    if not math.isfinite(opacity) or not 0 <= opacity <= 1:
+        raise SystemExit(f"waypie: opacity must be between 0 and 1: {value}")
+    return opacity
+
+
+def positive_number_string(value, name):
+    try:
+        number = float(value)
+    except ValueError:
+        raise SystemExit(f"waypie: invalid {name}: {value}") from None
+    if not math.isfinite(number) or number <= 0:
+        raise SystemExit(f"waypie: {name} must be positive: {value}")
+    return number
+
+
 class Waypie(Gtk.Application):
     def __init__(self, settings, styles, start_visible):
         super().__init__(application_id="dev.waypie.Waypie")
         self.settings = settings
         self.styles = styles
         self.start_visible = start_visible
-        self.started = False
-        self.visible = False
         self.path = []
         self.hits = []
+        self.hovered_hit = None
+        self.pointer_position = None
         self.canvas = None
         self.window = None
-        self.menu_position = None
         self.menu_centers = []
         self.control_socket = None
         self.control_source = None
 
     def do_activate(self):
-        if self.started:
+        if self.window is not None:
             return
-        self.started = True
 
         self.window = Gtk.ApplicationWindow(application=self)
         self.window.set_decorated(False)
@@ -286,9 +344,7 @@ class Waypie(Gtk.Application):
         Gtk4LayerShell.set_namespace(self.window, "waypie")
         Gtk4LayerShell.set_layer(self.window, Gtk4LayerShell.Layer.OVERLAY)
         Gtk4LayerShell.set_exclusive_zone(self.window, -1)
-        Gtk4LayerShell.set_keyboard_mode(
-            self.window, Gtk4LayerShell.KeyboardMode.NONE
-        )
+        Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
         for edge in (
             Gtk4LayerShell.Edge.TOP,
             Gtk4LayerShell.Edge.RIGHT,
@@ -325,6 +381,10 @@ class Waypie(Gtk.Application):
         pointer.connect("motion", self.on_pointer_event)
         self.canvas.add_controller(pointer)
 
+        keyboard = Gtk.EventControllerKey()
+        keyboard.connect("key-pressed", self.on_key_pressed)
+        self.window.add_controller(keyboard)
+
         self.window.set_child(self.canvas)
         self.start_control_server()
         self.hold()
@@ -359,110 +419,183 @@ class Waypie(Gtk.Application):
         except BlockingIOError:
             return True
         if command == b"show":
-            if self.visible:
+            if self.window.get_visible():
                 self.hide_menu()
             else:
                 self.show_menu()
         return True
 
     def show_menu(self):
-        self.visible = True
-        self.menu_position = None
         self.menu_centers = []
         self.hits = []
+        self.hovered_hit = None
+        self.pointer_position = None
         self.window.set_cursor_from_name("default")
         self.canvas.set_cursor_from_name("default")
+        Gtk4LayerShell.set_keyboard_mode(
+            self.window, Gtk4LayerShell.KeyboardMode.EXCLUSIVE
+        )
         self.window.set_visible(True)
         self.canvas.queue_draw()
 
     def hide_menu(self):
-        self.visible = False
         self.path.clear()
-        self.menu_position = None
         self.menu_centers = []
         self.hits = []
+        self.hovered_hit = None
+        self.pointer_position = None
+        Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
         self.window.set_visible(False)
 
+    def on_key_pressed(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape:
+            self.hide_menu()
+            return True
+        return False
+
     def on_pointer_event(self, _controller, x, y):
-        if self.visible and self.menu_position is None:
-            self.menu_position = (x, y)
+        if not self.window.get_visible():
+            return
+        self.pointer_position = (x, y)
+        if not self.menu_centers:
             self.menu_centers = [(x, y)]
             self.canvas.queue_draw()
+            return
+        hovered_hit = self.target_at(x, y)
+        if hovered_hit != self.hovered_hit:
+            self.hovered_hit = hovered_hit
+            self.canvas.queue_draw()
 
-    def current_item(self):
-        item = self.settings.root
-        for index in self.path:
-            item = item.items[index]
-        return item
-
-    def draw(self, _canvas, context, width, height):
+    def draw(self, _canvas, context, _width, _height):
         self.hits = []
 
         overlay = computed_style(self.styles, ("overlay",))
         context.set_source_rgba(*overlay["background-color"])
         context.paint()
 
-        if self.menu_position is None:
+        if not self.menu_centers:
             return
 
         center_x, center_y = self.menu_centers[-1]
-        current = self.current_item()
-        size = current.size or self.settings.circle_size
-        self.draw_item(context, center_x, center_y, size, current, True)
-        self.hits.append((center_x, center_y, size, "center", None))
+        current = self.item_at_path(self.path)
+        style = self.item_style(
+            current, center=True, active=self.hovered_hit == ("center", None)
+        )
+        size = self.item_size(current, style)
+        self.draw_item(context, center_x, center_y, size, current, style)
+        self.hits.append((center_x, center_y, size, "center", None, None))
 
-        for depth, (parent_x, parent_y) in enumerate(self.menu_centers[:-1]):
-            parent = self.item_at_path(self.path[:depth])
-            parent_size = parent.size or self.settings.circle_size
+        if len(self.path) > 1:
+            ancestor = self.item_at_path(self.path[:-2])
+            style = self.item_style(ancestor, ancestor=True)
+            ancestor_size = self.item_size(ancestor, style)
+            ancestor_x, ancestor_y = self.menu_centers[-3]
+            self.draw_item(
+                context,
+                ancestor_x,
+                ancestor_y,
+                ancestor_size,
+                ancestor,
+                style,
+            )
+
+        if self.path:
+            depth = len(self.path) - 1
+            parent = self.item_at_path(self.path[:-1])
+            style = self.item_style(
+                parent, parent=True, active=self.hovered_hit == ("parent", depth)
+            )
+            parent_size = self.item_size(parent, style)
+            parent_x, parent_y = self.menu_centers[depth]
             self.draw_item(
                 context,
                 parent_x,
                 parent_y,
                 parent_size,
                 parent,
-                False,
-                parent=True,
+                style,
             )
             self.hits.append(
-                (parent_x, parent_y, parent_size, "parent", depth)
+                (
+                    parent_x,
+                    parent_y,
+                    parent_size,
+                    "parent",
+                    depth,
+                    current.return_angle,
+                )
             )
 
-        count = len(current.items)
-        step = 360 / count if count else 0
         for index, item in enumerate(current.items):
+            style = self.item_style(item, active=self.hovered_hit == ("item", index))
             if item.x is not None:
                 x = center_x + item.x
                 y = center_y + item.y
             else:
-                angle = item.angle if item.angle is not None else index * step
-                distance = item.distance or self.settings.menu_radius
-                radians = math.radians(angle)
-                x = center_x + distance * math.sin(radians)
-                y = center_y - distance * math.cos(radians)
-            size = item.size or self.settings.circle_size
-            self.draw_item(context, x, y, size, item, False)
-            self.hits.append((x, y, size, "item", index))
+                x, y = self.radial_position(
+                    (center_x, center_y),
+                    item.angle,
+                    style,
+                    item.distance,
+                )
+            size = self.item_size(item, style)
+            self.draw_item(context, x, y, size, item, style)
+            selection_angle = None if item.x is not None else item.angle
+            self.hits.append((x, y, size, "item", index, selection_angle))
 
-    def draw_item(self, context, x, y, size, item, center, parent=False):
+        if self.pointer_position is not None:
+            hovered_hit = self.target_at(*self.pointer_position)
+            if hovered_hit != self.hovered_hit:
+                self.hovered_hit = hovered_hit
+                self.canvas.queue_draw()
+
+    def item_style(
+        self, item, center=False, parent=False, ancestor=False, active=False
+    ):
         selectors = ["circle"]
+        if item.items:
+            selectors.append("circle.submenu")
         if center:
             selectors.append("circle.center")
         elif parent:
             selectors.append("circle.parent")
+        elif ancestor:
+            selectors.append("circle.ancestor")
         else:
             selectors.append("circle.item")
-        if item.items:
-            selectors.append("circle.submenu")
-        style = computed_style(self.styles, selectors)
+        if active:
+            selectors.append("circle.active")
+        return computed_style(self.styles, selectors)
+
+    def item_size(self, item, style):
+        if style["width"] is not None:
+            size = style["width"]
+        else:
+            size = item.size or self.settings.circle_size
+        return size * style["scale"]
+
+    def radial_position(self, center, angle, style, configured_distance=None):
+        distance = (
+            style["distance"]
+            if style["distance"] is not None
+            else configured_distance or self.settings.menu_radius
+        )
+        radians = math.radians(angle)
+        return (
+            center[0] + distance * math.sin(radians),
+            center[1] - distance * math.cos(radians),
+        )
+
+    def draw_item(self, context, x, y, size, item, style):
         radius = resolve_radius(style["border-radius"], size)
         left = x - size / 2
         top = y - size / 2
 
         rounded_rectangle(context, left, top, size, size, radius)
-        context.set_source_rgba(*style["background-color"])
+        set_source_color(context, style["background-color"], style["opacity"])
         context.fill_preserve()
         if style["border-width"] > 0:
-            context.set_source_rgba(*style["border-color"])
+            set_source_color(context, style["border-color"], style["opacity"])
             context.set_line_width(style["border-width"])
             context.stroke()
         else:
@@ -474,7 +607,7 @@ class Waypie(Gtk.Application):
             style["font-family"], cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
         )
         context.set_font_size(style["font-size"])
-        context.set_source_rgba(*style["color"])
+        set_source_color(context, style["color"], style["opacity"])
         label = truncate(item.label, max(1, int(size / style["font-size"] * 1.5)))
         extents = context.text_extents(label)
         context.move_to(
@@ -487,41 +620,55 @@ class Waypie(Gtk.Application):
         if not self.hits:
             return
 
-        center_x, center_y, center_size, _kind, _index = self.hits[0]
-        for hit_x, hit_y, hit_size, kind, target in reversed(self.hits):
-            if (
-                kind in {"center", "parent"}
-                and math.hypot(x - hit_x, y - hit_y) <= hit_size / 2
-            ):
-                if kind == "parent":
-                    self.path = self.path[:target]
-                    self.menu_centers = self.menu_centers[: target + 1]
-                    self.canvas.queue_draw()
-                elif not self.path:
-                    self.hide_menu()
-                return
-
-        item_hits = [hit for hit in self.hits if hit[3] == "item"]
-        if not item_hits:
+        target = self.target_at(x, y)
+        if target is None:
+            return
+        kind, index = target
+        if kind == "center":
+            self.hide_menu()
+            return
+        if kind == "parent":
+            self.path = self.path[:index]
+            self.menu_centers = self.menu_centers[: index + 1]
+            self.hovered_hit = None
+            self.canvas.queue_draw()
             return
 
+        item = self.item_at_path(self.path).items[index]
+        if item.items:
+            self.path.append(index)
+            self.menu_centers.append((x, y))
+            self.hovered_hit = None
+            self.canvas.queue_draw()
+        else:
+            launch(item.command)
+            self.hide_menu()
+
+    def target_at(self, x, y):
+        if not self.hits:
+            return None
+        center_x, center_y, _center_size, _kind, _index, _angle = self.hits[0]
+        for hit_x, hit_y, hit_size, kind, target, _angle in reversed(self.hits):
+            if kind in {"center", "parent"} and (
+                math.hypot(x - hit_x, y - hit_y) <= hit_size / 2
+            ):
+                return kind, target
+        item_hits = [hit for hit in self.hits if hit[3] in {"item", "parent"}]
+        if not item_hits:
+            return None
         pointer_angle = direction_angle(x - center_x, y - center_y)
         selected = min(
             item_hits,
             key=lambda hit: angular_distance(
                 pointer_angle,
-                direction_angle(hit[0] - center_x, hit[1] - center_y),
+                (
+                    hit[5]
+                    if hit[5] is not None
+                    else direction_angle(hit[0] - center_x, hit[1] - center_y)
+                ),
             ),
         )
-        index = selected[4]
-        item = self.current_item().items[index]
-        if item.items:
-            self.path.append(index)
-            self.menu_centers.append((x, y))
-            self.canvas.queue_draw()
-        else:
-            launch(item.command)
-            self.hide_menu()
+        return selected[3], selected[4]
 
     def item_at_path(self, path):
         item = self.settings.root
@@ -551,6 +698,11 @@ def resolve_radius(value, size):
         except ValueError:
             pass
     return min(size / 2, parse_pixels(value, "border-radius"))
+
+
+def set_source_color(context, color, opacity):
+    red, green, blue, alpha = color
+    context.set_source_rgba(red, green, blue, alpha * opacity)
 
 
 def rounded_rectangle(context, x, y, width, height, radius):
@@ -593,7 +745,7 @@ def launch(command):
         print(f"waypie: failed to start {command}: {error}", file=sys.stderr)
 
 
-if __name__ == "__main__":
+def main():
     start_visible = sys.argv[1:] == ["--show"]
     try:
         exit_code = Waypie(load_config(), load_styles(), start_visible).run(
@@ -602,3 +754,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         exit_code = 0
     raise SystemExit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

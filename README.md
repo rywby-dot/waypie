@@ -7,6 +7,29 @@ https://github.com/user-attachments/assets/5a31691c-a953-49e6-b464-1d88c86aa38a
 > [!WARNING]
 > This is experimental software, primarily built with AI.
 
+## Installation
+
+```sh
+git clone https://github.com/rywby-dot/waypie.git
+cd waypie
+pipx install .
+```
+
+Required at runtime:
+
+- Python 3.11 or newer;
+- GTK 4 and PyGObject;
+- Cairo/Pycairo;
+- gtk4-layer-shell.
+
+Update an existing installation with:
+
+```sh
+cd waypie
+git pull
+pipx upgrade waypie
+```
+
 ## Inspired by:
   - [Kando](https://github.com/kando-menu/kando)
   - [Driftmap](https://github.com/rywby-dot/driftwm-minimap)
