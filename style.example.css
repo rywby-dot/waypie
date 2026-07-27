@@ -4,6 +4,14 @@ overlay {
   background-color: transparent;
 }
 
+/* Timing of animations drawn inside the already active layer surface. */
+animation {
+  /* Duration of circle growth and shrinkage when the selected angle changes. */
+  hover-duration: 120ms;
+  /* Duration of submenu movement, item reveal, and return movement. */
+  menu-duration: 180ms;
+}
+
 /* Lines connecting each open submenu to the menu it came from. */
 connector {
   /* Connector line color. */
