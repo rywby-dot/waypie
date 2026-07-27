@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 LAYER_SHELL_LIBRARY = "libgtk4-layer-shell.so"
@@ -555,15 +556,69 @@ class Waypie(Gtk.Application):
         style = computed_style(self.styles, ("connector",))
         if style["width"] is None or style["width"] == 0:
             return
-        visible_centers = self.menu_centers[-3:]
-        if len(visible_centers) < 2:
+        nodes = []
+        if len(self.path) > 1:
+            item = self.item_at_path(self.path[:-2])
+            item_style = self.item_style(item, ancestor=True)
+            nodes.append(
+                (
+                    self.menu_centers[-3],
+                    self.circle_inner_radius(item, item_style),
+                )
+            )
+        if self.path:
+            depth = len(self.path) - 1
+            item = self.item_at_path(self.path[:-1])
+            item_style = self.item_style(
+                item,
+                parent=True,
+                active=self.hovered_hit == ("parent", depth),
+            )
+            nodes.append(
+                (
+                    self.menu_centers[-2],
+                    self.circle_inner_radius(item, item_style),
+                )
+            )
+        item = self.item_at_path(self.path)
+        item_style = self.item_style(
+            item,
+            center=True,
+            active=self.hovered_hit == ("center", None),
+        )
+        nodes.append(
+            (
+                self.menu_centers[-1],
+                self.circle_inner_radius(item, item_style),
+            )
+        )
+        if len(nodes) < 2:
             return
         set_source_color(context, style["color"], style["opacity"])
         context.set_line_width(style["width"])
-        context.move_to(*visible_centers[0])
-        for center in visible_centers[1:]:
-            context.line_to(*center)
+        for (start, start_radius), (end, end_radius) in pairwise(nodes):
+            delta_x = end[0] - start[0]
+            delta_y = end[1] - start[1]
+            length = math.hypot(delta_x, delta_y)
+            if length <= start_radius + end_radius:
+                continue
+            unit_x = delta_x / length
+            unit_y = delta_y / length
+            context.move_to(
+                start[0] + unit_x * start_radius,
+                start[1] + unit_y * start_radius,
+            )
+            context.line_to(
+                end[0] - unit_x * end_radius,
+                end[1] - unit_y * end_radius,
+            )
         context.stroke()
+
+    def circle_inner_radius(self, item, style):
+        return max(
+            0,
+            self.item_size(item, style) / 2 - style["border-width"] / 2,
+        )
 
     def item_style(
         self, item, center=False, parent=False, ancestor=False, active=False
@@ -646,6 +701,7 @@ class Waypie(Gtk.Application):
         if kind == "parent":
             self.path = self.path[:index]
             self.menu_centers = self.menu_centers[: index + 1]
+            self.menu_centers[-1] = (x, y)
             self.hovered_hit = None
             self.canvas.queue_draw()
             return
@@ -665,9 +721,7 @@ class Waypie(Gtk.Application):
             return None
         center_x, center_y, _center_size, _kind, _index, _angle = self.hits[0]
         for hit_x, hit_y, hit_size, kind, target, _angle in reversed(self.hits):
-            if kind in {"center", "parent"} and (
-                math.hypot(x - hit_x, y - hit_y) <= hit_size / 2
-            ):
+            if kind == "center" and (math.hypot(x - hit_x, y - hit_y) <= hit_size / 2):
                 return kind, target
         item_hits = [hit for hit in self.hits if hit[3] in {"item", "parent"}]
         if not item_hits:

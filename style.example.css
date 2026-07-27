@@ -36,6 +36,28 @@ circle {
   font-size: 14px;
 }
 
+/* The circle at the center of the currently open menu. */
+circle.center {
+  /* Fill color of the open menu circle. */
+  background-color: #242424;
+  /* Border color of the open menu circle. */
+  border-color: #ff8c00;
+  /* Border thickness of the open menu circle. */
+  border-width: 2px;
+  /* Corner radius of the open menu circle. */
+  border-radius: 50%;
+  /* Label color of the open menu circle. */
+  color: #ffffff;
+  /* Diameter of the open menu circle. */
+  width: 100px;
+  /* Overall transparency of the open menu circle and its label. */
+  opacity: 1;
+  /* Font used by the open menu label. */
+  font-family: Sans;
+  /* Font size of the open menu label. */
+  font-size: 14px;
+}
+
 /* Non-interactive menu shown two levels behind the current menu. */
 circle.ancestor {
   /* Opacity of the inactive history circle: 0 is hidden, 1 is opaque. */
