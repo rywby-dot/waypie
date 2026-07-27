@@ -1,5 +1,9 @@
 circle-size = 100
 menu-radius = 170
+# Diameter of the central close hitbox; use 0 to disable it.
+center-hitbox-size = 100
+# Minimum distance from every menu center to a screen edge.
+minimum-edge-distance = 120
 
 [menu]
 label = "Waypie"
