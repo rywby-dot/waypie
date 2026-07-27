@@ -476,6 +476,8 @@ class Waypie(Gtk.Application):
         if not self.menu_centers:
             return
 
+        self.draw_connectors(context)
+
         center_x, center_y = self.menu_centers[-1]
         current = self.item_at_path(self.path)
         style = self.item_style(
@@ -548,6 +550,20 @@ class Waypie(Gtk.Application):
             if hovered_hit != self.hovered_hit:
                 self.hovered_hit = hovered_hit
                 self.canvas.queue_draw()
+
+    def draw_connectors(self, context):
+        style = computed_style(self.styles, ("connector",))
+        if style["width"] is None or style["width"] == 0:
+            return
+        visible_centers = self.menu_centers[-3:]
+        if len(visible_centers) < 2:
+            return
+        set_source_color(context, style["color"], style["opacity"])
+        context.set_line_width(style["width"])
+        context.move_to(*visible_centers[0])
+        for center in visible_centers[1:]:
+            context.line_to(*center)
+        context.stroke()
 
     def item_style(
         self, item, center=False, parent=False, ancestor=False, active=False
