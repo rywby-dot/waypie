@@ -212,7 +212,10 @@ The example stylesheet documents every supported section:
   preview;
 - `circle` — base circle appearance;
 - `circle.item` — command items;
-- `circle.submenu` — items that open submenus;
+- `circle.submenu` — selectable items that open submenus, independently styled
+  from command items;
+- `submenu-indicator` — child-direction circles on selectable submenu
+  items;
 - `circle.center` — the currently open menu;
 - `circle.history` — every previous runtime menu at every history depth;
 - `circle.previous` — translucent previous-menu preview in the configurator;
@@ -227,6 +230,19 @@ while older circles are visual only.
 Every link in that chain uses `connector`. Its `color`, `opacity`, and `width`
 properties control line color, transparency, and thickness; `width: 0px`
 disables the lines.
+
+Selectable submenu circles use `circle.submenu` after `circle.item` in the
+style cascade, so their fill, border, diameter, opacity, icon, and text settings
+can be completely different from command circles. This selector does not
+affect the current central circle or history circles.
+
+Each child of a selectable submenu is represented by one
+`submenu-indicator`, placed at that child's angle. The indicator is drawn
+as a full circle behind the submenu circle and clipped to the part which
+protrudes beyond it. Its four settings are `width`, `color`, `opacity`, and
+`protrusion`. `width: 0px` disables the indicators. `protrusion: 0px` keeps
+them completely hidden; increasing it reveals more of each circle outward.
+These indicators are also shown in the configurator preview.
 
 Colors, opacity, borders, circle diameters, font settings, icon size, animation
 durations, and active-state scale are controlled here. The normal radial

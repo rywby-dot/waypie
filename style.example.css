@@ -63,7 +63,7 @@ circle {
   /* Diameter multiplier, also used for hover growth. */
   scale: 1;
   /* Circle diameter. */
-  width: 100px;
+  width: 90px;
 }
 
 /* Ordinary command items in the currently open menu. */
@@ -77,9 +77,39 @@ circle.item {
 /* Items which open another submenu. Applied in addition to their role style. */
 circle.submenu {
   /* Submenu-item fill color. */
-  background-color: #2c2c2c;
+  background-color: #242424;
   /* Submenu-item border color. */
-  border-color: #ffaa33;
+  border-color: #ff8c00;
+  /* Submenu-item border thickness. */
+  border-width: 2px;
+  /* Submenu-item corner radius. */
+  border-radius: 50%;
+  /* Submenu-item label and monochrome-icon color. */
+  color: #ffffff;
+  /* Submenu-item label font. */
+  font-family: Sans;
+  /* Submenu-item label size. */
+  font-size: 14px;
+  /* Submenu-item icon size. */
+  icon-size: 56px;
+  /* Submenu-item transparency. */
+  opacity: 1;
+  /* Submenu-item diameter multiplier. */
+  scale: 1;
+  /* Submenu-item diameter. */
+  width: 90px;
+}
+
+/* Child-direction circles protruding from selectable submenu items. */
+submenu-indicator {
+  /* Indicator circle color. */
+  color: #ffaa33;
+  /* Indicator transparency. */
+  opacity: 0.8;
+  /* Indicator circle diameter; 0px disables the indicators. */
+  width: 42px;
+  /* Visible outward amount; 0px hides the circles completely. */
+  protrusion: 14px;
 }
 
 /* Central circle of the currently open runtime or configurator menu. */
@@ -105,7 +135,7 @@ circle.center {
   /* Current-menu diameter multiplier. */
   scale: 1;
   /* Current-menu diameter. */
-  width: 100px;
+  width: 108px;
 }
 
 /* Every previous runtime menu, regardless of its history depth. */
@@ -131,7 +161,7 @@ circle.history {
   /* History-circle diameter multiplier. */
   scale: 1;
   /* History-circle diameter. */
-  width: 76px;
+  width: 90px;
 }
 
 /* Circles belonging to the translucent previous configurator menu. */

@@ -495,9 +495,9 @@ class Configurator(Gtk.Application):
 
     def preview_style(self, item, selected=False, center=False, previous=False):
         selectors = ["circle"]
-        if item.items:
-            selectors.append("circle.submenu")
         selectors.append("circle.center" if center else "circle.item")
+        if not center and item.items:
+            selectors.append("circle.submenu")
         if previous:
             selectors.append("circle.previous")
         if selected:
@@ -631,6 +631,7 @@ class Configurator(Gtk.Application):
                     departure["style"],
                     show_icon=self.show_icons_check.get_active(),
                     opacity=geometry[3],
+                    submenu_indicators=bool(departure["item"].items),
                 )
             if progress < 1:
                 remaining.append(departure)
@@ -762,6 +763,7 @@ class Configurator(Gtk.Application):
                     style,
                     show_icon=self.show_icons_check.get_active(),
                     opacity=opacity,
+                    submenu_indicators=bool(item.items),
                 )
 
         self.draw_preview_departures(context)
@@ -848,10 +850,11 @@ class Configurator(Gtk.Application):
                 style,
                 show_icon=self.show_icons_check.get_active(),
                 opacity=opacity,
+                submenu_indicators=bool(item.items),
             )
 
-    @staticmethod
     def draw_preview_item(
+        self,
         context,
         x,
         y,
@@ -860,7 +863,18 @@ class Configurator(Gtk.Application):
         style,
         show_icon=False,
         opacity=1.0,
+        submenu_indicators=False,
     ):
+        if submenu_indicators:
+            self.draw_preview_submenu_indicators(
+                context,
+                x,
+                y,
+                size,
+                item,
+                style,
+                opacity,
+            )
         radius = resolve_radius(style["border-radius"], size)
         rounded_rectangle(
             context,
@@ -922,6 +936,65 @@ class Configurator(Gtk.Application):
             y - extents.height / 2 - extents.y_bearing,
         )
         context.show_text(label)
+
+    def draw_preview_submenu_indicators(
+        self,
+        context,
+        x,
+        y,
+        circle_size,
+        item,
+        submenu_style,
+        opacity,
+    ):
+        style = computed_style(self.styles, ("submenu-indicator",))
+        indicator_size = style["width"]
+        protrusion = style["protrusion"]
+        if (
+            not item.items
+            or indicator_size is None
+            or indicator_size <= 0
+            or protrusion <= 0
+        ):
+            return
+        orbit = max(0, circle_size / 2 - indicator_size / 2 + protrusion)
+        context.save()
+        clip_x1, clip_y1, clip_x2, clip_y2 = context.clip_extents()
+        context.rectangle(
+            clip_x1,
+            clip_y1,
+            clip_x2 - clip_x1,
+            clip_y2 - clip_y1,
+        )
+        radius = resolve_radius(submenu_style["border-radius"], circle_size)
+        rounded_rectangle(
+            context,
+            x - circle_size / 2,
+            y - circle_size / 2,
+            circle_size,
+            circle_size,
+            radius,
+        )
+        context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+        context.clip()
+        for child in item.items:
+            radians = math.radians(child.angle)
+            indicator_x = x + orbit * math.sin(radians)
+            indicator_y = y - orbit * math.cos(radians)
+            context.arc(
+                indicator_x,
+                indicator_y,
+                indicator_size / 2,
+                0,
+                math.tau,
+            )
+            set_source_color(
+                context,
+                style["color"],
+                style["opacity"] * opacity,
+            )
+            context.fill()
+        context.restore()
 
     def preview_hit(self, x, y):
         _menu, _center, circles = self.preview_layout()
