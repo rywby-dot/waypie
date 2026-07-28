@@ -31,6 +31,25 @@ CONFIGURATOR_MODE = os.environ.get("WAYPIE_CONFIGURATOR") == "1" or sys.argv[1:]
 ]
 
 
+def closest_angle_in_hit_sector(angle, target, competing_angles):
+    negative = []
+    positive = []
+    for competitor in competing_angles:
+        difference = (competitor - target + 180) % 360 - 180
+        if difference == -180:
+            negative.append(-180)
+            positive.append(180)
+        elif difference < 0:
+            negative.append(difference)
+        elif difference > 0:
+            positive.append(difference)
+
+    lower = max(negative) / 2 if negative else -180
+    upper = min(positive) / 2 if positive else 180
+    difference = (angle - target + 180) % 360 - 180
+    return (target + min(max(difference, lower), upper)) % 360
+
+
 def control_socket_path():
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
     display = os.environ.get("WAYLAND_DISPLAY", "wayland")
@@ -752,6 +771,7 @@ class Waypie(Gtk.Application):
             self.menu_centers = self.menu_centers[: index + 1]
             self.menu_centers[-1] = self.clamp_menu_position(x, y)
             self.display_centers = self.display_centers[: index + 1]
+            self.correct_return_circle_position()
             self.hovered_hit = None
             self.reset_item_animations()
             self.start_menu_animation(reveal_items=True)
@@ -769,6 +789,7 @@ class Waypie(Gtk.Application):
             self.path.append(index)
             self.menu_centers.append(self.clamp_menu_position(x, y))
             self.display_centers.append(start_position)
+            self.correct_return_circle_position()
             self.hovered_hit = None
             self.reset_item_animations()
             self.start_menu_animation(reveal_items=True)
@@ -790,6 +811,49 @@ class Waypie(Gtk.Application):
             return min(max(value, margin), extent - margin)
 
         return clamp(x, width), clamp(y, height)
+
+    def correct_return_circle_position(self):
+        if not self.path or len(self.menu_centers) < 2:
+            return
+
+        current = self.item_at_path(self.path)
+        center_x, center_y = self.menu_centers[-1]
+        parent_x, parent_y = self.menu_centers[-2]
+        offset_x = parent_x - center_x
+        offset_y = parent_y - center_y
+        distance = math.hypot(offset_x, offset_y)
+        visual_angle = direction_angle(offset_x, offset_y)
+        return_angle = current.return_angle
+
+        item_angles = []
+        for item in current.items:
+            if item.x is not None:
+                item_angles.append(direction_angle(item.x, item.y))
+            else:
+                item_angles.append(item.angle)
+        nearest_valid_angle = closest_angle_in_hit_sector(
+            visual_angle,
+            return_angle,
+            item_angles,
+        )
+
+        parent = self.item_at_path(self.path[:-1])
+        style = self.item_style(parent, parent=True)
+        minimum_distance = (
+            style["distance"]
+            if style["distance"] is not None
+            else self.settings.menu_radius
+        )
+        angle_is_valid = angular_distance(visual_angle, nearest_valid_angle) < 1e-6
+        distance_is_valid = distance >= minimum_distance
+        if angle_is_valid and distance_is_valid:
+            return
+
+        radians = math.radians(return_angle)
+        self.menu_centers[-2] = (
+            center_x + minimum_distance * math.sin(radians),
+            center_y - minimum_distance * math.cos(radians),
+        )
 
     def target_at(self, x, y):
         if not self.hits:
