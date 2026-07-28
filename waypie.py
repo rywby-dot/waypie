@@ -549,6 +549,7 @@ class Waypie(Gtk.Application):
                 hide_label=(
                     self.hovered_hit == ("item", index)
                     and self.settings.active_label_in_center
+                    and bool(item.icon)
                 ),
                 submenu_indicators=bool(item.items),
                 submenu_indicators_active=item_active,
@@ -856,24 +857,25 @@ class Waypie(Gtk.Application):
             return
         orbit = max(0, circle_size / 2 - indicator_size / 2 + protrusion)
         context.save()
-        clip_x1, clip_y1, clip_x2, clip_y2 = context.clip_extents()
-        context.rectangle(
-            clip_x1,
-            clip_y1,
-            clip_x2 - clip_x1,
-            clip_y2 - clip_y1,
-        )
-        radius = resolve_radius(submenu_style["border-radius"], circle_size)
-        rounded_rectangle(
-            context,
-            x - circle_size / 2,
-            y - circle_size / 2,
-            circle_size,
-            circle_size,
-            radius,
-        )
-        context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
-        context.clip()
+        if style["cut-indicators"]:
+            clip_x1, clip_y1, clip_x2, clip_y2 = context.clip_extents()
+            context.rectangle(
+                clip_x1,
+                clip_y1,
+                clip_x2 - clip_x1,
+                clip_y2 - clip_y1,
+            )
+            radius = resolve_radius(submenu_style["border-radius"], circle_size)
+            rounded_rectangle(
+                context,
+                x - circle_size / 2,
+                y - circle_size / 2,
+                circle_size,
+                circle_size,
+                radius,
+            )
+            context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+            context.clip()
         for child in item.items:
             indicator_x, indicator_y = self.radial_position(
                 (x, y),

@@ -243,10 +243,12 @@ affect the current central circle or history circles.
 
 Each child of a selectable submenu is represented by one
 `submenu-indicator`, placed at that child's angle. The indicator is drawn
-as a full circle behind the submenu circle and clipped to the part which
-protrudes beyond it. Its four settings are `width`, `color`, `opacity`, and
-`protrusion`. `width: 0px` disables the indicators. `protrusion: 0px` keeps
-them completely hidden; increasing it reveals more of each circle outward.
+as a full circle behind the submenu circle. Its settings are `width`, `color`,
+`opacity`, `protrusion`, and `cut-indicators`. `width: 0px` disables the
+indicators. `protrusion: 0px` keeps them completely hidden; increasing it
+reveals more of each circle outward. With `cut-indicators: true`, the part
+inside the submenu circle is clipped. With `cut-indicators: false`, the small
+circles remain complete and can be seen through a translucent submenu circle.
 These indicators are also shown in the configurator preview.
 
 Colors, opacity, borders, circle diameters, font settings, icon size, animation
