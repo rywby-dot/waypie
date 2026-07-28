@@ -170,12 +170,17 @@ The previous configuration is copied to:
 ~/.config/waypie/config.bak
 ```
 
-The running Waypie process does not reload configuration automatically. After
-pressing **Save**, stop and restart the persistent `waypie` process. If Waypie
-is managed by your compositor, user service, or process supervisor, restart it
-there. Then use `waypie --show` normally.
+The persistent Waypie process reloads `config` every time the menu changes from
+hidden to visible. After pressing **Save**, close an already visible menu and
+run `waypie --show` again. The next opening immediately uses the new geometry,
+commands, angles, icons, and configurator settings; the process does not need
+to be restarted.
 
-The configurator never edits `style.css`.
+If a configuration cannot be loaded, Waypie reports the error to stderr and
+keeps the last valid in-memory configuration instead of terminating.
+
+The configurator never edits or hot-reloads `style.css`. Restart Waypie after
+changing visual styles.
 
 For compositor window rules, the configurator uses the application ID
 `waypie.config`. The icon picker is a modal transient window belonging to the
@@ -308,7 +313,8 @@ In the configurator:
    `icons/`.
 4. Search by file name.
 5. Click an icon.
-6. Press **Save** and restart Waypie.
+6. Press **Save**, close the currently visible menu if necessary, and open it
+   again with `waypie --show`.
 
 The icon path stored in the configuration is relative to its theme directory:
 
