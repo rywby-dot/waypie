@@ -311,12 +311,22 @@ class Waypie(Gtk.Application):
             self.hovered_hit = hovered_hit
             self.canvas.queue_draw()
 
-    def draw(self, _canvas, context, _width, _height):
+    def draw(self, _canvas, context, width, height):
         self.hits = []
 
         overlay = computed_style(self.styles, ("overlay",))
         context.set_source_rgba(*overlay["background-color"])
         context.paint()
+
+        if (
+            not self.menu_centers
+            and self.settings.center_mode
+            and width > 0
+            and height > 0
+        ):
+            center = self.clamp_menu_position(width / 2, height / 2)
+            self.menu_centers = [center]
+            self.display_centers = [center]
 
         if not self.menu_centers:
             return
