@@ -156,4 +156,6 @@ circle.active {
   scale: 1.15;
   /* Added radial offset while hovered; negative values move inward. */
   distance: 20px;
+  /* Maximum share of distance applied to nearby non-active circles. */
+  follow-distance: 20%;
 }

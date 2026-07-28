@@ -44,6 +44,7 @@ DEFAULT_STYLE = {
     "distance": None,
     "font-size": 14.0,
     "font-family": "Sans",
+    "follow-distance": 0.0,
     "icon-size": None,
     "opacity": 1.0,
     "scale": 1.0,
@@ -256,6 +257,8 @@ def computed_style(rules, selectors):
                 style[name] = parse_color(value, name)
             elif name == "distance":
                 style[name] = parse_signed_pixels(value, name)
+            elif name == "follow-distance":
+                style[name] = parse_percentage(value, name)
             elif name in {
                 "border-width",
                 "font-size",
@@ -323,6 +326,16 @@ def parse_signed_pixels(value, name):
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
     return float(match.group(1))
+
+
+def parse_percentage(value, name):
+    match = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)%", value)
+    if not match:
+        raise SystemExit(f"waypie: invalid {name}: {value}")
+    percentage = float(match.group(1))
+    if percentage > 100:
+        raise SystemExit(f"waypie: {name} must be between 0% and 100%")
+    return percentage / 100
 
 
 def parse_color(value, name):

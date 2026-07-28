@@ -237,6 +237,7 @@ distance can be set in CSS:
 circle.active {
   scale: 1.15;
   distance: 20px;
+  follow-distance: 20%;
 }
 ```
 
@@ -245,6 +246,14 @@ outward and `-20px` moves it 20 pixels inward. The final radial distance cannot
 be less than zero. Runtime circles animate between the normal and offset
 positions. The configurator intentionally previews active growth without
 moving circles away from the center.
+
+`follow-distance` gives non-active circles a pointer-reactive share of
+`distance`. With `follow-distance: 20%`, a non-active circle in exactly the
+same angular direction as the pointer receives 20% of the configured offset.
+The share decreases smoothly with angular difference and reaches 0% on the
+opposite side at 180°. Only the pointer angle is used: moving the pointer
+farther from or closer to the center does not change the effect. The active
+circle always receives the full `distance` and does not use this percentage.
 
 Monochrome SVG icons using `currentColor` inherit the CSS `color` property.
 
