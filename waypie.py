@@ -327,7 +327,11 @@ class Waypie(Gtk.Application):
         center_x, center_y = self.display_centers[-1]
         target_center_x, target_center_y = self.menu_centers[-1]
         pointer_angle = None
-        if self.pointer_position is not None:
+        if (
+            self.pointer_position is not None
+            and self.hovered_hit is not None
+            and self.hovered_hit[0] == "item"
+        ):
             pointer_x, pointer_y = self.pointer_position
             if math.hypot(pointer_x - center_x, pointer_y - center_y) > 1e-6:
                 pointer_angle = direction_angle(
