@@ -14,6 +14,7 @@ from waypie_common import (
     angular_distance,
     animation_duration,
     computed_style,
+    content_opacity,
     direction_angle,
     ease_out_cubic,
     icon_path,
@@ -550,6 +551,7 @@ class Waypie(Gtk.Application):
                     and self.settings.active_label_in_center
                 ),
                 submenu_indicators=bool(item.items),
+                submenu_indicators_active=item_active,
             )
             scene.append((x, y, size * reveal, item, style, reveal, bool(item.items)))
             self.visual_positions[("item", index)] = (x, y)
@@ -698,15 +700,17 @@ class Waypie(Gtk.Application):
     def item_style(self, item, center=False, history=False, active=False):
         selectors = ["circle"]
         if center:
-            selectors.append("circle.center")
+            role_selectors = ["circle.center"]
         elif history:
-            selectors.append("circle.history")
+            role_selectors = ["circle.history"]
         else:
-            selectors.append("circle.item")
+            role_selectors = ["circle.item"]
             if item.items:
-                selectors.append("circle.submenu")
+                role_selectors.append("circle.submenu")
+        selectors.extend(role_selectors)
         if active:
             selectors.append("circle.active")
+            selectors.extend(f"{selector}.active" for selector in role_selectors)
         return computed_style(self.styles, selectors)
 
     def item_size(self, item, style):
@@ -766,6 +770,7 @@ class Waypie(Gtk.Application):
         label_override=None,
         hide_label=False,
         submenu_indicators=False,
+        submenu_indicators_active=False,
     ):
         if size <= 0:
             return
@@ -778,6 +783,7 @@ class Waypie(Gtk.Application):
                 item,
                 style,
                 opacity,
+                submenu_indicators_active,
             )
         radius = resolve_radius(style["border-radius"], size)
         left = x - size / 2
@@ -815,7 +821,7 @@ class Waypie(Gtk.Application):
             style["font-family"], cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
         )
         context.set_font_size(style["font-size"])
-        set_source_color(context, style["color"], style["opacity"] * opacity)
+        set_source_color(context, style["color"], content_opacity(style) * opacity)
         label = truncate(label_text, max(1, int(size / style["font-size"] * 1.5)))
         extents = context.text_extents(label)
         context.move_to(
@@ -833,8 +839,12 @@ class Waypie(Gtk.Application):
         item,
         submenu_style,
         opacity,
+        active=False,
     ):
-        style = computed_style(self.styles, ("submenu-indicator",))
+        selectors = ["submenu-indicator"]
+        if active:
+            selectors.append("submenu-indicator.active")
+        style = computed_style(self.styles, selectors)
         indicator_size = style["width"]
         protrusion = style["protrusion"]
         if (
@@ -935,7 +945,7 @@ class Waypie(Gtk.Application):
             x - pixbuf.get_width() / 2,
             y - pixbuf.get_height() / 2,
         )
-        context.paint_with_alpha(style["opacity"] * opacity)
+        context.paint_with_alpha(content_opacity(style) * opacity)
         context.restore()
         return True
 

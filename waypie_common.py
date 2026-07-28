@@ -47,6 +47,7 @@ DEFAULT_STYLE = {
     "follow-distance": 0.0,
     "icon-size": None,
     "opacity": 1.0,
+    "text-opacity": None,
     "protrusion": 0.0,
     "scale": 1.0,
     "width": None,
@@ -268,7 +269,7 @@ def computed_style(rules, selectors):
                 "width",
             }:
                 style[name] = parse_pixels(value, name)
-            elif name == "opacity":
+            elif name in {"opacity", "text-opacity"}:
                 style[name] = parse_opacity(value)
             elif name == "scale":
                 style[name] = positive_number_string(value, name)
@@ -277,6 +278,11 @@ def computed_style(rules, selectors):
             elif name == "font-family":
                 style[name] = value.strip("\"'")
     return style
+
+
+def content_opacity(style):
+    value = style["text-opacity"]
+    return style["opacity"] if value is None else value
 
 
 def icon_themes():
