@@ -1,100 +1,78 @@
-# Diameter of the central close hitbox; 0 disables it.
-# Remove this line to use the visible central circle diameter.
-center-hitbox-size = 100
-
-# Minimum distance from every newly opened menu center to a screen edge.
+menu-radius = 170
+center-hitbox-size = 200
 minimum-edge-distance = 120
-
-# Configurator only: keep all items evenly spaced while editing.
-preserve-proportions = false
-
-# Configurator only: snap edited groups to a 5° angular grid.
-auto-alignment = false
-
-# Configurator only: show icons instead of labels in the preview.
+preserve-proportions = true
+auto-alignment = true
 configurator-show-icons = true
 
-# Root menu table. It may contain items but cannot contain a command.
 [menu]
-
-# Text shown for the root menu.
 label = "Waypie"
+icon-theme = "Papirus-Dark"
+icon = "16x16/actions/atmosphere.svg"
 
-# Optional icon-set directory below ~/.config/waypie/icons/.
-icon-theme = "tabler"
-
-# Optional icon path relative to the selected icon-set directory.
-# icon-theme and icon must always be specified together.
-icon = "outline/menu-2.svg"
-
-# A command item. Every non-root item must contain either command or items.
 [[menu.items]]
-
-# Text shown when this item is active.
-label = "Terminal"
-
-# Shell command executed when this item is activated.
-command = "foot"
-
-# Clockwise direction in integer degrees: 0 is up and 90 is right.
-angle = 270
-
-# Optional icon set for this item.
-icon-theme = "tabler"
-
-# Optional icon file within the selected set.
-icon = "outline/terminal-2.svg"
-
-# A submenu item: it has nested items and therefore no command.
-[[menu.items]]
-
-# Submenu label.
 label = "Apps"
+icon-theme = "tabler-icons"
+icon = "outline/apps.svg"
+angle = 60
 
-# Direction of this submenu in its parent.
-angle = 90
-
-# Configurator-only invisible slot used by Preserve proportions.
-# It is saved independently from the actual automatic return direction.
-proportion-angle = 270
-
-# Optional submenu icon set.
-icon-theme = "papirus"
-
-# Optional nested icon path; icon directories are scanned recursively.
-icon = "apps/org.kde.dolphin.svg"
-
-# First command inside Apps.
 [[menu.items.items]]
-label = "Files"
+label = "Dolphin"
 command = "dolphin"
-angle = 0
+angle = 330
 
-# Example of absolute positioning relative to the current menu center.
-# x and y must be specified together and replace radial positioning.
 [[menu.items.items]]
 label = "Calculator"
 command = "qalculate-qt"
+icon-theme = "tabler-icons"
+icon = "filled/calculator.svg"
+angle = 60
 
-# Horizontal offset in pixels; positive values move right.
-x = 150
-
-# Vertical offset in pixels; positive values move down.
-y = 80
-
-# A deeper submenu demonstrating unlimited nesting.
 [[menu.items.items]]
 label = "More"
-angle = 180
+icon-theme = "Papirus-Dark"
+icon = "16x16/actions/add.svg"
+angle = 150
 
-# Command nested three menu levels deep.
 [[menu.items.items.items]]
-label = "Zoom out"
-command = "driftwm msg action zoom-to-fit"
+label = "Waypie git"
+command = "xdg-open https://github.com/rywby-dot/waypie"
 angle = 90
 
-# Another deeply nested command with shell quoting.
 [[menu.items.items.items]]
-label = "System info"
-command = "foot -a foot-ff zsh -c 'fastfetch && sleep 9999'"
-angle = 270
+label = "Close menu"
+command = "waypie --show"
+angle = 210
+
+[[menu.items]]
+label = "Config"
+command = "waypie-config"
+icon-theme = "Papirus-Dark"
+icon = "16x16/actions/configuration.svg"
+angle = 180
+
+[[menu.items]]
+label = "Terminals"
+icon-theme = "Papirus-Dark"
+icon = "16x16/actions/cm_runterm.svg"
+angle = 300
+
+[[menu.items.items]]
+label = "Foot"
+command = "foot"
+angle = 264
+
+[[menu.items.items]]
+label = "Kitty"
+command = "kitty"
+angle = 192
+
+[[menu.items.items]]
+label = "Alacritty"
+command = "alacritty"
+angle = 336
+
+[[menu.items.items]]
+label = "Ghostty"
+command = "ghostty"
+angle = 48

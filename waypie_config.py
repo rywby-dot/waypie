@@ -9,8 +9,9 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("GdkWayland", "4.0")
 
-from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
+from gi.repository import Gdk, GdkPixbuf, GdkWayland, GLib, Gtk
 
 from waypie_common import (
     CONFIG_DIR,
@@ -19,8 +20,10 @@ from waypie_common import (
     Item,
     angular_delta,
     angular_distance,
+    animation_duration,
     computed_style,
     direction_angle,
+    ease_out_cubic,
     icon_path,
     icon_themes,
     largest_gap_angle,
@@ -45,7 +48,7 @@ DEFAULT_HISTORY = {"opacity": "0.35", "scale": "2"}
 
 class Configurator(Gtk.Application):
     def __init__(self, settings, styles):
-        super().__init__(application_id="dev.waypie.Configurator")
+        super().__init__(application_id="waypie.config")
         self.settings = settings
         self.styles = styles
         self.window = None
@@ -68,7 +71,6 @@ class Configurator(Gtk.Application):
         self.drag_origin = (0.0, 0.0)
         self.drag_start_angle = 0.0
         self.drag_initial_angles = []
-        self.drag_initial_proportion_angle = None
         self.drag_reorder_armed = False
         self.drag_item = None
         self.drag_original_index = None
@@ -77,6 +79,10 @@ class Configurator(Gtk.Application):
         self.drag_happened = False
         self.click_origin = (0.0, 0.0)
         self.updating_fields = False
+        self.preview_animations = {}
+        self.preview_departures = []
+        self.preview_tick = None
+        self.preview_hover_target = None
 
     def do_activate(self):
         if self.window is not None:
@@ -100,6 +106,7 @@ class Configurator(Gtk.Application):
             ("Delete", self.on_delete),
             ("Open submenu", self.on_open_submenu),
             ("Up", self.on_up),
+            ("Center layout", self.on_center_layout),
             ("Save", self.on_save),
         ):
             button = Gtk.Button(label=label)
@@ -118,7 +125,9 @@ class Configurator(Gtk.Application):
         self.show_icons_check.connect("toggled", self.on_show_icons_changed)
         toolbar.append(self.show_icons_check)
         self.status = Gtk.Label(xalign=0)
-        self.status.set_hexpand(True)
+        self.status.set_text("Saved")
+        self.status.set_width_chars(8)
+        self.status.set_size_request(70, -1)
         toolbar.append(self.status)
         root.append(toolbar)
 
@@ -151,6 +160,10 @@ class Configurator(Gtk.Application):
         drag.connect("drag-end", self.on_drag_end)
         self.canvas.add_controller(drag)
         click.group(drag)
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self.on_preview_motion)
+        motion.connect("leave", self.on_preview_leave)
+        self.canvas.add_controller(motion)
         content.append(self.canvas)
 
         properties = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -184,6 +197,13 @@ class Configurator(Gtk.Application):
         settings_title.add_css_class("heading")
         properties.append(settings_title)
         for name, label, lower, upper, value in (
+            (
+                "menu_radius",
+                "menu-radius",
+                1,
+                8192,
+                self.settings.menu_radius,
+            ),
             (
                 "center_hitbox_size",
                 "center-hitbox-size",
@@ -306,14 +326,9 @@ class Configurator(Gtk.Application):
                 menu = self.item_at(self.selected_path[:-1])
                 initial = [child.angle for child in menu.items]
                 delta = angular_delta(requested_angle, item.angle)
-                initial_proportion = (
-                    menu.proportion_angle if self.selected_path[:-1] else None
-                )
-                self.rotate_group(menu, initial, delta, initial_proportion)
+                self.rotate_group(menu, initial, delta)
             else:
                 self.set_item_angle(item, self.aligned_angle(requested_angle))
-            item.x = None
-            item.y = None
         row = self.path_rows.get(self.selected_path)
         if row is not None:
             suffix = " ▸" if item.items else ""
@@ -360,6 +375,7 @@ class Configurator(Gtk.Application):
             return
         parent_path = self.selected_path[:-1]
         parent = self.item_at(parent_path)
+        self.capture_preview_departures([self.item_at(self.selected_path)])
         del parent.items[self.selected_path[-1]]
         self.selected_path = parent_path
         self.current_path = parent_path
@@ -373,6 +389,7 @@ class Configurator(Gtk.Application):
         if not item.items:
             self.set_status("The selected item is not a submenu", error=True)
             return
+        self.preview_animations.pop(("item", id(item)), None)
         self.selected_path = path
         self.current_path = path
         self.sync_fields()
@@ -382,6 +399,7 @@ class Configurator(Gtk.Application):
     def on_up(self, _button):
         if not self.current_path:
             return
+        self.capture_preview_departures(self.item_at(self.current_path).items)
         self.selected_path = self.current_path
         self.current_path = self.current_path[:-1]
         self.rebuild_tree()
@@ -398,12 +416,11 @@ class Configurator(Gtk.Application):
         self.set_status("Unsaved changes")
 
     def preview_item_offset(self, item):
-        style = self.preview_style(item)
-        if item.x is not None:
-            return item.x, item.y
-        distance = style["distance"]
         radians = math.radians(item.angle)
-        return distance * math.sin(radians), -distance * math.cos(radians)
+        return (
+            self.settings.menu_radius * math.sin(radians),
+            -self.settings.menu_radius * math.cos(radians),
+        )
 
     def preview_history_style(self):
         rules = dict(DEFAULT_HISTORY)
@@ -443,17 +460,15 @@ class Configurator(Gtk.Application):
                 continue
             if not previous and self.drag_reorder_armed and item is self.drag_item:
                 continue
-            selected = not previous and ("item", index) == self.selected_target()
+            selected = not previous and (
+                ("item", index) == self.selected_target()
+                or ("item", index) == self.preview_hover_target
+            )
             style = self.preview_style(item, selected, previous=previous)
             size = self.preview_size(item, style)
-            if item.x is not None:
-                x = center[0] + item.x
-                y = center[1] + item.y
-            else:
-                distance = style["distance"]
-                radians = math.radians(item.angle)
-                x = center[0] + distance * math.sin(radians)
-                y = center[1] - distance * math.cos(radians)
+            radians = math.radians(item.angle)
+            x = center[0] + self.settings.menu_radius * math.sin(radians)
+            y = center[1] - self.settings.menu_radius * math.cos(radians)
             circles.append((index, item, style, x, y, size))
         return menu, center, circles
 
@@ -476,11 +491,213 @@ class Configurator(Gtk.Application):
     def preview_size(self, item, style):
         return style["width"] * style["scale"]
 
+    def animated_preview_geometry(
+        self,
+        key,
+        target,
+        spawn=None,
+    ):
+        now = GLib.get_monotonic_time() / 1_000_000
+        animation = self.preview_animations.get(key)
+        if animation is None:
+            initial = spawn if spawn is not None else target
+            animation = {
+                "current": initial,
+                "start": initial,
+                "target": target,
+                "started": now,
+                "duration": animation_duration(self.styles, "menu-duration"),
+            }
+            self.preview_animations[key] = animation
+        else:
+            self.update_preview_animation(animation, now)
+            if animation["target"] != target:
+                current = animation["current"]
+                position_changed = current[:2] != target[:2]
+                opacity_changed = current[3] != target[3]
+                duration_name = (
+                    "menu-duration"
+                    if position_changed or opacity_changed
+                    else "hover-duration"
+                )
+                animation.update(
+                    start=current,
+                    target=target,
+                    started=now,
+                    duration=animation_duration(self.styles, duration_name),
+                )
+        self.update_preview_animation(animation, now)
+        if animation["current"] != animation["target"]:
+            self.ensure_preview_tick()
+        return animation["current"]
+
+    @staticmethod
+    def update_preview_animation(animation, now):
+        duration = animation["duration"]
+        if duration == 0:
+            animation["current"] = animation["target"]
+            return
+        progress = min(1.0, (now - animation["started"]) / duration)
+        eased = ease_out_cubic(progress)
+        animation["current"] = tuple(
+            start + (target - start) * eased
+            for start, target in zip(
+                animation["start"],
+                animation["target"],
+                strict=True,
+            )
+        )
+
+    def ensure_preview_tick(self):
+        if self.preview_tick is None:
+            self.preview_tick = self.canvas.add_tick_callback(
+                self.on_preview_animation_frame
+            )
+
+    def capture_preview_departures(self, items):
+        if self.canvas is None:
+            return
+        _menu, center, circles = self.preview_layout()
+        circles_by_id = {
+            id(item): (item, style, x, y, size)
+            for _index, item, style, x, y, size in circles
+        }
+        now = GLib.get_monotonic_time() / 1_000_000
+        duration = animation_duration(self.styles, "menu-duration")
+        for item in items:
+            node = circles_by_id.get(id(item))
+            if node is None:
+                continue
+            _item, style, x, y, size = node
+            animation = self.preview_animations.pop(("item", id(item)), None)
+            if animation is not None:
+                self.update_preview_animation(animation, now)
+                x, y, size, opacity = animation["current"]
+            else:
+                opacity = 1.0
+            self.preview_departures.append(
+                {
+                    "item": item,
+                    "style": style,
+                    "start": (x, y, size, opacity),
+                    "target": (center[0], center[1], size * 0.75, 0.0),
+                    "started": now,
+                    "duration": duration,
+                }
+            )
+        if self.preview_departures:
+            self.ensure_preview_tick()
+
+    def draw_preview_departures(self, context):
+        now = GLib.get_monotonic_time() / 1_000_000
+        remaining = []
+        for departure in self.preview_departures:
+            duration = departure["duration"]
+            progress = (
+                1.0
+                if duration == 0
+                else min(1.0, (now - departure["started"]) / duration)
+            )
+            eased = ease_out_cubic(progress)
+            geometry = tuple(
+                start + (target - start) * eased
+                for start, target in zip(
+                    departure["start"],
+                    departure["target"],
+                    strict=True,
+                )
+            )
+            if geometry[3] > 0:
+                self.draw_preview_item(
+                    context,
+                    *geometry[:3],
+                    departure["item"],
+                    departure["style"],
+                    show_icon=self.show_icons_check.get_active(),
+                    opacity=geometry[3],
+                )
+            if progress < 1:
+                remaining.append(departure)
+        self.preview_departures = remaining
+
+    def on_preview_animation_frame(self, _canvas, _frame_clock):
+        now = GLib.get_monotonic_time() / 1_000_000
+        active = False
+        for animation in self.preview_animations.values():
+            self.update_preview_animation(animation, now)
+            if animation["current"] != animation["target"]:
+                active = True
+        if any(
+            departure["duration"] == 0
+            or now - departure["started"] < departure["duration"]
+            for departure in self.preview_departures
+        ):
+            active = True
+        self.canvas.queue_draw()
+        if active:
+            return True
+        self.preview_tick = None
+        return False
+
+    def animate_preview_layout(
+        self,
+        menu,
+        center,
+        circles,
+        opacity=1.0,
+        previous=False,
+    ):
+        hover_target = "parent-center" if previous else "center"
+        center_style = self.preview_style(
+            menu,
+            selected=(
+                self.preview_hover_target == (hover_target, None)
+                or (not previous and self.selected_path == self.current_path)
+            ),
+            center=True,
+            previous=previous,
+        )
+        center_size = self.preview_size(menu, center_style)
+        center_key = (
+            "previous-center" if previous else "current-center",
+            id(menu),
+        )
+        fixed_center = (
+            self.canvas.get_width() / 2,
+            self.canvas.get_height() / 2,
+        )
+        center_geometry = self.animated_preview_geometry(
+            center_key,
+            (*center, center_size, opacity),
+            (
+                *(fixed_center if previous else center),
+                center_size * 0.75,
+                0.0,
+            ),
+        )
+        animated_circles = []
+        for index, item, style, x, y, size in circles:
+            geometry = self.animated_preview_geometry(
+                ("item", id(item)),
+                (x, y, size, opacity),
+                (
+                    center_geometry[0],
+                    center_geometry[1],
+                    size * 0.75,
+                    0.0,
+                ),
+            )
+            animated_circles.append((index, item, style, *geometry[:3], geometry[3]))
+        return center_style, center_geometry, animated_circles
+
     def draw_preview(self, _canvas, context, width, height):
         overlay = computed_style(self.styles, ("overlay",))
         context.set_source_rgba(*overlay["background-color"])
         context.paint()
 
+        parent = None
+        parent_center_style = None
+        parent_geometry = None
         if self.current_path:
             history_opacity = self.preview_history_style()["opacity"]
             parent_path = self.current_path[:-1]
@@ -488,33 +705,38 @@ class Configurator(Gtk.Application):
                 parent_path,
                 previous=True,
             )
-            connector = computed_style(self.styles, ("connector",))
-            if connector["width"]:
-                set_source_color(
-                    context,
-                    connector["color"],
-                    connector["opacity"] * history_opacity,
-                )
-                context.set_line_width(connector["width"])
-                for _index, _item, _style, x, y, _size in parent_circles:
-                    context.move_to(*parent_center)
-                    context.line_to(x, y)
-                context.stroke()
-            parent_center_style = self.preview_style(
+            (
+                parent_center_style,
+                parent_geometry,
+                parent_circles,
+            ) = self.animate_preview_layout(
                 parent,
-                center=True,
+                parent_center,
+                parent_circles,
+                history_opacity,
                 previous=True,
             )
+            connector = computed_style(self.styles, ("connector",))
+            if connector["width"]:
+                context.set_line_width(connector["width"])
+                for _index, _item, _style, x, y, _size, opacity in parent_circles:
+                    set_source_color(
+                        context,
+                        connector["color"],
+                        connector["opacity"] * min(parent_geometry[3], opacity),
+                    )
+                    context.move_to(*parent_geometry[:2])
+                    context.line_to(x, y)
+                    context.stroke()
             self.draw_preview_item(
                 context,
-                *parent_center,
-                self.preview_size(parent, parent_center_style),
+                *parent_geometry[:3],
                 parent,
                 parent_center_style,
                 show_icon=self.show_icons_check.get_active(),
-                opacity=history_opacity,
+                opacity=parent_geometry[3],
             )
-            for _index, item, style, x, y, size in parent_circles:
+            for _index, item, style, x, y, size, opacity in parent_circles:
                 self.draw_preview_item(
                     context,
                     x,
@@ -523,10 +745,24 @@ class Configurator(Gtk.Application):
                     item,
                     style,
                     show_icon=self.show_icons_check.get_active(),
-                    opacity=history_opacity,
+                    opacity=opacity,
                 )
 
+        self.draw_preview_departures(context)
+
         menu, center, circles = self.preview_layout()
+        if self.drag_reorder_armed and self.drag_item is not None:
+            hidden_style = self.preview_style(self.drag_item, selected=True)
+            hidden_size = self.preview_size(self.drag_item, hidden_style)
+            self.animated_preview_geometry(
+                ("item", id(self.drag_item)),
+                (center[0], center[1], hidden_size * 0.75, 0.0),
+            )
+        center_style, center_geometry, circles = self.animate_preview_layout(
+            menu,
+            center,
+            circles,
+        )
 
         if self.current_path:
             parent_rules = dict(DEFAULT_PARENT_LINK)
@@ -536,55 +772,57 @@ class Configurator(Gtk.Application):
                 ("parent-link",),
             )
             if parent_link["width"]:
-                center_style = self.preview_style(menu, center=True)
-                delta_x = parent_center[0] - center[0]
-                delta_y = parent_center[1] - center[1]
+                delta_x = parent_geometry[0] - center_geometry[0]
+                delta_y = parent_geometry[1] - center_geometry[1]
                 distance = math.hypot(delta_x, delta_y)
                 direction_x = delta_x / distance if distance else 0
                 direction_y = delta_y / distance if distance else 0
-                start_distance = self.preview_size(menu, center_style) / 2
+                start_distance = center_geometry[2] / 2
                 end_distance = max(
                     start_distance,
-                    distance - self.preview_size(parent, parent_center_style) / 2,
+                    distance - parent_geometry[2] / 2,
                 )
                 set_source_color(
                     context,
                     parent_link["color"],
-                    parent_link["opacity"],
+                    parent_link["opacity"]
+                    * min(center_geometry[3], parent_geometry[3]),
                 )
                 context.set_line_width(parent_link["width"])
                 context.set_line_cap(cairo.LINE_CAP_ROUND)
                 context.move_to(
-                    center[0] + start_distance * direction_x,
-                    center[1] + start_distance * direction_y,
+                    center_geometry[0] + start_distance * direction_x,
+                    center_geometry[1] + start_distance * direction_y,
                 )
                 context.line_to(
-                    center[0] + end_distance * direction_x,
-                    center[1] + end_distance * direction_y,
+                    center_geometry[0] + end_distance * direction_x,
+                    center_geometry[1] + end_distance * direction_y,
                 )
                 context.stroke()
                 context.set_line_cap(cairo.LINE_CAP_BUTT)
 
         connector = computed_style(self.styles, ("connector",))
         if connector["width"]:
-            set_source_color(context, connector["color"], connector["opacity"])
             context.set_line_width(connector["width"])
-            for _index, _item, _style, x, y, _size in circles:
-                context.move_to(*center)
+            for _index, _item, _style, x, y, _size, opacity in circles:
+                set_source_color(
+                    context,
+                    connector["color"],
+                    connector["opacity"] * min(center_geometry[3], opacity),
+                )
+                context.move_to(*center_geometry[:2])
                 context.line_to(x, y)
-            context.stroke()
+                context.stroke()
 
-        center_style = self.preview_style(menu, center=True)
         self.draw_preview_item(
             context,
-            center[0],
-            center[1],
-            self.preview_size(menu, center_style),
+            *center_geometry[:3],
             menu,
             center_style,
             show_icon=self.show_icons_check.get_active(),
+            opacity=center_geometry[3],
         )
-        for _index, item, style, x, y, size in circles:
+        for _index, item, style, x, y, size, opacity in circles:
             self.draw_preview_item(
                 context,
                 x,
@@ -593,6 +831,7 @@ class Configurator(Gtk.Application):
                 item,
                 style,
                 show_icon=self.show_icons_check.get_active(),
+                opacity=opacity,
             )
 
     @staticmethod
@@ -675,6 +914,23 @@ class Configurator(Gtk.Application):
                 return index
         return None
 
+    def on_preview_motion(self, _controller, x, y):
+        if self.preview_parent_center_hit(x, y):
+            target = ("parent-center", None)
+        elif self.preview_center_hit(x, y):
+            target = ("center", None)
+        else:
+            index = self.preview_hit(x, y)
+            target = ("item", index) if index is not None else None
+        if target != self.preview_hover_target:
+            self.preview_hover_target = target
+            self.canvas.queue_draw()
+
+    def on_preview_leave(self, _controller):
+        if self.preview_hover_target is not None:
+            self.preview_hover_target = None
+            self.canvas.queue_draw()
+
     def preview_center_hit(self, x, y):
         menu, center, _circles = self.preview_layout()
         style = self.preview_style(menu, center=True)
@@ -740,7 +996,6 @@ class Configurator(Gtk.Application):
         self.drag_start_angle = direction_angle(x - center_x, y - center_y)
         menu = self.item_at(self.current_path)
         self.drag_initial_angles = [item.angle for item in menu.items]
-        self.drag_initial_proportion_angle = menu.proportion_angle
         self.drag_reorder_armed = False
         self.drag_item = (
             menu.items[self.drag_index] if self.drag_index is not None else None
@@ -768,10 +1023,12 @@ class Configurator(Gtk.Application):
         if self.preserve_check.get_active():
             center_style = self.preview_style(menu, center=True)
             center_radius = self.preview_size(menu, center_style) / 2
-            if pointer_distance <= center_radius:
-                if not self.drag_reorder_armed:
-                    self.drag_reorder_armed = True
-                    self.align_current_menu(excluded=item)
+            enter_radius = center_radius * 0.85
+            exit_radius = center_radius * 1.15
+            if not self.drag_reorder_armed and pointer_distance <= enter_radius:
+                self.drag_reorder_armed = True
+                self.align_current_menu(excluded=item)
+            if self.drag_reorder_armed and pointer_distance < exit_radius:
                 self.set_status("Move outward to place the item in another slot")
                 self.sync_fields()
                 self.canvas.queue_draw()
@@ -780,23 +1037,15 @@ class Configurator(Gtk.Application):
                 self.insert_dragged_item(pointer_angle)
                 self.drag_reorder_armed = False
                 self.drag_initial_angles = [child.angle for child in menu.items]
-                self.drag_initial_proportion_angle = menu.proportion_angle
                 self.drag_start_angle = pointer_angle
             if self.current_path:
                 delta = angular_delta(pointer_angle, self.drag_start_angle)
-                self.rotate_group(
-                    menu,
-                    self.drag_initial_angles,
-                    delta,
-                    self.drag_initial_proportion_angle,
-                )
+                self.rotate_group(menu, self.drag_initial_angles, delta)
             else:
                 delta = angular_delta(pointer_angle, self.drag_start_angle)
                 self.rotate_group(menu, self.drag_initial_angles, delta)
         else:
             self.set_item_angle(item, self.aligned_angle(pointer_angle))
-        item.x = None
-        item.y = None
         self.sync_fields()
         self.canvas.queue_draw()
         self.set_status("Unsaved changes")
@@ -813,7 +1062,6 @@ class Configurator(Gtk.Application):
         self.drag_index = None
         self.drag_active = False
         self.drag_initial_angles = []
-        self.drag_initial_proportion_angle = None
         self.drag_reorder_armed = False
         self.drag_item = None
         self.drag_original_index = None
@@ -848,12 +1096,46 @@ class Configurator(Gtk.Application):
             )
         return round(angle) % 360
 
+    def on_center_layout(self, _button):
+        menu = self.item_at(self.current_path)
+        if not menu.items:
+            return
+
+        if self.current_path:
+            step = 360 / (len(menu.items) + 1)
+            angles = [
+                round(menu.return_angle + (index + 1) * step) % 360
+                for index in range(len(menu.items))
+            ]
+        else:
+            step = 360 / len(menu.items)
+            candidates = (
+                [round(base + index * step) % 360 for index in range(len(menu.items))]
+                for base in (0, 90, 180, 270)
+            )
+            angles = min(
+                candidates,
+                key=lambda candidate: self.layout_assignment_cost(
+                    menu.items,
+                    candidate,
+                ),
+            )
+
+        for item, angle in self.layout_assignment(menu.items, angles):
+            self.set_item_angle(item, angle)
+        self.sync_fields()
+        self.canvas.queue_draw()
+        self.set_status("Unsaved changes")
+
     def proportional_angles(self, items, base=None):
         if not items:
             return []
         if self.current_path:
             menu = self.item_at(self.current_path)
-            parent_angle = menu.proportion_angle
+            parent_angle = largest_gap_angle(
+                [item.angle for item in items],
+                preferred=menu.return_angle,
+            )
             step = 360 / (len(items) + 1)
             return [
                 round(parent_angle + (index + 1) * step) % 360
@@ -866,28 +1148,40 @@ class Configurator(Gtk.Application):
         step = 360 / len(items)
         return [round(base + index * step) % 360 for index in range(len(items))]
 
+    @staticmethod
+    def layout_assignment(items, target_angles):
+        ordered_items = sorted(items, key=lambda item: item.angle)
+        ordered_targets = sorted(target_angles)
+        if not ordered_items:
+            return []
+        assignments = []
+        for shift in range(len(ordered_targets)):
+            shifted = ordered_targets[shift:] + ordered_targets[:shift]
+            assignments.append(list(zip(ordered_items, shifted, strict=True)))
+        return min(
+            assignments,
+            key=lambda assignment: sum(
+                angular_distance(item.angle, angle) for item, angle in assignment
+            ),
+        )
+
+    def layout_assignment_cost(self, items, target_angles):
+        return sum(
+            angular_distance(item.angle, angle)
+            for item, angle in self.layout_assignment(items, target_angles)
+        )
+
     def align_current_menu(self, excluded=None):
         menu = self.item_at(self.current_path)
         items = [item for item in menu.items if item is not excluded]
         if not items:
             return
         base = self.drag_group_base if excluded is not None else None
-        for item, angle in zip(
-            items,
-            self.proportional_angles(items, base),
-            strict=True,
-        ):
+        angles = self.proportional_angles(items, base)
+        for item, angle in self.layout_assignment(items, angles):
             self.set_item_angle(item, angle)
-            item.x = None
-            item.y = None
 
-    def rotate_group(
-        self,
-        menu,
-        initial_angles,
-        delta,
-        initial_proportion_angle=None,
-    ):
+    def rotate_group(self, menu, initial_angles, delta):
         if not initial_angles:
             return
         if self.alignment_check.get_active():
@@ -896,10 +1190,6 @@ class Configurator(Gtk.Application):
             delta = angular_delta(snapped_base, initial_angles[0])
         for item, initial in zip(menu.items, initial_angles, strict=True):
             self.set_item_angle(item, round(initial + delta) % 360)
-            item.x = None
-            item.y = None
-        if initial_proportion_angle is not None:
-            menu.proportion_angle = round(initial_proportion_angle + delta) % 360
 
     def insert_dragged_item(self, pointer_angle):
         menu = self.item_at(self.current_path)
@@ -938,11 +1228,8 @@ class Configurator(Gtk.Application):
         if not item.items:
             return
         item.return_angle = round(item.return_angle + delta) % 360
-        item.proportion_angle = round(item.proportion_angle + delta) % 360
         for child in item.items:
             child.angle = round(child.angle + delta) % 360
-            child.x = None
-            child.y = None
             self.rotate_descendants(child, delta)
 
     def on_choose_icon(self, _button):
@@ -1039,6 +1326,10 @@ class Configurator(Gtk.Application):
         clear.connect("clicked", remove_icon)
         window.set_child(content)
         rebuild()
+        window.realize()
+        surface = window.get_surface()
+        if isinstance(surface, GdkWayland.WaylandToplevel):
+            surface.set_application_id("waypie.config.icons")
         window.present()
 
     def on_save(self, _button):
@@ -1060,8 +1351,10 @@ class Configurator(Gtk.Application):
         self.set_status(f"Saved {CONFIG_PATH}")
 
     def set_status(self, message, error=False):
-        prefix = "Error: " if error else ""
-        self.status.set_text(f"{prefix}{message}")
+        if message.startswith("Saved"):
+            self.status.set_text("Saved")
+        elif not error and not message.startswith("Editing:"):
+            self.status.set_text("Unsaved")
 
 
 def validate_editable_tree(item, root=True, location="menu"):
@@ -1082,7 +1375,7 @@ def toml_number(value):
 
 
 def serialize_config(settings):
-    lines = []
+    lines = [f"menu-radius = {toml_number(settings.menu_radius)}"]
     if settings.center_hitbox_size is not None:
         lines.append(f"center-hitbox-size = {toml_number(settings.center_hitbox_size)}")
     lines.append(
@@ -1101,14 +1394,8 @@ def serialize_config(settings):
         if item.icon_theme and item.icon:
             lines.append(f"icon-theme = {json.dumps(item.icon_theme)}")
             lines.append(f"icon = {json.dumps(item.icon)}")
-        for name in ("angle", "x", "y"):
-            value = getattr(item, name)
-            if value is not None:
-                if name == "angle":
-                    value = round(value) % 360
-                lines.append(f"{name} = {toml_number(value)}")
-        if item.items and item.proportion_angle is not None and header != "[menu]":
-            lines.append(f"proportion-angle = {toml_number(item.proportion_angle)}")
+        if item.angle is not None:
+            lines.append(f"angle = {toml_number(round(item.angle) % 360)}")
         for child in item.items:
             append_item(child, f"[[{header.strip('[]')}.items]]")
 

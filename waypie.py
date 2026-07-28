@@ -140,6 +140,8 @@ class Waypie(Gtk.Application):
         self.visual_positions = {}
         self.scale_values = {}
         self.scale_animations = {}
+        self.distance_values = {}
+        self.distance_animations = {}
         self.animation_tick = None
         self.canvas = None
         self.window = None
@@ -278,6 +280,8 @@ class Waypie(Gtk.Application):
         self.visual_positions = {}
         self.scale_values.clear()
         self.scale_animations.clear()
+        self.distance_values.clear()
+        self.distance_animations.clear()
         if self.animation_tick is not None:
             self.canvas.remove_tick_callback(self.animation_tick)
             self.animation_tick = None
@@ -409,22 +413,27 @@ class Waypie(Gtk.Application):
 
         for index, item in enumerate(current.items):
             style = self.item_style(item, active=self.hovered_hit == ("item", index))
-            if item.x is not None:
-                x = center_x + item.x
-                y = center_y + item.y
-                hit_x = target_center_x + item.x
-                hit_y = target_center_y + item.y
-            else:
-                x, y = self.radial_position(
-                    (center_x, center_y),
-                    item.angle,
-                    style,
-                )
-                hit_x, hit_y = self.radial_position(
-                    (target_center_x, target_center_y),
-                    item.angle,
-                    style,
-                )
+            resting_distance = self.settings.menu_radius
+            target_distance = (
+                style["distance"]
+                if style["distance"] is not None
+                else self.settings.menu_radius
+            )
+            distance = self.animated_item_distance(
+                style,
+                ("item", index),
+                resting_distance,
+            )
+            x, y = self.radial_position(
+                (center_x, center_y),
+                item.angle,
+                distance,
+            )
+            hit_x, hit_y = self.radial_position(
+                (target_center_x, target_center_y),
+                item.angle,
+                target_distance,
+            )
             x = center_x + (x - center_x) * reveal
             y = center_y + (y - center_y) * reveal
             size = self.animated_item_size(
@@ -445,8 +454,7 @@ class Waypie(Gtk.Application):
             )
             scene.append((x, y, size * reveal, item, style, reveal))
             self.visual_positions[("item", index)] = (x, y)
-            selection_angle = None if item.x is not None else item.angle
-            self.hits.append((hit_x, hit_y, size, "item", index, selection_angle))
+            self.hits.append((hit_x, hit_y, size, "item", index, item.angle))
 
         if self.pointer_position is not None:
             hovered_hit = self.target_at(*self.pointer_position)
@@ -621,8 +629,28 @@ class Waypie(Gtk.Application):
         base_size = style["width"]
         return base_size * current
 
-    def radial_position(self, center, angle, style):
-        distance = style["distance"]
+    def animated_item_distance(self, style, key, resting_distance):
+        target = (
+            style["distance"]
+            if style["distance"] is not None
+            else self.settings.menu_radius
+        )
+        current = self.distance_values.setdefault(key, resting_distance)
+        duration = animation_duration(self.styles, "hover-duration")
+        animation = self.distance_animations.get(key)
+        if duration == 0:
+            self.distance_values[key] = target
+            self.distance_animations.pop(key, None)
+            current = target
+        elif abs(current - target) > 1e-6 and (
+            animation is None or animation[1] != target
+        ):
+            started = GLib.get_monotonic_time() / 1_000_000
+            self.distance_animations[key] = (current, target, started, duration)
+            self.ensure_animation_tick()
+        return current
+
+    def radial_position(self, center, angle, distance):
         radians = math.radians(angle)
         return (
             center[0] + distance * math.sin(radians),
@@ -811,21 +839,14 @@ class Waypie(Gtk.Application):
         visual_angle = direction_angle(offset_x, offset_y)
         return_angle = current.return_angle
 
-        item_angles = []
-        for item in current.items:
-            if item.x is not None:
-                item_angles.append(direction_angle(item.x, item.y))
-            else:
-                item_angles.append(item.angle)
+        item_angles = [item.angle for item in current.items]
         nearest_valid_angle = closest_angle_in_hit_sector(
             visual_angle,
             return_angle,
             item_angles,
         )
 
-        parent = self.item_at_path(self.path[:-1])
-        style = self.item_style(parent, parent=True)
-        minimum_distance = style["distance"]
+        minimum_distance = self.settings.menu_radius
         angle_is_valid = angular_distance(visual_angle, nearest_valid_angle) < 1e-6
         distance_is_valid = distance >= minimum_distance
         if angle_is_valid and distance_is_valid:
@@ -874,6 +895,8 @@ class Waypie(Gtk.Application):
     def reset_item_animations(self):
         self.scale_values.clear()
         self.scale_animations.clear()
+        self.distance_values.clear()
+        self.distance_animations.clear()
 
     def start_menu_animation(self, reveal_items):
         duration = animation_duration(self.styles, "menu-duration")
@@ -939,6 +962,19 @@ class Waypie(Gtk.Application):
             else:
                 self.scale_values[key] = target
                 del self.scale_animations[key]
+
+        for key, (start, target, started, duration) in list(
+            self.distance_animations.items()
+        ):
+            progress = min(1.0, (now - started) / duration)
+            self.distance_values[key] = start + (target - start) * ease_out_cubic(
+                progress
+            )
+            if progress < 1:
+                animating = True
+            else:
+                self.distance_values[key] = target
+                del self.distance_animations[key]
 
         self.canvas.queue_draw()
         if not animating:
