@@ -1,10 +1,11 @@
 # Waypie
+<img width="960" height="540" alt="ScreenShot-2026-07-28_14-09-30" src="https://github.com/user-attachments/assets/85c0c301-8623-4e02-b313-f2c37d63a128" />
 
-Waypie is a Kando-like radial menu for Wayland. It uses an overlay
+**Waypie is a Kando-like radial menu for Wayland. It uses an overlay
 layer-shell surface, supports arbitrarily nested submenus, animated navigation,
-icons, angular selection, and a graphical menu configurator.
+icons, angular selection, and a graphical menu configurator.**
 
-https://github.com/user-attachments/assets/e75f9d29-e1e5-4616-b96a-955b666a2e6a
+https://github.com/user-attachments/assets/ee4063bb-6680-47c7-b00f-0e30f6bd66ac
 
 > [!WARNING]
 > Waypie is experimental software, primarily built with AI.
@@ -108,6 +109,8 @@ All positions use integer angles. There is no separate absolute `x/y`
 positioning mode.
 
 ## Graphical configurator
+
+<img width="960" height="540" alt="ScreenShot-2026-07-28_14-09-41" src="https://github.com/user-attachments/assets/78f30d4c-cf64-46e4-99bd-1e4bf73cb0df" />
 
 Open the configurator with either command:
 
@@ -230,6 +233,8 @@ All visual settings remain in:
 ~/.config/waypie/style.css
 ```
 
+<img width="960" height="540" alt="ScreenShot-2026-07-28_14-09-59" src="https://github.com/user-attachments/assets/f493fe2a-6a99-439f-909a-0551e9c525c3" />
+
 Edit this file manually. The GUI deliberately does not duplicate CSS settings.
 Restart the running Waypie process after changing it.
 
@@ -270,6 +275,8 @@ center.
 Monochrome SVG icons using `currentColor` inherit the CSS `color` property.
 
 ## Icons
+
+<img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/fa3fb5f0-a64c-4216-96af-55f1c2ac155d" />
 
 Waypie does not bundle an icon library. Put downloaded icon sets below:
 
