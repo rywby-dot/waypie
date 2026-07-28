@@ -7,9 +7,9 @@ overlay {
 /* Durations shared by the runtime menu and configurator preview. */
 animation {
   /* Circle growth and radial movement when the active item changes. */
-  hover-duration: 200ms;
+  hover-duration: 300ms;
   /* Opening, closing, movement, item reveal, and auto-layout transition. */
-  menu-duration: 200ms;
+  menu-duration: 300ms;
 }
 
 /* Lines connecting the centers of opened runtime menus. */
@@ -17,9 +17,9 @@ connector {
   /* Connector color. */
   color: #ff8c00;
   /* Connector transparency from 0 to 1. */
-  opacity: 0.65;
+  opacity: 0.3;
   /* Connector thickness; 0px disables connectors. */
-  width: 2px;
+  width: 8px;
 }
 
 /* Thick return-direction indicator used only by the configurator. */
@@ -105,11 +105,11 @@ submenu-indicator {
   /* Indicator circle color. */
   color: #ffaa33;
   /* Indicator transparency. */
-  opacity: 0.8;
+  opacity: 0.4;
   /* Indicator circle diameter; 0px disables the indicators. */
-  width: 42px;
+  width: 30px;
   /* Visible outward amount; 0px hides the circles completely. */
-  protrusion: 14px;
+  protrusion: 10px;
 }
 
 /* Central circle of the currently open runtime or configurator menu. */
@@ -185,7 +185,7 @@ circle.active {
   /* Active-circle growth multiplier. */
   scale: 1.15;
   /* Added radial offset while hovered; negative values move inward. */
-  distance: 20px;
+  distance: 30px;
   /* Maximum share of distance applied to nearby non-active circles. */
-  follow-distance: 20%;
+  follow-distance: 40%;
 }
