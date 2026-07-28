@@ -89,12 +89,25 @@ When a submenu opens:
 
 - its center appears at the click position, constrained by
   `minimum-edge-distance`;
-- the menu centers are connected by an animated line;
+- the click sets the length of the new connection, with `menu-radius` used as
+  the minimum safe distance;
+- the previous menu moves around the new center until the connection points
+  exactly through the middle of the return hit sector;
+- every older connection keeps its stored length and is realigned in the same
+  way, so the complete chain remains geometrically valid;
+- old menu circles may approach an edge or move outside the visible screen;
+  edge constraints apply only to the newly active menu center;
+- the menu centers are connected by straight animated lines;
 - the previous menu becomes the return target;
 - menus two generations behind remain visible but translucent and
   non-interactive;
 - moving in the automatically calculated return direction and clicking returns
   to the previous menu.
+
+Returning to a previous menu uses the click as that menu's new center and
+realigns its older chain while preserving every stored connection length.
+Because every return circle is always centered in its angular hit sector, no
+post-transition position correction is necessary.
 
 ## Graphical configurator
 
@@ -129,10 +142,6 @@ The configurator can:
   `minimum-edge-distance`;
 - enable **Center mode** to open the root menu immediately at the screen
   center;
-- enable **Normalize return position** (`normalize-return-position`) to force the menu circle two
-  generations behind back to its exact return angle and `menu-radius` whenever
-  a deeper submenu is closed, even if it is already inside the correct angular
-  hit sector;
 - enable **Show active label in center** (`active-label-in-center`) to show the hovered command or
   submenu label in the current central circle instead of on the hovered item.
 
@@ -205,10 +214,19 @@ The example stylesheet documents every supported section:
 - `circle.item` — command items;
 - `circle.submenu` — items that open submenus;
 - `circle.center` — the currently open menu;
-- `circle.parent` — the interactive previous-menu circle;
-- `circle.ancestor` — non-interactive older history;
+- `circle.history` — every previous runtime menu at every history depth;
 - `circle.previous` — translucent previous-menu preview in the configurator;
 - `circle.active` — the action currently selected by cursor direction.
+
+All previous runtime menu centers remain rendered for the complete open chain.
+They share the same `circle.history` background, border, radius, text, icon,
+opacity, scale, and width settings; history depth does not change their
+appearance. The nearest history circle still provides the return direction,
+while older circles are visual only.
+
+Every link in that chain uses `connector`. Its `color`, `opacity`, and `width`
+properties control line color, transparency, and thickness; `width: 0px`
+disables the lines.
 
 Colors, opacity, borders, circle diameters, font settings, icon size, animation
 durations, and active-state scale are controlled here. The normal radial
@@ -218,14 +236,15 @@ distance can be set in CSS:
 ```css
 circle.active {
   scale: 1.15;
-  distance: 195px;
+  distance: 20px;
 }
 ```
 
-`distance` is the final distance from the center while active, not an amount
-added to `menu-radius`. Runtime circles animate to it. The configurator
-intentionally previews active growth without moving circles away from the
-center.
+`distance` is added to `menu-radius`: `20px` moves the active circle 20 pixels
+outward and `-20px` moves it 20 pixels inward. The final radial distance cannot
+be less than zero. Runtime circles animate between the normal and offset
+positions. The configurator intentionally previews active growth without
+moving circles away from the center.
 
 Monochrome SVG icons using `currentColor` inherit the CSS `color` property.
 

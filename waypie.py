@@ -31,25 +31,6 @@ CONFIGURATOR_MODE = os.environ.get("WAYPIE_CONFIGURATOR") == "1" or sys.argv[1:]
 ]
 
 
-def closest_angle_in_hit_sector(angle, target, competing_angles):
-    negative = []
-    positive = []
-    for competitor in competing_angles:
-        difference = (competitor - target + 180) % 360 - 180
-        if difference == -180:
-            negative.append(-180)
-            positive.append(180)
-        elif difference < 0:
-            negative.append(difference)
-        elif difference > 0:
-            positive.append(difference)
-
-    lower = max(negative) / 2 if negative else -180
-    upper = min(positive) / 2 if positive else 180
-    difference = (angle - target + 180) % 360 - 180
-    return (target + min(max(difference, lower), upper)) % 360
-
-
 def control_socket_path():
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
     display = os.environ.get("WAYLAND_DISPLAY", "wayland")
@@ -146,6 +127,7 @@ class Waypie(Gtk.Application):
         self.canvas = None
         self.window = None
         self.menu_centers = []
+        self.menu_link_lengths = []
         self.control_socket = None
         self.control_source = None
         self.icon_cache = {}
@@ -248,6 +230,7 @@ class Waypie(Gtk.Application):
         except SystemExit as error:
             print(error, file=sys.stderr)
         self.menu_centers = []
+        self.menu_link_lengths = []
         self.display_centers = []
         self.hits = []
         self.hovered_hit = None
@@ -268,6 +251,7 @@ class Waypie(Gtk.Application):
     def hide_menu(self):
         self.path.clear()
         self.menu_centers = []
+        self.menu_link_lengths = []
         self.display_centers = []
         self.hits = []
         self.hovered_hit = None
@@ -398,66 +382,54 @@ class Waypie(Gtk.Application):
             )
         )
 
-        if len(self.path) > 1:
-            ancestor = self.item_at_path(self.path[:-2])
-            style = self.item_style(ancestor, ancestor=True)
-            ancestor_size = self.item_size(ancestor, style)
-            ancestor_x, ancestor_y = self.display_centers[-3]
-            self.draw_item(
-                context,
-                ancestor_x,
-                ancestor_y,
-                ancestor_size,
-                ancestor,
-                style,
-            )
-        if self.path:
-            depth = len(self.path) - 1
-            parent = self.item_at_path(self.path[:-1])
+        for depth in range(len(self.path)):
+            history_item = self.item_at_path(self.path[:depth])
+            is_parent = depth == len(self.path) - 1
+            parent_hovered = is_parent and self.hovered_hit == ("parent", depth)
             style = self.item_style(
-                parent, parent=True, active=self.hovered_hit == ("parent", depth)
+                history_item,
+                history=True,
+                active=parent_hovered,
             )
-            parent_size = self.animated_item_size(
-                parent,
-                style,
-                ("parent", depth),
-                self.item_style(parent, parent=True)["scale"],
+            history_size = (
+                self.animated_item_size(
+                    history_item,
+                    style,
+                    ("parent", depth),
+                    self.item_style(history_item, history=True)["scale"],
+                )
+                if is_parent
+                else self.item_size(history_item, style)
             )
-            parent_x, parent_y = self.display_centers[depth]
+            history_x, history_y = self.display_centers[depth]
             self.draw_item(
                 context,
-                parent_x,
-                parent_y,
-                parent_size,
-                parent,
+                history_x,
+                history_y,
+                history_size,
+                history_item,
                 style,
-                active=(
-                    self.hovered_hit == ("parent", depth)
-                    and not self.settings.active_label_in_center
-                ),
-                hide_label=(
-                    self.hovered_hit == ("parent", depth)
-                    and self.settings.active_label_in_center
-                ),
+                active=(parent_hovered and not self.settings.active_label_in_center),
+                hide_label=(parent_hovered and self.settings.active_label_in_center),
             )
-            self.hits.append(
-                (
-                    parent_x,
-                    parent_y,
-                    parent_size,
-                    "parent",
-                    depth,
-                    current.return_angle,
+            if is_parent:
+                self.hits.append(
+                    (
+                        history_x,
+                        history_y,
+                        history_size,
+                        "parent",
+                        depth,
+                        current.return_angle,
+                    )
                 )
-            )
 
         for index, item in enumerate(current.items):
             style = self.item_style(item, active=self.hovered_hit == ("item", index))
             resting_distance = self.settings.menu_radius
-            target_distance = (
-                style["distance"]
-                if style["distance"] is not None
-                else self.settings.menu_radius
+            target_distance = max(
+                0,
+                self.settings.menu_radius + (style["distance"] or 0),
             )
             distance = self.animated_item_distance(
                 style,
@@ -544,30 +516,25 @@ class Waypie(Gtk.Application):
         if style["width"] is None or style["width"] == 0:
             return
         nodes = []
-        if len(self.path) > 1:
-            item = self.item_at_path(self.path[:-2])
-            item_style = self.item_style(item, ancestor=True)
-            nodes.append(
-                (
-                    self.display_centers[-3],
-                    self.circle_inner_radius(item, item_style),
-                )
-            )
-        if self.path:
-            depth = len(self.path) - 1
-            item = self.item_at_path(self.path[:-1])
+        for depth in range(len(self.path)):
+            item = self.item_at_path(self.path[:depth])
+            is_parent = depth == len(self.path) - 1
             item_style = self.item_style(
                 item,
-                parent=True,
-                active=self.hovered_hit == ("parent", depth),
+                history=True,
+                active=is_parent and self.hovered_hit == ("parent", depth),
             )
             nodes.append(
                 (
-                    self.display_centers[-2],
-                    self.animated_inner_radius(
-                        item,
-                        item_style,
-                        ("parent", depth),
+                    self.display_centers[depth],
+                    (
+                        self.animated_inner_radius(
+                            item,
+                            item_style,
+                            ("parent", depth),
+                        )
+                        if is_parent
+                        else self.circle_inner_radius(item, item_style)
                     ),
                 )
             )
@@ -637,18 +604,14 @@ class Waypie(Gtk.Application):
         size = style["width"]
         return max(0, size * scale / 2 - style["border-width"] / 2)
 
-    def item_style(
-        self, item, center=False, parent=False, ancestor=False, active=False
-    ):
+    def item_style(self, item, center=False, history=False, active=False):
         selectors = ["circle"]
         if item.items:
             selectors.append("circle.submenu")
         if center:
             selectors.append("circle.center")
-        elif parent:
-            selectors.append("circle.parent")
-        elif ancestor:
-            selectors.append("circle.ancestor")
+        elif history:
+            selectors.append("circle.history")
         else:
             selectors.append("circle.item")
         if active:
@@ -677,10 +640,9 @@ class Waypie(Gtk.Application):
         return base_size * current
 
     def animated_item_distance(self, style, key, resting_distance):
-        target = (
-            style["distance"]
-            if style["distance"] is not None
-            else self.settings.menu_radius
+        target = max(
+            0,
+            self.settings.menu_radius + (style["distance"] or 0),
         )
         current = self.distance_values.setdefault(key, resting_distance)
         duration = animation_duration(self.styles, "hover-duration")
@@ -830,18 +792,14 @@ class Waypie(Gtk.Application):
             self.hide_menu()
             return
         if kind == "parent":
-            closing_depth = len(self.path)
             self.departing_scene = list(self.current_scene)
             self.departing_connectors = self.current_connectors[-1:]
             self.path = self.path[:index]
             self.menu_centers = self.menu_centers[: index + 1]
+            self.menu_link_lengths = self.menu_link_lengths[:index]
             self.menu_centers[-1] = self.clamp_menu_position(x, y)
             self.display_centers = self.display_centers[: index + 1]
-            self.correct_return_circle_position(
-                force_original=(
-                    closing_depth >= 2 and self.settings.normalize_return_position
-                ),
-            )
+            self.align_menu_chain()
             self.hovered_hit = None
             self.reset_item_animations()
             self.start_menu_animation(reveal_items=True)
@@ -856,10 +814,20 @@ class Waypie(Gtk.Application):
             )
             self.departing_scene = []
             self.departing_connectors = []
+            parent_center = self.menu_centers[-1]
+            child_center = self.clamp_menu_position(x, y)
+            link_length = max(
+                math.hypot(
+                    child_center[0] - parent_center[0],
+                    child_center[1] - parent_center[1],
+                ),
+                self.settings.menu_radius,
+            )
             self.path.append(index)
-            self.menu_centers.append(self.clamp_menu_position(x, y))
+            self.menu_centers.append(child_center)
+            self.menu_link_lengths.append(link_length)
             self.display_centers.append(start_position)
-            self.correct_return_circle_position()
+            self.align_menu_chain()
             self.hovered_hit = None
             self.reset_item_animations()
             self.start_menu_animation(reveal_items=True)
@@ -882,37 +850,14 @@ class Waypie(Gtk.Application):
 
         return clamp(x, width), clamp(y, height)
 
-    def correct_return_circle_position(self, force_original=False):
-        if not self.path or len(self.menu_centers) < 2:
-            return
-
-        current = self.item_at_path(self.path)
-        center_x, center_y = self.menu_centers[-1]
-        parent_x, parent_y = self.menu_centers[-2]
-        offset_x = parent_x - center_x
-        offset_y = parent_y - center_y
-        distance = math.hypot(offset_x, offset_y)
-        visual_angle = direction_angle(offset_x, offset_y)
-        return_angle = current.return_angle
-
-        item_angles = [item.angle for item in current.items]
-        nearest_valid_angle = closest_angle_in_hit_sector(
-            visual_angle,
-            return_angle,
-            item_angles,
-        )
-
-        minimum_distance = self.settings.menu_radius
-        angle_is_valid = angular_distance(visual_angle, nearest_valid_angle) < 1e-6
-        distance_is_valid = distance >= minimum_distance
-        if not force_original and angle_is_valid and distance_is_valid:
-            return
-
-        radians = math.radians(return_angle)
-        self.menu_centers[-2] = (
-            center_x + minimum_distance * math.sin(radians),
-            center_y - minimum_distance * math.cos(radians),
-        )
+    def align_menu_chain(self):
+        for depth in range(len(self.path), 0, -1):
+            child = self.item_at_path(self.path[:depth])
+            self.menu_centers[depth - 1] = self.radial_position(
+                self.menu_centers[depth],
+                child.return_angle,
+                self.menu_link_lengths[depth - 1],
+            )
 
     def target_at(self, x, y):
         if not self.hits:
