@@ -779,13 +779,16 @@ class Waypie(Gtk.Application):
             self.hide_menu()
             return
         if kind == "parent":
+            closing_depth = len(self.path)
             self.departing_scene = list(self.current_scene)
             self.departing_connectors = self.current_connectors[-1:]
             self.path = self.path[:index]
             self.menu_centers = self.menu_centers[: index + 1]
             self.menu_centers[-1] = self.clamp_menu_position(x, y)
             self.display_centers = self.display_centers[: index + 1]
-            self.correct_return_circle_position()
+            self.correct_return_circle_position(
+                force_original=closing_depth >= 2,
+            )
             self.hovered_hit = None
             self.reset_item_animations()
             self.start_menu_animation(reveal_items=True)
@@ -826,7 +829,7 @@ class Waypie(Gtk.Application):
 
         return clamp(x, width), clamp(y, height)
 
-    def correct_return_circle_position(self):
+    def correct_return_circle_position(self, force_original=False):
         if not self.path or len(self.menu_centers) < 2:
             return
 
@@ -849,7 +852,7 @@ class Waypie(Gtk.Application):
         minimum_distance = self.settings.menu_radius
         angle_is_valid = angular_distance(visual_angle, nearest_valid_angle) < 1e-6
         distance_is_valid = distance >= minimum_distance
-        if angle_is_valid and distance_is_valid:
+        if not force_original and angle_is_valid and distance_is_valid:
             return
 
         radians = math.radians(return_angle)
