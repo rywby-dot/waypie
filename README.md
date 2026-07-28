@@ -61,6 +61,11 @@ waypie --show
 the menu. Escape, right click or clicking the central of the menu also close it. If no
 Waypie process is running, `waypie --show` starts one and opens the menu.
 
+Closing immediately removes keyboard focus and makes the layer click-through,
+then plays the internal closing animation for `menu-duration`. The layer-shell
+window is hidden only after the animation finishes, so the transition does not
+delay interaction with windows below it.
+
 In the default pointer mode, the initial menu center is taken from the first
 pointer-motion event received by the newly activated layer. On some
 compositors, the menu therefore remains invisible after `waypie --show` until

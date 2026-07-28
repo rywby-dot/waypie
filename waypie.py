@@ -124,6 +124,7 @@ class Waypie(Gtk.Application):
         self.distance_values = {}
         self.distance_animations = {}
         self.animation_tick = None
+        self.closing = False
         self.canvas = None
         self.window = None
         self.menu_centers = []
@@ -240,15 +241,46 @@ class Waypie(Gtk.Application):
         self.departing_scene = []
         self.departing_connectors = []
         self.visual_positions = {}
+        self.closing = False
         self.window.set_cursor_from_name("default")
         self.canvas.set_cursor_from_name("default")
         Gtk4LayerShell.set_keyboard_mode(
             self.window, Gtk4LayerShell.KeyboardMode.EXCLUSIVE
         )
+        self.set_click_through(False)
         self.window.set_visible(True)
+        self.set_click_through(False)
         self.canvas.queue_draw()
 
     def hide_menu(self):
+        if self.closing or not self.window.get_visible():
+            return
+        Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
+        self.set_click_through(True)
+        self.hits = []
+        self.hovered_hit = None
+        self.pointer_position = None
+        self.scale_animations.clear()
+        self.distance_animations.clear()
+        # A submenu placed in the departing scene is already logically closed.
+        # Do not restart its disappearance as part of the whole-menu animation.
+        self.departing_scene = []
+        self.departing_connectors = []
+        self.transition_progress = 1.0
+        duration = animation_duration(self.styles, "menu-duration")
+        if duration == 0:
+            self.finish_hide()
+            return
+        self.closing = True
+        self.menu_start_centers = list(self.display_centers)
+        self.menu_animation_from = self.menu_progress
+        self.menu_animation_to = 0.0
+        self.menu_animation_started = GLib.get_monotonic_time() / 1_000_000
+        self.ensure_animation_tick()
+        self.canvas.queue_draw()
+
+    def finish_hide(self, from_animation=False):
+        self.closing = False
         self.path.clear()
         self.menu_centers = []
         self.menu_link_lengths = []
@@ -270,11 +302,16 @@ class Waypie(Gtk.Application):
         self.scale_animations.clear()
         self.distance_values.clear()
         self.distance_animations.clear()
-        if self.animation_tick is not None:
+        if self.animation_tick is not None and not from_animation:
             self.canvas.remove_tick_callback(self.animation_tick)
-            self.animation_tick = None
+        self.animation_tick = None
         Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
         self.window.set_visible(False)
+
+    def set_click_through(self, enabled):
+        surface = self.window.get_surface()
+        if surface is not None:
+            surface.set_input_region(cairo.Region() if enabled else None)
 
     def on_key_pressed(self, _controller, keyval, _keycode, _state):
         if keyval == Gdk.KEY_Escape:
@@ -283,7 +320,7 @@ class Waypie(Gtk.Application):
         return False
 
     def on_pointer_event(self, _controller, x, y):
-        if not self.window.get_visible():
+        if not self.window.get_visible() or self.closing:
             return
         self.pointer_position = (x, y)
         if not self.menu_centers:
@@ -369,13 +406,15 @@ class Waypie(Gtk.Application):
             self.item_style(current, center=True)["scale"],
         )
         reveal = self.menu_progress
+        closing_reveal = reveal if self.closing else 1.0
         self.draw_item(
             context,
             center_x,
             center_y,
-            size,
+            size * closing_reveal,
             current,
             style,
+            closing_reveal,
             active=(
                 self.hovered_hit == ("center", None)
                 and not self.settings.active_label_in_center
@@ -383,7 +422,17 @@ class Waypie(Gtk.Application):
             label_override=center_label,
             hide_label=(self.settings.active_label_in_center and center_label is None),
         )
-        scene.append((center_x, center_y, size, current, style, 1.0, False))
+        scene.append(
+            (
+                center_x,
+                center_y,
+                size * closing_reveal,
+                current,
+                style,
+                closing_reveal,
+                False,
+            )
+        )
         hitbox_size = (
             size
             if self.settings.center_hitbox_size is None
@@ -424,9 +473,10 @@ class Waypie(Gtk.Application):
                 context,
                 history_x,
                 history_y,
-                history_size,
+                history_size * closing_reveal,
                 history_item,
                 style,
+                closing_reveal,
                 active=(parent_hovered and not self.settings.active_label_in_center),
                 hide_label=(parent_hovered and self.settings.active_label_in_center),
             )
@@ -510,6 +560,8 @@ class Waypie(Gtk.Application):
             if hovered_hit != self.hovered_hit:
                 self.hovered_hit = hovered_hit
                 self.canvas.queue_draw()
+        if self.closing:
+            self.hits = []
         self.current_scene = scene
 
     def draw_departing(self, context):
@@ -598,7 +650,7 @@ class Waypie(Gtk.Application):
         set_source_color(
             context,
             style["color"],
-            style["opacity"],
+            style["opacity"] * (self.menu_progress if self.closing else 1.0),
         )
         context.set_line_width(style["width"])
         for (start, start_radius), (end, end_radius) in pairwise(nodes):
@@ -1059,6 +1111,9 @@ class Waypie(Gtk.Application):
                 self.menu_animation_started = None
                 self.departing_scene = []
                 self.departing_connectors = []
+                if self.closing:
+                    self.finish_hide(from_animation=True)
+                    return False
 
         for key, (start, target, started, duration) in list(
             self.scale_animations.items()
