@@ -7,9 +7,9 @@ overlay {
 /* Durations shared by the runtime menu and configurator preview. */
 animation {
   /* Circle growth and radial movement when the active item changes. */
-  hover-duration: 120ms;
+  hover-duration: 200ms;
   /* Opening, closing, movement, item reveal, and auto-layout transition. */
-  menu-duration: 180ms;
+  menu-duration: 200ms;
 }
 
 /* Lines connecting the centers of opened runtime menus. */
@@ -108,22 +108,30 @@ circle.center {
   width: 100px;
 }
 
-/* Previous runtime menu circle which can be used to navigate back. */
-circle.parent {
-  /* Previous-menu fill color. */
+/* Every previous runtime menu, regardless of its history depth. */
+circle.history {
+  /* History-circle fill color. */
   background-color: #242424;
-  /* Previous-menu transparency. */
-  opacity: 1;
-  /* Previous-menu diameter multiplier. */
-  scale: 1;
-}
-
-/* Non-interactive runtime menu shown two levels behind the current menu. */
-circle.ancestor {
-  /* Old history-circle transparency. */
+  /* History-circle border color. */
+  border-color: #ff8c00;
+  /* History-circle border thickness. */
+  border-width: 2px;
+  /* History-circle corner radius. */
+  border-radius: 50%;
+  /* History-circle label and monochrome-icon color. */
+  color: #ffffff;
+  /* History-circle label font. */
+  font-family: Sans;
+  /* History-circle label size. */
+  font-size: 14px;
+  /* History-circle icon size. */
+  icon-size: 42px;
+  /* History-circle transparency. */
   opacity: 0.35;
-  /* Old history-circle diameter multiplier. */
+  /* History-circle diameter multiplier. */
   scale: 1;
+  /* History-circle diameter. */
+  width: 76px;
 }
 
 /* Circles belonging to the translucent previous configurator menu. */
@@ -146,6 +154,6 @@ circle.active {
   opacity: 1;
   /* Active-circle growth multiplier. */
   scale: 1.15;
-  /* Absolute hovered distance from the menu center, not an added offset. */
-  distance: 195px;
+  /* Added radial offset while hovered; negative values move inward. */
+  distance: 20px;
 }

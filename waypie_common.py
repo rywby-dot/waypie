@@ -28,7 +28,6 @@ class Settings:
     center_hitbox_size: float | None
     minimum_edge_distance: float
     center_mode: bool
-    normalize_return_position: bool
     active_label_in_center: bool
     preserve_proportions: bool
     auto_alignment: bool
@@ -75,10 +74,6 @@ def load_config():
         "minimum-edge-distance",
     )
     center_mode = boolean(source.get("center-mode", False), "center-mode")
-    normalize_return_position = boolean(
-        source.get("normalize-return-position", True),
-        "normalize-return-position",
-    )
     active_label_in_center = boolean(
         source.get("active-label-in-center", False),
         "active-label-in-center",
@@ -102,7 +97,6 @@ def load_config():
         center_hitbox_size,
         minimum_edge_distance,
         center_mode,
-        normalize_return_position,
         active_label_in_center,
         preserve_proportions,
         auto_alignment,
@@ -260,9 +254,10 @@ def computed_style(rules, selectors):
         for name, value in rules.get(selector, {}).items():
             if name in {"background-color", "border-color", "color"}:
                 style[name] = parse_color(value, name)
+            elif name == "distance":
+                style[name] = parse_signed_pixels(value, name)
             elif name in {
                 "border-width",
-                "distance",
                 "font-size",
                 "icon-size",
                 "width",
@@ -321,6 +316,13 @@ def parse_pixels(value, name):
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
     return max(0.0, float(match.group(1)))
+
+
+def parse_signed_pixels(value, name):
+    match = re.fullmatch(r"(-?(?:\d+(?:\.\d*)?|\.\d+))(?:px)?", value)
+    if not match:
+        raise SystemExit(f"waypie: invalid {name}: {value}")
+    return float(match.group(1))
 
 
 def parse_color(value, name):
