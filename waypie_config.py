@@ -62,6 +62,8 @@ class Configurator(Gtk.Application):
         self.alignment_check = None
         self.show_icons_check = None
         self.center_mode_check = None
+        self.normalize_return_check = None
+        self.active_label_in_center_check = None
         self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
@@ -233,6 +235,24 @@ class Configurator(Gtk.Application):
         self.center_mode_check.set_active(self.settings.center_mode)
         self.center_mode_check.connect("toggled", self.on_center_mode_changed)
         properties.append(self.center_mode_check)
+        self.normalize_return_check = Gtk.CheckButton(label="Normalize return position")
+        self.normalize_return_check.set_active(self.settings.normalize_return_position)
+        self.normalize_return_check.connect(
+            "toggled",
+            self.on_normalize_return_changed,
+        )
+        properties.append(self.normalize_return_check)
+        self.active_label_in_center_check = Gtk.CheckButton(
+            label="Show active label in center"
+        )
+        self.active_label_in_center_check.set_active(
+            self.settings.active_label_in_center
+        )
+        self.active_label_in_center_check.connect(
+            "toggled",
+            self.on_active_label_in_center_changed,
+        )
+        properties.append(self.active_label_in_center_check)
         properties_scroll = Gtk.ScrolledWindow()
         properties_scroll.set_policy(
             Gtk.PolicyType.NEVER,
@@ -1096,6 +1116,18 @@ class Configurator(Gtk.Application):
         self.settings.center_mode = self.center_mode_check.get_active()
         self.set_status("Unsaved changes")
 
+    def on_normalize_return_changed(self, _check):
+        self.settings.normalize_return_position = (
+            self.normalize_return_check.get_active()
+        )
+        self.set_status("Unsaved changes")
+
+    def on_active_label_in_center_changed(self, _check):
+        self.settings.active_label_in_center = (
+            self.active_label_in_center_check.get_active()
+        )
+        self.set_status("Unsaved changes")
+
     def aligned_angle(self, angle):
         if self.alignment_check.get_active():
             return min(
@@ -1386,6 +1418,12 @@ def serialize_config(settings):
         f"minimum-edge-distance = {toml_number(settings.minimum_edge_distance)}"
     )
     lines.append(f"center-mode = {str(settings.center_mode).lower()}")
+    lines.append(
+        f"normalize-return-position = {str(settings.normalize_return_position).lower()}"
+    )
+    lines.append(
+        f"active-label-in-center = {str(settings.active_label_in_center).lower()}"
+    )
     lines.append(f"preserve-proportions = {str(settings.preserve_proportions).lower()}")
     lines.append(f"auto-alignment = {str(settings.auto_alignment).lower()}")
     lines.append(
