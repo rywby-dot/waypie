@@ -1,9 +1,3 @@
-# Default circle diameter in pixels when CSS does not define circle width.
-circle-size = 100
-
-# Default radial distance from a menu center to its items in pixels.
-menu-radius = 170
-
 # Diameter of the central close hitbox; 0 disables it.
 # Remove this line to use the visible central circle diameter.
 center-hitbox-size = 100
@@ -14,7 +8,7 @@ minimum-edge-distance = 120
 # Configurator only: keep all items evenly spaced while editing.
 preserve-proportions = false
 
-# Configurator only: snap edited groups to 30° and 45° alignment points.
+# Configurator only: snap edited groups to a 5° angular grid.
 auto-alignment = false
 
 # Configurator only: show icons instead of labels in the preview.
@@ -33,9 +27,6 @@ icon-theme = "tabler"
 # icon-theme and icon must always be specified together.
 icon = "outline/menu-2.svg"
 
-# Optional root-circle diameter override in pixels.
-size = 110
-
 # A command item. Every non-root item must contain either command or items.
 [[menu.items]]
 
@@ -47,9 +38,6 @@ command = "foot"
 
 # Clockwise direction in integer degrees: 0 is up and 90 is right.
 angle = 270
-
-# Optional per-item diameter override in pixels.
-size = 96
 
 # Optional icon set for this item.
 icon-theme = "tabler"
