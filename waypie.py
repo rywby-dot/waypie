@@ -126,6 +126,12 @@ class Waypie(Gtk.Application):
         self.distance_animations = {}
         self.animation_tick = None
         self.closing = False
+        self.action_closing = False
+        self.action_animation_started = None
+        self.action_progress = 1.0
+        self.action_item_index = None
+        self.action_start_position = None
+        self.action_target_position = None
         self.canvas = None
         self.window = None
         self.menu_centers = []
@@ -243,6 +249,12 @@ class Waypie(Gtk.Application):
         self.departing_connectors = []
         self.visual_positions = {}
         self.closing = False
+        self.action_closing = False
+        self.action_animation_started = None
+        self.action_progress = 1.0
+        self.action_item_index = None
+        self.action_start_position = None
+        self.action_target_position = None
         self.window.set_cursor_from_name("default")
         self.canvas.set_cursor_from_name("default")
         Gtk4LayerShell.set_keyboard_mode(
@@ -254,7 +266,7 @@ class Waypie(Gtk.Application):
         self.canvas.queue_draw()
 
     def hide_menu(self):
-        if self.closing or not self.window.get_visible():
+        if self.closing or self.action_closing or not self.window.get_visible():
             return
         Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
         self.set_click_through(True)
@@ -282,6 +294,12 @@ class Waypie(Gtk.Application):
 
     def finish_hide(self, from_animation=False):
         self.closing = False
+        self.action_closing = False
+        self.action_animation_started = None
+        self.action_progress = 1.0
+        self.action_item_index = None
+        self.action_start_position = None
+        self.action_target_position = None
         self.path.clear()
         self.menu_centers = []
         self.menu_link_lengths = []
@@ -321,7 +339,7 @@ class Waypie(Gtk.Application):
         return False
 
     def on_pointer_event(self, _controller, x, y):
-        if not self.window.get_visible() or self.closing:
+        if not self.window.get_visible() or self.closing or self.action_closing:
             return
         self.pointer_position = (x, y)
         if not self.menu_centers:
@@ -494,7 +512,14 @@ class Waypie(Gtk.Application):
                 )
 
         for index, item in enumerate(current.items):
-            item_active = self.hovered_hit == ("item", index)
+            item_active = (
+                self.hovered_hit
+                == (
+                    "item",
+                    index,
+                )
+                or index == self.action_item_index
+            )
             style = self.item_style(item, active=item_active)
             resting_distance = self.settings.menu_radius
             active_style = self.item_style(item, active=True)
@@ -528,6 +553,21 @@ class Waypie(Gtk.Application):
             )
             x = center_x + (x - center_x) * reveal
             y = center_y + (y - center_y) * reveal
+            if (
+                index == self.action_item_index
+                and self.action_start_position is not None
+                and self.action_target_position is not None
+            ):
+                x = (
+                    self.action_start_position[0]
+                    + (self.action_target_position[0] - self.action_start_position[0])
+                    * self.action_progress
+                )
+                y = (
+                    self.action_start_position[1]
+                    + (self.action_target_position[1] - self.action_start_position[1])
+                    * self.action_progress
+                )
             size = self.animated_item_size(
                 item,
                 style,
@@ -542,12 +582,9 @@ class Waypie(Gtk.Application):
                 item,
                 style,
                 reveal,
-                active=(
-                    self.hovered_hit == ("item", index)
-                    and not self.settings.active_label_in_center
-                ),
+                active=(item_active and not self.settings.active_label_in_center),
                 hide_label=(
-                    self.hovered_hit == ("item", index)
+                    item_active
                     and self.settings.active_label_in_center
                     and bool(item.icon)
                 ),
@@ -563,7 +600,7 @@ class Waypie(Gtk.Application):
             if hovered_hit != self.hovered_hit:
                 self.hovered_hit = hovered_hit
                 self.canvas.queue_draw()
-        if self.closing:
+        if self.closing or self.action_closing:
             self.hits = []
         self.current_scene = scene
 
@@ -648,8 +685,6 @@ class Waypie(Gtk.Application):
                 ),
             )
         )
-        if len(nodes) < 2:
-            return
         set_source_color(
             context,
             style["color"],
@@ -685,6 +720,45 @@ class Waypie(Gtk.Application):
                     style,
                 )
             )
+        context.stroke()
+
+        if (
+            self.action_item_index is None
+            or self.action_start_position is None
+            or self.action_target_position is None
+        ):
+            return
+        action_item = self.item_at_path(self.path).items[self.action_item_index]
+        action_style = self.item_style(action_item, active=True)
+        start, start_radius = nodes[-1]
+        end = (
+            self.action_start_position[0]
+            + (self.action_target_position[0] - self.action_start_position[0])
+            * self.action_progress,
+            self.action_start_position[1]
+            + (self.action_target_position[1] - self.action_start_position[1])
+            * self.action_progress,
+        )
+        end_radius = self.animated_inner_radius(
+            action_item,
+            action_style,
+            ("item", self.action_item_index),
+        )
+        delta_x = end[0] - start[0]
+        delta_y = end[1] - start[1]
+        length = math.hypot(delta_x, delta_y)
+        if length <= start_radius + end_radius:
+            return
+        unit_x = delta_x / length
+        unit_y = delta_y / length
+        context.move_to(
+            start[0] + unit_x * start_radius,
+            start[1] + unit_y * start_radius,
+        )
+        context.line_to(
+            end[0] - unit_x * end_radius,
+            end[1] - unit_y * end_radius,
+        )
         context.stroke()
 
     def circle_inner_radius(self, item, style):
@@ -1005,7 +1079,32 @@ class Waypie(Gtk.Application):
             self.canvas.queue_draw()
         else:
             launch(item.command)
+            self.hide_after_action(index, x, y)
+
+    def hide_after_action(self, index, x, y):
+        Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
+        self.set_click_through(True)
+        self.hits = []
+        self.pointer_position = None
+        self.departing_scene = []
+        self.departing_connectors = []
+        self.transition_progress = 1.0
+        self.action_item_index = index
+        self.action_start_position = self.visual_positions.get(
+            ("item", index),
+            (x, y),
+        )
+        self.action_target_position = (x, y)
+        self.action_progress = 0.0
+        duration = animation_duration(self.styles, "action-duration")
+        if duration == 0:
+            self.action_progress = 1.0
             self.hide_menu()
+            return
+        self.action_closing = True
+        self.action_animation_started = GLib.get_monotonic_time() / 1_000_000
+        self.ensure_animation_tick()
+        self.canvas.queue_draw()
 
     def clamp_menu_position(self, x, y):
         width = self.canvas.get_width()
@@ -1126,6 +1225,19 @@ class Waypie(Gtk.Application):
                 if self.closing:
                     self.finish_hide(from_animation=True)
                     return False
+
+        if self.action_animation_started is not None:
+            duration = animation_duration(self.styles, "action-duration")
+            progress = min(1.0, (now - self.action_animation_started) / duration)
+            self.action_progress = ease_out_cubic(progress)
+            if progress < 1:
+                animating = True
+            else:
+                self.action_progress = 1.0
+                self.action_animation_started = None
+                self.action_closing = False
+                self.hide_menu()
+                animating = True
 
         for key, (start, target, started, duration) in list(
             self.scale_animations.items()
