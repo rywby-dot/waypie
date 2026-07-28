@@ -9,9 +9,8 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("GdkPixbuf", "2.0")
-gi.require_version("GdkWayland", "4.0")
 
-from gi.repository import Gdk, GdkPixbuf, GdkWayland, GLib, Gtk
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
 from waypie_common import (
     CONFIG_DIR,
@@ -1326,10 +1325,6 @@ class Configurator(Gtk.Application):
         clear.connect("clicked", remove_icon)
         window.set_child(content)
         rebuild()
-        window.realize()
-        surface = window.get_surface()
-        if isinstance(surface, GdkWayland.WaylandToplevel):
-            surface.set_application_id("waypie.config.icons")
         window.present()
 
     def on_save(self, _button):

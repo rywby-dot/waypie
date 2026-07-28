@@ -170,7 +170,8 @@ there. Then use `waypie --show` normally.
 The configurator never edits `style.css`.
 
 For compositor window rules, the configurator uses the application ID
-`waypie.config`, and its icon picker uses `waypie.config.icons`.
+`waypie.config`. The icon picker is a modal transient window belonging to the
+same application.
 
 ## Configuration file
 
