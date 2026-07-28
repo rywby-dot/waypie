@@ -21,6 +21,7 @@ from waypie_common import (
     angular_distance,
     animation_duration,
     computed_style,
+    content_opacity,
     direction_angle,
     ease_out_cubic,
     icon_path,
@@ -495,13 +496,15 @@ class Configurator(Gtk.Application):
 
     def preview_style(self, item, selected=False, center=False, previous=False):
         selectors = ["circle"]
-        selectors.append("circle.center" if center else "circle.item")
+        role_selectors = ["circle.center" if center else "circle.item"]
         if not center and item.items:
-            selectors.append("circle.submenu")
+            role_selectors.append("circle.submenu")
+        selectors.extend(role_selectors)
         if previous:
             selectors.append("circle.previous")
         if selected:
             selectors.append("circle.active")
+            selectors.extend(f"{selector}.active" for selector in role_selectors)
         return computed_style(self.styles, selectors)
 
     def preview_size(self, item, style):
@@ -840,7 +843,11 @@ class Configurator(Gtk.Application):
             show_icon=self.show_icons_check.get_active(),
             opacity=center_geometry[3],
         )
-        for _index, item, style, x, y, size, opacity in circles:
+        for index, item, style, x, y, size, opacity in circles:
+            item_active = ("item", index) == self.selected_target() or (
+                "item",
+                index,
+            ) == self.preview_hover_target
             self.draw_preview_item(
                 context,
                 x,
@@ -851,6 +858,7 @@ class Configurator(Gtk.Application):
                 show_icon=self.show_icons_check.get_active(),
                 opacity=opacity,
                 submenu_indicators=bool(item.items),
+                submenu_indicators_active=item_active,
             )
 
     def draw_preview_item(
@@ -864,6 +872,7 @@ class Configurator(Gtk.Application):
         show_icon=False,
         opacity=1.0,
         submenu_indicators=False,
+        submenu_indicators_active=False,
     ):
         if submenu_indicators:
             self.draw_preview_submenu_indicators(
@@ -874,6 +883,7 @@ class Configurator(Gtk.Application):
                 item,
                 style,
                 opacity,
+                submenu_indicators_active,
             )
         radius = resolve_radius(style["border-radius"], size)
         rounded_rectangle(
@@ -915,7 +925,7 @@ class Configurator(Gtk.Application):
                         x - pixbuf.get_width() / 2,
                         y - pixbuf.get_height() / 2,
                     )
-                    context.paint_with_alpha(style["opacity"] * opacity)
+                    context.paint_with_alpha(content_opacity(style) * opacity)
                     context.restore()
                     return
                 except (GLib.Error, OSError):
@@ -928,7 +938,7 @@ class Configurator(Gtk.Application):
             cairo.FONT_WEIGHT_NORMAL,
         )
         context.set_font_size(style["font-size"])
-        set_source_color(context, style["color"], style["opacity"] * opacity)
+        set_source_color(context, style["color"], content_opacity(style) * opacity)
         label = truncate(item.label, max(1, int(size / style["font-size"] * 1.5)))
         extents = context.text_extents(label)
         context.move_to(
@@ -946,8 +956,12 @@ class Configurator(Gtk.Application):
         item,
         submenu_style,
         opacity,
+        active=False,
     ):
-        style = computed_style(self.styles, ("submenu-indicator",))
+        selectors = ["submenu-indicator"]
+        if active:
+            selectors.append("submenu-indicator.active")
+        style = computed_style(self.styles, selectors)
         indicator_size = style["width"]
         protrusion = style["protrusion"]
         if (
