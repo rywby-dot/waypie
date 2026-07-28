@@ -1,3 +1,13 @@
+# This is config.example.
+# You don't need to change it!
+# Open GUI editor waypie-editor ant setup everything there
+# just copy in to ~/.config
+#   cp config.example ~/.config/waypie/config
+#   cp style.example.css ~/.config/waypie/style.css
+# and read README.md
+# https://github.com/rywby-dot/waypie
+# Colors are setup manually in style.css
+
 menu-radius = 170
 center-hitbox-size = 200
 minimum-edge-distance = 120
@@ -37,12 +47,39 @@ angle = 150
 [[menu.items.items.items]]
 label = "Waypie git"
 command = "xdg-open https://github.com/rywby-dot/waypie"
-angle = 90
+angle = 60
 
 [[menu.items.items.items]]
-label = "Close menu"
+label = "Re-open menu"
 command = "waypie --show"
-angle = 210
+angle = 150
+
+[[menu.items.items.items]]
+label = "submenu"
+angle = 240
+
+[[menu.items.items.items.items]]
+label = "Nothing!"
+command = "true"
+angle = 180
+
+[[menu.items.items.items.items]]
+label = "New menu"
+angle = 300
+
+[[menu.items.items.items.items.items]]
+label = "New command"
+command = "true"
+angle = 300
+
+[[menu.items.items.items.items.items]]
+label = "New menu"
+angle = 180
+
+[[menu.items.items.items.items.items.items]]
+label = "New command"
+command = "true"
+angle = 30
 
 [[menu.items]]
 label = "Config"
