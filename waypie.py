@@ -243,6 +243,10 @@ class Waypie(Gtk.Application):
         return True
 
     def show_menu(self):
+        try:
+            self.settings = load_config()
+        except SystemExit as error:
+            print(error, file=sys.stderr)
         self.menu_centers = []
         self.display_centers = []
         self.hits = []
