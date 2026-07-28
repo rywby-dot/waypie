@@ -34,6 +34,7 @@ class Settings:
     minimum_edge_distance: float
     preserve_proportions: bool
     auto_alignment: bool
+    configurator_show_icons: bool
     root: Item
 
 
@@ -84,6 +85,10 @@ def load_config():
         source.get("auto-alignment", False),
         "auto-alignment",
     )
+    configurator_show_icons = boolean(
+        source.get("configurator-show-icons", False),
+        "configurator-show-icons",
+    )
     root = parse_item(menu, "menu", True)
     resolve_angles(root, root=True)
     return Settings(
@@ -93,6 +98,7 @@ def load_config():
         minimum_edge_distance,
         preserve_proportions,
         auto_alignment,
+        configurator_show_icons,
         root,
     )
 

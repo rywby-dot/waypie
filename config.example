@@ -1,42 +1,112 @@
+# Default circle diameter in pixels when CSS does not define circle width.
 circle-size = 100
+
+# Default radial distance from a menu center to its items in pixels.
 menu-radius = 170
-# Diameter of the central close hitbox; use 0 to disable it.
+
+# Diameter of the central close hitbox; 0 disables it.
+# Remove this line to use the visible central circle diameter.
 center-hitbox-size = 100
-# Minimum distance from every menu center to a screen edge.
+
+# Minimum distance from every newly opened menu center to a screen edge.
 minimum-edge-distance = 120
 
+# Configurator only: keep all items evenly spaced while editing.
+preserve-proportions = false
+
+# Configurator only: snap edited groups to 30° and 45° alignment points.
+auto-alignment = false
+
+# Configurator only: show icons instead of labels in the preview.
+configurator-show-icons = true
+
+# Root menu table. It may contain items but cannot contain a command.
 [menu]
+
+# Text shown for the root menu.
 label = "Waypie"
 
+# Optional icon-set directory below ~/.config/waypie/icons/.
+icon-theme = "tabler"
+
+# Optional icon path relative to the selected icon-set directory.
+# icon-theme and icon must always be specified together.
+icon = "outline/menu-2.svg"
+
+# Optional root-circle diameter override in pixels.
+size = 110
+
+# A command item. Every non-root item must contain either command or items.
 [[menu.items]]
-label = "Foot"
+
+# Text shown when this item is active.
+label = "Terminal"
+
+# Shell command executed when this item is activated.
 command = "foot"
+
+# Clockwise direction in integer degrees: 0 is up and 90 is right.
 angle = 270
 
+# Optional per-item diameter override in pixels.
+size = 96
+
+# Optional icon set for this item.
+icon-theme = "tabler"
+
+# Optional icon file within the selected set.
+icon = "outline/terminal-2.svg"
+
+# A submenu item: it has nested items and therefore no command.
 [[menu.items]]
+
+# Submenu label.
 label = "Apps"
+
+# Direction of this submenu in its parent.
 angle = 90
 
+# Configurator-only invisible slot used by Preserve proportions.
+# It is saved independently from the actual automatic return direction.
+proportion-angle = 270
+
+# Optional submenu icon set.
+icon-theme = "papirus"
+
+# Optional nested icon path; icon directories are scanned recursively.
+icon = "apps/org.kde.dolphin.svg"
+
+# First command inside Apps.
 [[menu.items.items]]
-label = "St"
-command = "st"
+label = "Files"
+command = "dolphin"
 angle = 0
 
+# Example of absolute positioning relative to the current menu center.
+# x and y must be specified together and replace radial positioning.
 [[menu.items.items]]
-label = "Kitty"
-command = "kitty"
-angle = 90
+label = "Calculator"
+command = "qalculate-qt"
 
+# Horizontal offset in pixels; positive values move right.
+x = 150
+
+# Vertical offset in pixels; positive values move down.
+y = 80
+
+# A deeper submenu demonstrating unlimited nesting.
 [[menu.items.items]]
 label = "More"
 angle = 180
 
+# Command nested three menu levels deep.
 [[menu.items.items.items]]
-label = "Alacritty"
-command = "alacritty"
-angle = 100
+label = "Zoom out"
+command = "driftwm msg action zoom-to-fit"
+angle = 90
 
+# Another deeply nested command with shell quoting.
 [[menu.items.items.items]]
-label = "Dolphin"
-command = "dolphin"
-angle = 260
+label = "System info"
+command = "foot -a foot-ff zsh -c 'fastfetch && sleep 9999'"
+angle = 270

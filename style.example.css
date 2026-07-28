@@ -1,93 +1,151 @@
 /* Full-screen surface behind the menu circles. */
 overlay {
-  /* Transparent keeps the desktop visible outside the menu. */
+  /* Layer background; transparent keeps the desktop visible. */
   background-color: transparent;
 }
 
-/* Timing of animations drawn inside the already active layer surface. */
+/* Durations for animations drawn inside an already active layer. */
 animation {
-  /* Duration of circle growth and shrinkage when the selected angle changes. */
+  /* Circle scale transition when the active direction changes. */
   hover-duration: 120ms;
-  /* Duration of submenu movement, item reveal, and return movement. */
+  /* Opening, closing, submenu movement, and item reveal transition. */
   menu-duration: 180ms;
 }
 
-/* Lines connecting each open submenu to the menu it came from. */
+/* Lines connecting the centers of opened runtime menus. */
 connector {
-  /* Connector line color. */
+  /* Connector color. */
   color: #ff8c00;
-  /* Connector transparency: 0 is hidden, 1 is opaque. */
+  /* Connector transparency from 0 to 1. */
   opacity: 0.65;
-  /* Connector line thickness; use 0px to disable the lines. */
+  /* Connector thickness; 0px disables connectors. */
   width: 2px;
 }
 
-/* Fixed direction from a submenu towards its parent in the configurator. */
+/* Thick return-direction indicator used only by the configurator. */
 parent-link {
-  /* Parent direction indicator color. */
+  /* Return indicator color. */
   color: #ff8c00;
-  /* Parent direction indicator transparency. */
+  /* Return indicator transparency from 0 to 1. */
   opacity: 0.35;
-  /* Parent direction indicator thickness. */
+  /* Return indicator thickness; 0px hides it. */
   width: 12px;
 }
 
-/* Base appearance and geometry shared by every menu circle. */
-circle {
-  /* Fill color inside each circle. */
-  background-color: #242424;
-  /* Color of the circle outline. */
-  border-color: #ff8c00;
-  /* Thickness of the circle outline. */
-  border-width: 2px;
-  /* 50% turns the square drawing area into a circle. */
-  border-radius: 50%;
-  /* Label text color. */
-  color: #ffffff;
-  /* Diameter of every circle unless a more specific selector overrides it. */
-  width: 100px;
-  /* Distance from a menu center to every radial circle. */
-  distance: 170px;
-  /* Font used for circle labels. */
-  font-family: Sans;
-  /* Size of circle label text. */
-  font-size: 14px;
-  /* Maximum icon width and height inside a circle. */
-  icon-size: 56px;
-}
-
-/* The circle at the center of the currently open menu. */
-circle.center {
-  /* Fill color of the open menu circle. */
-  background-color: #242424;
-  /* Border color of the open menu circle. */
-  border-color: #ff8c00;
-  /* Border thickness of the open menu circle. */
-  border-width: 2px;
-  /* Corner radius of the open menu circle. */
-  border-radius: 50%;
-  /* Label color of the open menu circle. */
-  color: #ffffff;
-  /* Diameter of the open menu circle. */
-  width: 100px;
-  /* Overall transparency of the open menu circle and its label. */
-  opacity: 1;
-  /* Font used by the open menu label. */
-  font-family: Sans;
-  /* Font size of the open menu label. */
-  font-size: 14px;
-  /* Maximum icon width and height inside the open menu circle. */
-  icon-size: 56px;
-}
-
-/* Non-interactive menu shown two levels behind the current menu. */
-circle.ancestor {
-  /* Opacity of the inactive history circle: 0 is hidden, 1 is opaque. */
+/* Complete previous menu drawn behind a submenu in the configurator. */
+configurator-history {
+  /* Transparency multiplier for the previous menu and its connectors. */
   opacity: 0.35;
+  /* Distance multiplier between current and previous menu centers. */
+  scale: 2;
 }
 
-/* Circle whose action would run if the primary mouse button were clicked now. */
+/* Base style and geometry inherited by every kind of circle. */
+circle {
+  /* Circle fill color. */
+  background-color: #242424;
+  /* Circle outline color. */
+  border-color: #ff8c00;
+  /* Circle outline thickness. */
+  border-width: 2px;
+  /* Corner radius; 50% produces a circle. */
+  border-radius: 50%;
+  /* Label color and currentColor color for monochrome SVG icons. */
+  color: #ffffff;
+  /* Radial distance from the current menu center. */
+  distance: 170px;
+  /* Label font family. */
+  font-family: Sans;
+  /* Label font size. */
+  font-size: 14px;
+  /* Maximum rendered icon width and height. */
+  icon-size: 56px;
+  /* Overall circle, border, label, and icon transparency. */
+  opacity: 1;
+  /* Diameter multiplier, also used for hover growth. */
+  scale: 1;
+  /* Circle diameter; overrides config circle-size. */
+  width: 100px;
+}
+
+/* Ordinary command items in the currently open menu. */
+circle.item {
+  /* Command-item fill color. */
+  background-color: #242424;
+  /* Command-item border color. */
+  border-color: #ff8c00;
+}
+
+/* Items which open another submenu. Applied in addition to their role style. */
+circle.submenu {
+  /* Submenu-item fill color. */
+  background-color: #2c2c2c;
+  /* Submenu-item border color. */
+  border-color: #ffaa33;
+}
+
+/* Central circle of the currently open runtime or configurator menu. */
+circle.center {
+  /* Current-menu fill color. */
+  background-color: #242424;
+  /* Current-menu border color. */
+  border-color: #ff8c00;
+  /* Current-menu border thickness. */
+  border-width: 2px;
+  /* Current-menu corner radius. */
+  border-radius: 50%;
+  /* Current-menu label and monochrome-icon color. */
+  color: #ffffff;
+  /* Current-menu label font. */
+  font-family: Sans;
+  /* Current-menu label size. */
+  font-size: 14px;
+  /* Current-menu icon size. */
+  icon-size: 56px;
+  /* Current-menu transparency. */
+  opacity: 1;
+  /* Current-menu diameter multiplier. */
+  scale: 1;
+  /* Current-menu diameter. */
+  width: 100px;
+}
+
+/* Previous runtime menu circle which can be used to navigate back. */
+circle.parent {
+  /* Previous-menu fill color. */
+  background-color: #242424;
+  /* Previous-menu transparency. */
+  opacity: 1;
+  /* Previous-menu diameter multiplier. */
+  scale: 1;
+}
+
+/* Non-interactive runtime menu shown two levels behind the current menu. */
+circle.ancestor {
+  /* Old history-circle transparency. */
+  opacity: 0.35;
+  /* Old history-circle diameter multiplier. */
+  scale: 1;
+}
+
+/* Circles belonging to the translucent previous configurator menu. */
+circle.previous {
+  /* Previous configurator-circle fill color. */
+  background-color: #242424;
+  /* Per-circle transparency before configurator-history is applied. */
+  opacity: 1;
+}
+
+/* Circle whose action or navigation would activate on a click right now. */
 circle.active {
-  /* Multiplier applied to the normal circle diameter while it is selected. */
+  /* Active-circle fill color. */
+  background-color: #343434;
+  /* Active-circle border color. */
+  border-color: #ffffff;
+  /* Active label and monochrome-icon color. */
+  color: #ffffff;
+  /* Active-circle transparency. */
+  opacity: 1;
+  /* Active-circle growth multiplier. */
   scale: 1.15;
 }
