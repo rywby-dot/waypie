@@ -58,19 +58,20 @@ waypie --show
 ```
 
 `waypie --show` is a toggle. Running it again while the menu is visible closes
-the menu. Escape and clicking the central close hitbox also close it. If no
+the menu. Escape, right click or clicking the central of the menu also close it. If no
 Waypie process is running, `waypie --show` starts one and opens the menu.
 
 In the default pointer mode, the initial menu center is taken from the first
 pointer-motion event received by the newly activated layer. On some
 compositors, the menu therefore remains invisible after `waypie --show` until
 the pointer is moved. Enable **Center mode** in the configurator if the menu
-must appear immediately without querying the pointer position.
+must appear immediately in the center without querying the pointer position.
 
 Example compositor binding:
 
 ```text
-waypie --show
+[keybindings]
+"mod+d" = "spawn waypie --show"
 ```
 
 ## How selection and navigation work
@@ -78,7 +79,7 @@ waypie --show
 The cursor direction selects an item. The visible item circle is a visual
 indicator; the complete angular sector is the actual hit area. This allows an
 action to remain selectable even when the cursor is farther away from its
-circle.
+circle (see kando behavior here https://youtu.be/ZTdfnUDMO9k?t=37&si=x9jvLQj-XF3lyw7R).
 
 The central circle belongs to the currently open menu. Its optional central
 hitbox closes Waypie. Hovering an item applies the `circle.active` style, and a
@@ -94,19 +95,6 @@ When a submenu opens:
   non-interactive;
 - moving in the automatically calculated return direction and clicking returns
   to the previous menu.
-
-Return directions are derived automatically from the available item angles.
-They are not stored as extra items in the configuration.
-
-Angles are clockwise:
-
-- `0` is up;
-- `90` is right;
-- `180` is down;
-- `270` is left.
-
-All positions use integer angles. There is no separate absolute `x/y`
-positioning mode.
 
 ## Graphical configurator
 
@@ -179,51 +167,12 @@ run `waypie --show` again. The next opening immediately uses the new geometry,
 commands, angles, icons, and configurator settings; the process does not need
 to be restarted.
 
-If a configuration cannot be loaded, Waypie reports the error to stderr and
-keeps the last valid in-memory configuration instead of terminating.
-
 The configurator never edits or hot-reloads `style.css`. Restart Waypie after
 changing visual styles.
 
 For compositor window rules, the configurator uses the application ID
 `waypie.config`. The icon picker is a modal transient window belonging to the
 same application.
-
-## Configuration file
-
-The menu configuration is stored at:
-
-```text
-~/.config/waypie/config
-```
-
-The GUI maintains this file, including these top-level settings:
-
-- `menu-radius` — normal distance in pixels between a menu center and its item
-  circles;
-- `center-hitbox-size` — diameter of the central close hitbox; `0` disables
-  it;
-- `minimum-edge-distance` — minimum distance between a newly opened menu
-  center and every screen edge;
-- `center-mode` — opens the root menu at the center immediately instead of
-  waiting for the first pointer-motion event;
-- `preserve-proportions` — saved state of the configurator checkbox;
-- `auto-alignment` — saved state of the configurator checkbox;
-- `configurator-show-icons` — saved state of the configurator-only icon
-  preview.
-
-Each menu item has:
-
-- `label` — displayed text;
-- `angle` — its integer clockwise angle;
-- `command` — a shell command, for an action item;
-- nested `items` — for a submenu;
-- optional `icon-theme` and `icon`.
-
-An item must contain either a command or nested items, but not both. Submenus
-may be nested without a fixed depth limit.
-
-See `config.example` for a complete working tree.
 
 ## Styling
 
