@@ -66,6 +66,11 @@ then plays the internal closing animation for `menu-duration`. The layer-shell
 window is hidden only after the animation finishes, so the transition does not
 delay interaction with windows below it.
 
+Selecting a command uses a two-stage closing animation. The command starts and
+the layer becomes click-through immediately. Its circle then moves to the
+pointer for `action-duration`, after which the normal `menu-duration` closing
+animation hides the complete menu.
+
 In the default pointer mode, the initial menu center is taken from the first
 pointer-motion event received by the newly activated layer. On some
 compositors, the menu therefore remains invisible after `waypie --show` until
