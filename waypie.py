@@ -426,6 +426,13 @@ class Waypie(Gtk.Application):
         )
         reveal = self.menu_progress
         closing_reveal = reveal if self.closing else 1.0
+        center_active = (
+            self.hovered_hit == ("center", None)
+            and not self.settings.active_label_in_center
+        )
+        center_hide_label = (
+            self.settings.active_label_in_center and center_label is None
+        )
         self.draw_item(
             context,
             center_x,
@@ -434,12 +441,9 @@ class Waypie(Gtk.Application):
             current,
             style,
             closing_reveal,
-            active=(
-                self.hovered_hit == ("center", None)
-                and not self.settings.active_label_in_center
-            ),
+            active=center_active,
             label_override=center_label,
-            hide_label=(self.settings.active_label_in_center and center_label is None),
+            hide_label=center_hide_label,
         )
         scene.append(
             (
@@ -449,6 +453,10 @@ class Waypie(Gtk.Application):
                 current,
                 style,
                 closing_reveal,
+                False,
+                center_active,
+                center_label,
+                center_hide_label,
                 False,
             )
         )
@@ -591,7 +599,25 @@ class Waypie(Gtk.Application):
                 submenu_indicators=bool(item.items),
                 submenu_indicators_active=item_active,
             )
-            scene.append((x, y, size * reveal, item, style, reveal, bool(item.items)))
+            scene.append(
+                (
+                    x,
+                    y,
+                    size * reveal,
+                    item,
+                    style,
+                    reveal,
+                    bool(item.items),
+                    item_active and not self.settings.active_label_in_center,
+                    None,
+                    (
+                        item_active
+                        and self.settings.active_label_in_center
+                        and bool(item.icon)
+                    ),
+                    item_active,
+                )
+            )
             self.visual_positions[("item", index)] = (x, y)
             self.hits.append((hit_x, hit_y, size, "item", index, item.angle))
 
@@ -629,6 +655,10 @@ class Waypie(Gtk.Application):
             style,
             opacity,
             submenu_indicators,
+            active,
+            label_override,
+            hide_label,
+            submenu_indicators_active,
         ) in self.departing_scene:
             self.draw_item(
                 context,
@@ -638,7 +668,11 @@ class Waypie(Gtk.Application):
                 item,
                 style,
                 opacity * remaining,
+                active=active,
+                label_override=label_override,
+                hide_label=hide_label,
                 submenu_indicators=submenu_indicators,
+                submenu_indicators_active=submenu_indicators_active,
             )
 
     def draw_connectors(self, context):
