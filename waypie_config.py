@@ -42,6 +42,7 @@ DEFAULT_PARENT_LINK = {
     "opacity": "0.35",
     "width": "12px",
 }
+DEFAULT_HISTORY = {"opacity": "0.35", "scale": "2"}
 
 
 class Configurator(Gtk.Application):
@@ -59,6 +60,8 @@ class Configurator(Gtk.Application):
         self.icon_button = None
         self.preserve_check = None
         self.alignment_check = None
+        self.show_icons_check = None
+        self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
         self.row_paths = {}
@@ -72,6 +75,7 @@ class Configurator(Gtk.Application):
         self.drag_item = None
         self.drag_original_index = None
         self.drag_group_base = 0
+        self.click_origin = (0.0, 0.0)
         self.updating_fields = False
 
     def do_activate(self):
@@ -109,6 +113,10 @@ class Configurator(Gtk.Application):
         self.alignment_check.set_active(self.settings.auto_alignment)
         self.alignment_check.connect("toggled", self.on_layout_option_changed)
         toolbar.append(self.alignment_check)
+        self.show_icons_check = Gtk.CheckButton(label="Show icons")
+        self.show_icons_check.set_active(self.settings.configurator_show_icons)
+        self.show_icons_check.connect("toggled", self.on_show_icons_changed)
+        toolbar.append(self.show_icons_check)
         self.status = Gtk.Label(xalign=0)
         self.status.set_hexpand(True)
         toolbar.append(self.status)
@@ -133,6 +141,7 @@ class Configurator(Gtk.Application):
         self.canvas.set_draw_func(self.draw_preview)
         click = Gtk.GestureClick()
         click.set_button(1)
+        click.connect("pressed", self.on_preview_press)
         click.connect("released", self.on_preview_click)
         self.canvas.add_controller(click)
         drag = Gtk.GestureDrag()
@@ -145,6 +154,9 @@ class Configurator(Gtk.Application):
 
         properties = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         properties.set_size_request(280, -1)
+        item_title = Gtk.Label(label="Selected item", xalign=0)
+        item_title.add_css_class("heading")
+        properties.append(item_title)
         self.label_entry = self.add_property(properties, "Label", Gtk.Entry())
         self.command_entry = self.add_property(properties, "Command", Gtk.Entry())
         self.angle_spin = self.add_property(
@@ -158,14 +170,65 @@ class Configurator(Gtk.Application):
         self.add_property(properties, "Icon", self.icon_button)
         hint = Gtk.Label(
             label=(
-                "Drag a circle to change its angle.\n"
-                "Double-click a submenu to edit its children."
+                "Drag a command to change its angle.\n"
+                "Click a submenu to edit its children."
             ),
             xalign=0,
             wrap=True,
         )
         properties.append(hint)
-        content.append(properties)
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        properties.append(separator)
+        settings_title = Gtk.Label(label="Config settings", xalign=0)
+        settings_title.add_css_class("heading")
+        properties.append(settings_title)
+        for name, label, lower, upper, value in (
+            (
+                "circle_size",
+                "circle-size",
+                1,
+                4096,
+                self.settings.circle_size,
+            ),
+            (
+                "menu_radius",
+                "menu-radius",
+                1,
+                8192,
+                self.settings.menu_radius,
+            ),
+            (
+                "center_hitbox_size",
+                "center-hitbox-size",
+                0,
+                4096,
+                (
+                    self.settings.center_hitbox_size
+                    if self.settings.center_hitbox_size is not None
+                    else self.settings.circle_size
+                ),
+            ),
+            (
+                "minimum_edge_distance",
+                "minimum-edge-distance",
+                0,
+                8192,
+                self.settings.minimum_edge_distance,
+            ),
+        ):
+            spin = Gtk.SpinButton.new_with_range(lower, upper, 1)
+            spin.set_digits(0)
+            spin.set_value(value)
+            spin.connect("value-changed", self.on_config_setting_changed, name)
+            self.setting_spins[name] = spin
+            self.add_property(properties, label, spin)
+        properties_scroll = Gtk.ScrolledWindow()
+        properties_scroll.set_policy(
+            Gtk.PolicyType.NEVER,
+            Gtk.PolicyType.AUTOMATIC,
+        )
+        properties_scroll.set_child(properties)
+        content.append(properties_scroll)
         root.append(content)
 
         self.label_entry.connect("changed", self.on_property_changed)
@@ -273,6 +336,12 @@ class Configurator(Gtk.Application):
         self.set_status("Unsaved changes")
         self.canvas.queue_draw()
 
+    def on_config_setting_changed(self, spin, name):
+        value = round(spin.get_value())
+        setattr(self.settings, name, value)
+        self.canvas.queue_draw()
+        self.set_status("Unsaved changes")
+
     def on_add_command(self, _button):
         menu = self.item_at(self.current_path)
         angle = largest_gap_angle([item.angle % 360 for item in menu.items])
@@ -341,16 +410,58 @@ class Configurator(Gtk.Application):
         self.canvas.queue_draw()
         self.set_status("Unsaved changes")
 
-    def preview_layout(self):
-        menu = self.item_at(self.current_path)
+    def preview_item_offset(self, item):
+        style = self.preview_style(item)
+        if item.x is not None:
+            return item.x, item.y
+        distance = (
+            style["distance"]
+            if style["distance"] is not None
+            else self.settings.menu_radius
+        )
+        radians = math.radians(item.angle)
+        return distance * math.sin(radians), -distance * math.cos(radians)
+
+    def preview_history_style(self):
+        rules = dict(DEFAULT_HISTORY)
+        rules.update(self.styles.get("configurator-history", {}))
+        return computed_style(
+            {"configurator-history": rules},
+            ("configurator-history",),
+        )
+
+    def preview_menu_center(self, path, previous=False):
         width = self.canvas.get_width()
         height = self.canvas.get_height()
         center = width / 2, height / 2
+        if previous and self.current_path and path == self.current_path[:-1]:
+            parent = self.item_at(path)
+            opened_item = parent.items[self.current_path[-1]]
+            offset_x, offset_y = self.preview_item_offset(opened_item)
+            offset_scale = self.preview_history_style()["scale"]
+            center = (
+                center[0] - offset_x * offset_scale,
+                center[1] - offset_y * offset_scale,
+            )
+        return center
+
+    def preview_layout(self, path=None, previous=False):
+        path = self.current_path if path is None else path
+        menu = self.item_at(path)
+        center = self.preview_menu_center(path, previous)
         circles = []
         for index, item in enumerate(menu.items):
-            if self.drag_reorder_armed and item is self.drag_item:
+            if (
+                previous
+                and self.current_path
+                and path == self.current_path[:-1]
+                and index == self.current_path[-1]
+            ):
                 continue
-            style = self.preview_style(item, ("item", index) == self.selected_target())
+            if not previous and self.drag_reorder_armed and item is self.drag_item:
+                continue
+            selected = not previous and ("item", index) == self.selected_target()
+            style = self.preview_style(item, selected, previous=previous)
             size = self.preview_size(item, style)
             if item.x is not None:
                 x = center[0] + item.x
@@ -372,11 +483,13 @@ class Configurator(Gtk.Application):
             return "item", self.selected_path[-1]
         return None
 
-    def preview_style(self, item, selected=False, center=False):
+    def preview_style(self, item, selected=False, center=False, previous=False):
         selectors = ["circle"]
         if item.items:
             selectors.append("circle.submenu")
         selectors.append("circle.center" if center else "circle.item")
+        if previous:
+            selectors.append("circle.previous")
         if selected:
             selectors.append("circle.active")
         return computed_style(self.styles, selectors)
@@ -393,6 +506,52 @@ class Configurator(Gtk.Application):
         overlay = computed_style(self.styles, ("overlay",))
         context.set_source_rgba(*overlay["background-color"])
         context.paint()
+
+        if self.current_path:
+            history_opacity = self.preview_history_style()["opacity"]
+            parent_path = self.current_path[:-1]
+            parent, parent_center, parent_circles = self.preview_layout(
+                parent_path,
+                previous=True,
+            )
+            connector = computed_style(self.styles, ("connector",))
+            if connector["width"]:
+                set_source_color(
+                    context,
+                    connector["color"],
+                    connector["opacity"] * history_opacity,
+                )
+                context.set_line_width(connector["width"])
+                for _index, _item, _style, x, y, _size in parent_circles:
+                    context.move_to(*parent_center)
+                    context.line_to(x, y)
+                context.stroke()
+            parent_center_style = self.preview_style(
+                parent,
+                center=True,
+                previous=True,
+            )
+            self.draw_preview_item(
+                context,
+                *parent_center,
+                self.preview_size(parent, parent_center_style),
+                parent,
+                parent_center_style,
+                show_icon=self.show_icons_check.get_active(),
+                opacity=history_opacity,
+            )
+            for _index, item, style, x, y, size in parent_circles:
+                self.draw_preview_item(
+                    context,
+                    x,
+                    y,
+                    size,
+                    item,
+                    style,
+                    show_icon=self.show_icons_check.get_active(),
+                    opacity=history_opacity,
+                )
+
         menu, center, circles = self.preview_layout()
 
         if self.current_path:
@@ -403,13 +562,17 @@ class Configurator(Gtk.Application):
                 ("parent-link",),
             )
             if parent_link["width"]:
-                distance = (
-                    computed_style(self.styles, ("circle",))["distance"]
-                    or self.settings.menu_radius
-                )
-                radians = math.radians(menu.return_angle)
                 center_style = self.preview_style(menu, center=True)
+                delta_x = parent_center[0] - center[0]
+                delta_y = parent_center[1] - center[1]
+                distance = math.hypot(delta_x, delta_y)
+                direction_x = delta_x / distance if distance else 0
+                direction_y = delta_y / distance if distance else 0
                 start_distance = self.preview_size(menu, center_style) / 2
+                end_distance = max(
+                    start_distance,
+                    distance - self.preview_size(parent, parent_center_style) / 2,
+                )
                 set_source_color(
                     context,
                     parent_link["color"],
@@ -418,12 +581,12 @@ class Configurator(Gtk.Application):
                 context.set_line_width(parent_link["width"])
                 context.set_line_cap(cairo.LINE_CAP_ROUND)
                 context.move_to(
-                    center[0] + start_distance * math.sin(radians),
-                    center[1] - start_distance * math.cos(radians),
+                    center[0] + start_distance * direction_x,
+                    center[1] + start_distance * direction_y,
                 )
                 context.line_to(
-                    center[0] + distance * math.sin(radians),
-                    center[1] - distance * math.cos(radians),
+                    center[0] + end_distance * direction_x,
+                    center[1] + end_distance * direction_y,
                 )
                 context.stroke()
                 context.set_line_cap(cairo.LINE_CAP_BUTT)
@@ -445,10 +608,9 @@ class Configurator(Gtk.Application):
             self.preview_size(menu, center_style),
             menu,
             center_style,
-            active=False,
+            show_icon=self.show_icons_check.get_active(),
         )
-        selected = self.selected_target()
-        for index, item, style, x, y, size in circles:
+        for _index, item, style, x, y, size in circles:
             self.draw_preview_item(
                 context,
                 x,
@@ -456,11 +618,20 @@ class Configurator(Gtk.Application):
                 size,
                 item,
                 style,
-                active=selected == ("item", index),
+                show_icon=self.show_icons_check.get_active(),
             )
 
     @staticmethod
-    def draw_preview_item(context, x, y, size, item, style, active=False):
+    def draw_preview_item(
+        context,
+        x,
+        y,
+        size,
+        item,
+        style,
+        show_icon=False,
+        opacity=1.0,
+    ):
         radius = resolve_radius(style["border-radius"], size)
         rounded_rectangle(
             context,
@@ -470,15 +641,23 @@ class Configurator(Gtk.Application):
             size,
             radius,
         )
-        set_source_color(context, style["background-color"], style["opacity"])
+        set_source_color(
+            context,
+            style["background-color"],
+            style["opacity"] * opacity,
+        )
         context.fill_preserve()
         if style["border-width"] > 0:
-            set_source_color(context, style["border-color"], style["opacity"])
+            set_source_color(
+                context,
+                style["border-color"],
+                style["opacity"] * opacity,
+            )
             context.set_line_width(style["border-width"])
             context.stroke()
         else:
             context.new_path()
-        if item.icon and not active:
+        if item.icon and show_icon:
             path = icon_path(item.icon_theme, item.icon)
             if path is not None:
                 icon_size = round(style.get("icon-size") or size * 0.55)
@@ -493,7 +672,7 @@ class Configurator(Gtk.Application):
                         x - pixbuf.get_width() / 2,
                         y - pixbuf.get_height() / 2,
                     )
-                    context.paint_with_alpha(style["opacity"])
+                    context.paint_with_alpha(style["opacity"] * opacity)
                     context.restore()
                     return
                 except (GLib.Error, OSError):
@@ -506,7 +685,7 @@ class Configurator(Gtk.Application):
             cairo.FONT_WEIGHT_NORMAL,
         )
         context.set_font_size(style["font-size"])
-        set_source_color(context, style["color"], style["opacity"])
+        set_source_color(context, style["color"], style["opacity"] * opacity)
         label = truncate(item.label, max(1, int(size / style["font-size"] * 1.5)))
         extents = context.text_extents(label)
         context.move_to(
@@ -523,12 +702,20 @@ class Configurator(Gtk.Application):
         return None
 
     def preview_center_hit(self, x, y):
-        if not self.current_path:
-            return False
         menu, center, _circles = self.preview_layout()
         style = self.preview_style(menu, center=True)
         return math.hypot(x - center[0], y - center[1]) <= (
             self.preview_size(menu, style) / 2
+        )
+
+    def preview_parent_center_hit(self, x, y):
+        if not self.current_path:
+            return False
+        parent_path = self.current_path[:-1]
+        parent, center, _circles = self.preview_layout(parent_path, previous=True)
+        style = self.preview_style(parent, center=True, previous=True)
+        return math.hypot(x - center[0], y - center[1]) <= (
+            self.preview_size(parent, style) / 2
         )
 
     def select_preview_item(self, index):
@@ -539,24 +726,43 @@ class Configurator(Gtk.Application):
         if row is not None:
             self.tree.select_row(row)
 
-    def on_preview_click(self, _gesture, presses, x, y):
-        if self.preview_center_hit(x, y):
+    def on_preview_press(self, _gesture, _presses, x, y):
+        self.click_origin = x, y
+
+    def on_preview_click(self, _gesture, _presses, x, y):
+        if math.hypot(x - self.click_origin[0], y - self.click_origin[1]) > 6:
+            return
+        if self.preview_parent_center_hit(x, y):
             self.on_up(None)
+            return
+        if self.preview_center_hit(x, y):
+            path = self.current_path
+            row = self.path_rows.get(path)
+            if row is not None:
+                self.tree.select_row(row)
+            self.selected_path = path
+            self.current_path = path
+            self.sync_fields()
+            self.canvas.queue_draw()
             return
         index = self.preview_hit(x, y)
         self.select_preview_item(index)
-        if presses == 2 and index is not None:
+        if index is not None:
             path = (*self.current_path, index)
             if self.item_at(path).items:
                 self.open_submenu(path)
 
     def on_drag_begin(self, _gesture, x, y):
-        self.drag_index = (
-            None if self.preview_center_hit(x, y) else self.preview_hit(x, y)
-        )
+        self.drag_index = None
+        if not self.preview_center_hit(x, y) and not self.preview_parent_center_hit(
+            x, y
+        ):
+            index = self.preview_hit(x, y)
+            menu = self.item_at(self.current_path)
+            if index is not None and not menu.items[index].items:
+                self.drag_index = index
         self.drag_origin = x, y
-        center_x = self.canvas.get_width() / 2
-        center_y = self.canvas.get_height() / 2
+        center_x, center_y = self.preview_menu_center(self.current_path)
         self.drag_start_angle = direction_angle(x - center_x, y - center_y)
         menu = self.item_at(self.current_path)
         self.drag_initial_angles = [item.angle for item in menu.items]
@@ -574,8 +780,7 @@ class Configurator(Gtk.Application):
             return
         x = self.drag_origin[0] + offset_x
         y = self.drag_origin[1] + offset_y
-        center_x = self.canvas.get_width() / 2
-        center_y = self.canvas.get_height() / 2
+        center_x, center_y = self.preview_menu_center(self.current_path)
         pointer_distance = math.hypot(x - center_x, y - center_y)
         pointer_angle = round(direction_angle(x - center_x, y - center_y)) % 360
         menu = self.item_at(self.current_path)
@@ -647,6 +852,11 @@ class Configurator(Gtk.Application):
             for item in menu.items:
                 self.set_item_angle(item, self.aligned_angle(item.angle))
         self.sync_fields()
+        self.canvas.queue_draw()
+        self.set_status("Unsaved changes")
+
+    def on_show_icons_changed(self, _check):
+        self.settings.configurator_show_icons = self.show_icons_check.get_active()
         self.canvas.queue_draw()
         self.set_status("Unsaved changes")
 
@@ -903,6 +1113,9 @@ def serialize_config(settings):
     )
     lines.append(f"preserve-proportions = {str(settings.preserve_proportions).lower()}")
     lines.append(f"auto-alignment = {str(settings.auto_alignment).lower()}")
+    lines.append(
+        f"configurator-show-icons = {str(settings.configurator_show_icons).lower()}"
+    )
 
     def append_item(item, header):
         lines.extend(("", header, f"label = {json.dumps(item.label)}"))
