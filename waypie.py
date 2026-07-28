@@ -579,10 +579,7 @@ class Waypie(Gtk.Application):
 
     def animated_inner_radius(self, item, style, key):
         scale = self.scale_values.get(key, style["scale"])
-        if style["width"] is not None:
-            size = style["width"]
-        else:
-            size = item.size or self.settings.circle_size
+        size = style["width"]
         return max(0, size * scale / 2 - style["border-width"] / 2)
 
     def item_style(
@@ -604,11 +601,7 @@ class Waypie(Gtk.Application):
         return computed_style(self.styles, selectors)
 
     def item_size(self, item, style):
-        if style["width"] is not None:
-            size = style["width"]
-        else:
-            size = item.size or self.settings.circle_size
-        return size * style["scale"]
+        return style["width"] * style["scale"]
 
     def animated_item_size(self, item, style, key, resting_scale):
         target = style["scale"]
@@ -625,18 +618,11 @@ class Waypie(Gtk.Application):
             started = GLib.get_monotonic_time() / 1_000_000
             self.scale_animations[key] = (current, target, started, duration)
             self.ensure_animation_tick()
-        if style["width"] is not None:
-            base_size = style["width"]
-        else:
-            base_size = item.size or self.settings.circle_size
+        base_size = style["width"]
         return base_size * current
 
     def radial_position(self, center, angle, style):
-        distance = (
-            style["distance"]
-            if style["distance"] is not None
-            else self.settings.menu_radius
-        )
+        distance = style["distance"]
         radians = math.radians(angle)
         return (
             center[0] + distance * math.sin(radians),
@@ -839,11 +825,7 @@ class Waypie(Gtk.Application):
 
         parent = self.item_at_path(self.path[:-1])
         style = self.item_style(parent, parent=True)
-        minimum_distance = (
-            style["distance"]
-            if style["distance"] is not None
-            else self.settings.menu_radius
-        )
+        minimum_distance = style["distance"]
         angle_is_valid = angular_distance(visual_angle, nearest_valid_angle) < 1e-6
         distance_is_valid = distance >= minimum_distance
         if angle_is_valid and distance_is_valid:

@@ -34,9 +34,7 @@ from waypie_common import (
     truncate,
 )
 
-ALIGNMENT_ANGLES = tuple(
-    sorted({angle % 360 for step in (30, 45) for angle in range(0, 360, step)})
-)
+ALIGNMENT_ANGLES = tuple(range(0, 360, 5))
 DEFAULT_PARENT_LINK = {
     "color": "#ff8c00",
     "opacity": "0.35",
@@ -75,6 +73,8 @@ class Configurator(Gtk.Application):
         self.drag_item = None
         self.drag_original_index = None
         self.drag_group_base = 0
+        self.drag_active = False
+        self.drag_happened = False
         self.click_origin = (0.0, 0.0)
         self.updating_fields = False
 
@@ -150,6 +150,7 @@ class Configurator(Gtk.Application):
         drag.connect("drag-update", self.on_drag_update)
         drag.connect("drag-end", self.on_drag_end)
         self.canvas.add_controller(drag)
+        click.group(drag)
         content.append(self.canvas)
 
         properties = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -184,20 +185,6 @@ class Configurator(Gtk.Application):
         properties.append(settings_title)
         for name, label, lower, upper, value in (
             (
-                "circle_size",
-                "circle-size",
-                1,
-                4096,
-                self.settings.circle_size,
-            ),
-            (
-                "menu_radius",
-                "menu-radius",
-                1,
-                8192,
-                self.settings.menu_radius,
-            ),
-            (
                 "center_hitbox_size",
                 "center-hitbox-size",
                 0,
@@ -205,7 +192,7 @@ class Configurator(Gtk.Application):
                 (
                     self.settings.center_hitbox_size
                     if self.settings.center_hitbox_size is not None
-                    else self.settings.circle_size
+                    else computed_style(self.styles, ("circle",))["width"]
                 ),
             ),
             (
@@ -414,11 +401,7 @@ class Configurator(Gtk.Application):
         style = self.preview_style(item)
         if item.x is not None:
             return item.x, item.y
-        distance = (
-            style["distance"]
-            if style["distance"] is not None
-            else self.settings.menu_radius
-        )
+        distance = style["distance"]
         radians = math.radians(item.angle)
         return distance * math.sin(radians), -distance * math.cos(radians)
 
@@ -467,11 +450,7 @@ class Configurator(Gtk.Application):
                 x = center[0] + item.x
                 y = center[1] + item.y
             else:
-                distance = (
-                    style["distance"]
-                    if style["distance"] is not None
-                    else self.settings.menu_radius
-                )
+                distance = style["distance"]
                 radians = math.radians(item.angle)
                 x = center[0] + distance * math.sin(radians)
                 y = center[1] - distance * math.cos(radians)
@@ -495,12 +474,7 @@ class Configurator(Gtk.Application):
         return computed_style(self.styles, selectors)
 
     def preview_size(self, item, style):
-        size = (
-            style["width"]
-            if style["width"] is not None
-            else item.size or self.settings.circle_size
-        )
-        return size * style["scale"]
+        return style["width"] * style["scale"]
 
     def draw_preview(self, _canvas, context, width, height):
         overlay = computed_style(self.styles, ("overlay",))
@@ -728,9 +702,11 @@ class Configurator(Gtk.Application):
 
     def on_preview_press(self, _gesture, _presses, x, y):
         self.click_origin = x, y
+        self.drag_happened = False
 
     def on_preview_click(self, _gesture, _presses, x, y):
-        if math.hypot(x - self.click_origin[0], y - self.click_origin[1]) > 6:
+        moved = math.hypot(x - self.click_origin[0], y - self.click_origin[1])
+        if moved > 6 or self.drag_happened:
             return
         if self.preview_parent_center_hit(x, y):
             self.on_up(None)
@@ -753,14 +729,12 @@ class Configurator(Gtk.Application):
                 self.open_submenu(path)
 
     def on_drag_begin(self, _gesture, x, y):
+        self.drag_active = False
         self.drag_index = None
         if not self.preview_center_hit(x, y) and not self.preview_parent_center_hit(
             x, y
         ):
-            index = self.preview_hit(x, y)
-            menu = self.item_at(self.current_path)
-            if index is not None and not menu.items[index].items:
-                self.drag_index = index
+            self.drag_index = self.preview_hit(x, y)
         self.drag_origin = x, y
         center_x, center_y = self.preview_menu_center(self.current_path)
         self.drag_start_angle = direction_angle(x - center_x, y - center_y)
@@ -778,6 +752,11 @@ class Configurator(Gtk.Application):
     def on_drag_update(self, _gesture, offset_x, offset_y):
         if self.drag_index is None:
             return
+        if not self.drag_active:
+            if math.hypot(offset_x, offset_y) <= 6:
+                return
+            self.drag_active = True
+            self.drag_happened = True
         x = self.drag_origin[0] + offset_x
         y = self.drag_origin[1] + offset_y
         center_x, center_y = self.preview_menu_center(self.current_path)
@@ -832,6 +811,7 @@ class Configurator(Gtk.Application):
             and menu.items.index(self.drag_item) != self.drag_original_index
         )
         self.drag_index = None
+        self.drag_active = False
         self.drag_initial_angles = []
         self.drag_initial_proportion_angle = None
         self.drag_reorder_armed = False
@@ -1102,10 +1082,7 @@ def toml_number(value):
 
 
 def serialize_config(settings):
-    lines = [
-        f"circle-size = {toml_number(settings.circle_size)}",
-        f"menu-radius = {toml_number(settings.menu_radius)}",
-    ]
+    lines = []
     if settings.center_hitbox_size is not None:
         lines.append(f"center-hitbox-size = {toml_number(settings.center_hitbox_size)}")
     lines.append(
@@ -1124,7 +1101,7 @@ def serialize_config(settings):
         if item.icon_theme and item.icon:
             lines.append(f"icon-theme = {json.dumps(item.icon_theme)}")
             lines.append(f"icon = {json.dumps(item.icon)}")
-        for name in ("angle", "x", "y", "size"):
+        for name in ("angle", "x", "y"):
             value = getattr(item, name)
             if value is not None:
                 if name == "angle":

@@ -22,14 +22,11 @@ class Item:
     icon: str | None = None
     x: float | None = None
     y: float | None = None
-    size: float | None = None
     items: list["Item"] = field(default_factory=list)
 
 
 @dataclass
 class Settings:
-    circle_size: float
-    menu_radius: float
     center_hitbox_size: float | None
     minimum_edge_distance: float
     preserve_proportions: bool
@@ -67,8 +64,6 @@ def load_config():
     if not isinstance(menu, dict):
         raise SystemExit("waypie: config requires a [menu] table")
 
-    circle_size = positive_number(source.get("circle-size", 100), "circle-size")
-    menu_radius = positive_number(source.get("menu-radius", 150), "menu-radius")
     center_hitbox_size = optional_nonnegative(
         source.get("center-hitbox-size"),
         "center-hitbox-size",
@@ -92,8 +87,6 @@ def load_config():
     root = parse_item(menu, "menu", True)
     resolve_angles(root, root=True)
     return Settings(
-        circle_size,
-        menu_radius,
         center_hitbox_size,
         minimum_edge_distance,
         preserve_proportions,
@@ -142,7 +135,6 @@ def parse_item(source, location, root=False):
         )
     x = optional_number(source.get("x"), f"{location}.x")
     y = optional_number(source.get("y"), f"{location}.y")
-    size = optional_positive(source.get("size"), f"{location}.size")
     if (x is None) != (y is None):
         raise SystemExit(f"waypie: {location}.x and .y must be used together")
 
@@ -155,25 +147,11 @@ def parse_item(source, location, root=False):
         icon=icon,
         x=x,
         y=y,
-        size=size,
         items=[
             parse_item(child, f"{location}.items[{index}]")
             for index, child in enumerate(children)
         ],
     )
-
-
-def positive_number(value, location):
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise SystemExit(f"waypie: {location} must be a number")
-    value = float(value)
-    if not math.isfinite(value) or value <= 0:
-        raise SystemExit(f"waypie: {location} must be positive")
-    return value
-
-
-def optional_positive(value, location):
-    return None if value is None else positive_number(value, location)
 
 
 def nonnegative_number(value, location):
@@ -258,6 +236,10 @@ def load_styles():
             properties[name.strip().lower()] = value.strip()
         for selector in selectors.split(","):
             rules.setdefault(selector.strip().lower(), {}).update(properties)
+    base_circle = computed_style(rules, ("circle",))
+    for name in ("width", "distance"):
+        if base_circle[name] is None:
+            raise SystemExit(f"waypie: style.css requires circle {{ {name}: ...; }}")
     return rules
 
 

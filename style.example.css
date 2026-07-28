@@ -64,7 +64,7 @@ circle {
   opacity: 1;
   /* Diameter multiplier, also used for hover growth. */
   scale: 1;
-  /* Circle diameter; overrides config circle-size. */
+  /* Circle diameter. */
   width: 100px;
 }
 
