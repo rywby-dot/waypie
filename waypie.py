@@ -326,6 +326,13 @@ class Waypie(Gtk.Application):
 
         center_x, center_y = self.display_centers[-1]
         target_center_x, target_center_y = self.menu_centers[-1]
+        current = self.item_at_path(self.path)
+        if (
+            self.hovered_hit is not None
+            and self.hovered_hit[0] == "item"
+            and not 0 <= self.hovered_hit[1] < len(current.items)
+        ):
+            self.hovered_hit = None
         pointer_angle = None
         if (
             self.pointer_position is not None
@@ -338,7 +345,6 @@ class Waypie(Gtk.Application):
                     pointer_x - center_x,
                     pointer_y - center_y,
                 )
-        current = self.item_at_path(self.path)
         center_label = None
         if (
             self.settings.active_label_in_center
