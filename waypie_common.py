@@ -27,6 +27,7 @@ class Settings:
     menu_radius: float
     center_hitbox_size: float | None
     minimum_edge_distance: float
+    center_mode: bool
     preserve_proportions: bool
     auto_alignment: bool
     configurator_show_icons: bool
@@ -71,6 +72,7 @@ def load_config():
         source.get("minimum-edge-distance", 0),
         "minimum-edge-distance",
     )
+    center_mode = boolean(source.get("center-mode", False), "center-mode")
     preserve_proportions = boolean(
         source.get("preserve-proportions", False),
         "preserve-proportions",
@@ -89,6 +91,7 @@ def load_config():
         menu_radius,
         center_hitbox_size,
         minimum_edge_distance,
+        center_mode,
         preserve_proportions,
         auto_alignment,
         configurator_show_icons,

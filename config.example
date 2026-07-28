@@ -11,6 +11,8 @@
 menu-radius = 170
 center-hitbox-size = 200
 minimum-edge-distance = 120
+# Open the root menu at the screen center without waiting for pointer motion.
+center-mode = false
 preserve-proportions = true
 auto-alignment = true
 configurator-show-icons = true

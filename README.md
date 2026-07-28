@@ -60,6 +60,12 @@ waypie --show
 the menu. Escape and clicking the central close hitbox also close it. If no
 Waypie process is running, `waypie --show` starts one and opens the menu.
 
+In the default pointer mode, the initial menu center is taken from the first
+pointer-motion event received by the newly activated layer. On some
+compositors, the menu therefore remains invisible after `waypie --show` until
+the pointer is moved. Enable **Center mode** in the configurator if the menu
+must appear immediately without querying the pointer position.
+
 Example compositor binding:
 
 ```text
@@ -129,7 +135,9 @@ The configurator can:
 - preview submenu history, icons, active styles, movement, and layout
   animations;
 - edit `menu-radius`, `center-hitbox-size`, and
-  `minimum-edge-distance`.
+  `minimum-edge-distance`;
+- enable **Center mode** to open the root menu immediately at the screen
+  center.
 
 The toolbar options are:
 
@@ -189,6 +197,8 @@ The GUI maintains this file, including these top-level settings:
   it;
 - `minimum-edge-distance` — minimum distance between a newly opened menu
   center and every screen edge;
+- `center-mode` — opens the root menu at the center immediately instead of
+  waiting for the first pointer-motion event;
 - `preserve-proportions` — saved state of the configurator checkbox;
 - `auto-alignment` — saved state of the configurator checkbox;
 - `configurator-show-icons` — saved state of the configurator-only icon

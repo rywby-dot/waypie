@@ -61,6 +61,7 @@ class Configurator(Gtk.Application):
         self.preserve_check = None
         self.alignment_check = None
         self.show_icons_check = None
+        self.center_mode_check = None
         self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
@@ -228,6 +229,10 @@ class Configurator(Gtk.Application):
             spin.connect("value-changed", self.on_config_setting_changed, name)
             self.setting_spins[name] = spin
             self.add_property(properties, label, spin)
+        self.center_mode_check = Gtk.CheckButton(label="Center mode")
+        self.center_mode_check.set_active(self.settings.center_mode)
+        self.center_mode_check.connect("toggled", self.on_center_mode_changed)
+        properties.append(self.center_mode_check)
         properties_scroll = Gtk.ScrolledWindow()
         properties_scroll.set_policy(
             Gtk.PolicyType.NEVER,
@@ -1087,6 +1092,10 @@ class Configurator(Gtk.Application):
         self.canvas.queue_draw()
         self.set_status("Unsaved changes")
 
+    def on_center_mode_changed(self, _check):
+        self.settings.center_mode = self.center_mode_check.get_active()
+        self.set_status("Unsaved changes")
+
     def aligned_angle(self, angle):
         if self.alignment_check.get_active():
             return min(
@@ -1376,6 +1385,7 @@ def serialize_config(settings):
     lines.append(
         f"minimum-edge-distance = {toml_number(settings.minimum_edge_distance)}"
     )
+    lines.append(f"center-mode = {str(settings.center_mode).lower()}")
     lines.append(f"preserve-proportions = {str(settings.preserve_proportions).lower()}")
     lines.append(f"auto-alignment = {str(settings.auto_alignment).lower()}")
     lines.append(
