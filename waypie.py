@@ -343,6 +343,20 @@ class Waypie(Gtk.Application):
         center_x, center_y = self.display_centers[-1]
         target_center_x, target_center_y = self.menu_centers[-1]
         current = self.item_at_path(self.path)
+        center_label = None
+        if (
+            self.settings.active_label_in_center
+            and self.hovered_hit is not None
+            and self.hovered_hit[0] == "item"
+        ):
+            center_label = current.items[self.hovered_hit[1]].label
+        elif (
+            self.settings.active_label_in_center
+            and self.hovered_hit is not None
+            and self.hovered_hit[0] == "parent"
+            and self.path
+        ):
+            center_label = self.item_at_path(self.path[:-1]).label
         style = self.item_style(
             current, center=True, active=self.hovered_hit == ("center", None)
         )
@@ -360,7 +374,12 @@ class Waypie(Gtk.Application):
             size,
             current,
             style,
-            active=self.hovered_hit == ("center", None),
+            active=(
+                self.hovered_hit == ("center", None)
+                and not self.settings.active_label_in_center
+            ),
+            label_override=center_label,
+            hide_label=(self.settings.active_label_in_center and center_label is None),
         )
         scene.append((center_x, center_y, size, current, style, 1.0))
         hitbox_size = (
@@ -412,7 +431,14 @@ class Waypie(Gtk.Application):
                 parent_size,
                 parent,
                 style,
-                active=self.hovered_hit == ("parent", depth),
+                active=(
+                    self.hovered_hit == ("parent", depth)
+                    and not self.settings.active_label_in_center
+                ),
+                hide_label=(
+                    self.hovered_hit == ("parent", depth)
+                    and self.settings.active_label_in_center
+                ),
             )
             self.hits.append(
                 (
@@ -464,7 +490,14 @@ class Waypie(Gtk.Application):
                 item,
                 style,
                 reveal,
-                active=self.hovered_hit == ("item", index),
+                active=(
+                    self.hovered_hit == ("item", index)
+                    and not self.settings.active_label_in_center
+                ),
+                hide_label=(
+                    self.hovered_hit == ("item", index)
+                    and self.settings.active_label_in_center
+                ),
             )
             scene.append((x, y, size * reveal, item, style, reveal))
             self.visual_positions[("item", index)] = (x, y)
@@ -681,6 +714,8 @@ class Waypie(Gtk.Application):
         style,
         opacity=1.0,
         active=False,
+        label_override=None,
+        hide_label=False,
     ):
         if size <= 0:
             return
@@ -708,18 +743,20 @@ class Waypie(Gtk.Application):
 
         if (
             item.icon
+            and label_override is None
             and not active
             and self.draw_icon(context, x, y, size, item, style, opacity)
         ):
             return
-        if not item.label:
+        label_text = item.label if label_override is None else label_override
+        if hide_label or not label_text:
             return
         context.select_font_face(
             style["font-family"], cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
         )
         context.set_font_size(style["font-size"])
         set_source_color(context, style["color"], style["opacity"] * opacity)
-        label = truncate(item.label, max(1, int(size / style["font-size"] * 1.5)))
+        label = truncate(label_text, max(1, int(size / style["font-size"] * 1.5)))
         extents = context.text_extents(label)
         context.move_to(
             x - extents.width / 2 - extents.x_bearing,
@@ -801,7 +838,9 @@ class Waypie(Gtk.Application):
             self.menu_centers[-1] = self.clamp_menu_position(x, y)
             self.display_centers = self.display_centers[: index + 1]
             self.correct_return_circle_position(
-                force_original=closing_depth >= 2,
+                force_original=(
+                    closing_depth >= 2 and self.settings.normalize_return_position
+                ),
             )
             self.hovered_hit = None
             self.reset_item_animations()

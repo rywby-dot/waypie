@@ -128,7 +128,13 @@ The configurator can:
 - edit `menu-radius`, `center-hitbox-size`, and
   `minimum-edge-distance`;
 - enable **Center mode** to open the root menu immediately at the screen
-  center.
+  center;
+- enable **Normalize return position** (`normalize-return-position`) to force the menu circle two
+  generations behind back to its exact return angle and `menu-radius` whenever
+  a deeper submenu is closed, even if it is already inside the correct angular
+  hit sector;
+- enable **Show active label in center** (`active-label-in-center`) to show the hovered command or
+  submenu label in the current central circle instead of on the hovered item.
 
 The toolbar options are:
 
@@ -282,6 +288,15 @@ icon = "outline/terminal.svg"
 At runtime, a circle normally shows its icon. When that action becomes active,
 the icon disappears and the label is shown instead, matching Kando's
 interaction style. If no icon is assigned, the label is always shown.
+
+With **Show active label in center** enabled, the hovered item keeps its icon
+and its label replaces the icon or label of the current central circle. This
+works for commands, submenu items, and return targets. The active outer or
+return circle never shows its own label; without an icon it stays visually
+empty while its label is displayed in the center. When no outer item is active,
+including while the center itself is focused, the central circle shows only
+its own icon and never its own label. A center without an assigned icon is
+therefore empty in this mode.
 
 `circle { icon-size: ...; }` and role-specific overrides control icon size.
 SVG files that use `currentColor` can be recolored through CSS. Multicolor SVG

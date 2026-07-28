@@ -28,6 +28,8 @@ class Settings:
     center_hitbox_size: float | None
     minimum_edge_distance: float
     center_mode: bool
+    normalize_return_position: bool
+    active_label_in_center: bool
     preserve_proportions: bool
     auto_alignment: bool
     configurator_show_icons: bool
@@ -73,6 +75,14 @@ def load_config():
         "minimum-edge-distance",
     )
     center_mode = boolean(source.get("center-mode", False), "center-mode")
+    normalize_return_position = boolean(
+        source.get("normalize-return-position", True),
+        "normalize-return-position",
+    )
+    active_label_in_center = boolean(
+        source.get("active-label-in-center", False),
+        "active-label-in-center",
+    )
     preserve_proportions = boolean(
         source.get("preserve-proportions", False),
         "preserve-proportions",
@@ -92,6 +102,8 @@ def load_config():
         center_hitbox_size,
         minimum_edge_distance,
         center_mode,
+        normalize_return_position,
+        active_label_in_center,
         preserve_proportions,
         auto_alignment,
         configurator_show_icons,

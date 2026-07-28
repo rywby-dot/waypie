@@ -13,6 +13,10 @@ center-hitbox-size = 200
 minimum-edge-distance = 120
 # Open the root menu at the screen center without waiting for pointer motion.
 center-mode = false
+# On deep return, restore the menu circle two generations back exactly.
+normalize-return-position = true
+# Show the hovered item's label in the current central circle.
+active-label-in-center = false
 preserve-proportions = true
 auto-alignment = true
 configurator-show-icons = true
