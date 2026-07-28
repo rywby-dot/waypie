@@ -373,7 +373,7 @@ class Waypie(Gtk.Application):
             label_override=center_label,
             hide_label=(self.settings.active_label_in_center and center_label is None),
         )
-        scene.append((center_x, center_y, size, current, style, 1.0))
+        scene.append((center_x, center_y, size, current, style, 1.0, False))
         hitbox_size = (
             size
             if self.settings.center_hitbox_size is None
@@ -489,8 +489,9 @@ class Waypie(Gtk.Application):
                     self.hovered_hit == ("item", index)
                     and self.settings.active_label_in_center
                 ),
+                submenu_indicators=bool(item.items),
             )
-            scene.append((x, y, size * reveal, item, style, reveal))
+            scene.append((x, y, size * reveal, item, style, reveal, bool(item.items)))
             self.visual_positions[("item", index)] = (x, y)
             self.hits.append((hit_x, hit_y, size, "item", index, item.angle))
 
@@ -518,7 +519,15 @@ class Waypie(Gtk.Application):
                 start[1] + (end[1] - start[1]) * remaining,
             )
             context.stroke()
-        for x, y, size, item, style, opacity in self.departing_scene:
+        for (
+            x,
+            y,
+            size,
+            item,
+            style,
+            opacity,
+            submenu_indicators,
+        ) in self.departing_scene:
             self.draw_item(
                 context,
                 x,
@@ -527,6 +536,7 @@ class Waypie(Gtk.Application):
                 item,
                 style,
                 opacity * remaining,
+                submenu_indicators=submenu_indicators,
             )
 
     def draw_connectors(self, context):
@@ -625,14 +635,14 @@ class Waypie(Gtk.Application):
 
     def item_style(self, item, center=False, history=False, active=False):
         selectors = ["circle"]
-        if item.items:
-            selectors.append("circle.submenu")
         if center:
             selectors.append("circle.center")
         elif history:
             selectors.append("circle.history")
         else:
             selectors.append("circle.item")
+            if item.items:
+                selectors.append("circle.submenu")
         if active:
             selectors.append("circle.active")
         return computed_style(self.styles, selectors)
@@ -693,9 +703,20 @@ class Waypie(Gtk.Application):
         active=False,
         label_override=None,
         hide_label=False,
+        submenu_indicators=False,
     ):
         if size <= 0:
             return
+        if submenu_indicators:
+            self.draw_submenu_indicators(
+                context,
+                x,
+                y,
+                size,
+                item,
+                style,
+                opacity,
+            )
         radius = resolve_radius(style["border-radius"], size)
         left = x - size / 2
         top = y - size / 2
@@ -740,6 +761,67 @@ class Waypie(Gtk.Application):
             y - extents.height / 2 - extents.y_bearing,
         )
         context.show_text(label)
+
+    def draw_submenu_indicators(
+        self,
+        context,
+        x,
+        y,
+        circle_size,
+        item,
+        submenu_style,
+        opacity,
+    ):
+        style = computed_style(self.styles, ("submenu-indicator",))
+        indicator_size = style["width"]
+        protrusion = style["protrusion"]
+        if (
+            not item.items
+            or indicator_size is None
+            or indicator_size <= 0
+            or protrusion <= 0
+        ):
+            return
+        orbit = max(0, circle_size / 2 - indicator_size / 2 + protrusion)
+        context.save()
+        clip_x1, clip_y1, clip_x2, clip_y2 = context.clip_extents()
+        context.rectangle(
+            clip_x1,
+            clip_y1,
+            clip_x2 - clip_x1,
+            clip_y2 - clip_y1,
+        )
+        radius = resolve_radius(submenu_style["border-radius"], circle_size)
+        rounded_rectangle(
+            context,
+            x - circle_size / 2,
+            y - circle_size / 2,
+            circle_size,
+            circle_size,
+            radius,
+        )
+        context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+        context.clip()
+        for child in item.items:
+            indicator_x, indicator_y = self.radial_position(
+                (x, y),
+                child.angle,
+                orbit,
+            )
+            context.arc(
+                indicator_x,
+                indicator_y,
+                indicator_size / 2,
+                0,
+                math.tau,
+            )
+            set_source_color(
+                context,
+                style["color"],
+                style["opacity"] * opacity,
+            )
+            context.fill()
+        context.restore()
 
     def draw_icon(self, context, x, y, circle_size, item, style, opacity):
         path = icon_path(item.icon_theme, item.icon)

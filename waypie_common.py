@@ -47,6 +47,7 @@ DEFAULT_STYLE = {
     "follow-distance": 0.0,
     "icon-size": None,
     "opacity": 1.0,
+    "protrusion": 0.0,
     "scale": 1.0,
     "width": None,
 }
@@ -263,6 +264,7 @@ def computed_style(rules, selectors):
                 "border-width",
                 "font-size",
                 "icon-size",
+                "protrusion",
                 "width",
             }:
                 style[name] = parse_pixels(value, name)
