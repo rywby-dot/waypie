@@ -297,7 +297,7 @@ class Waypie(Gtk.Application):
         hovered_hit = self.target_at(x, y)
         if hovered_hit != self.hovered_hit:
             self.hovered_hit = hovered_hit
-            self.canvas.queue_draw()
+        self.canvas.queue_draw()
 
     def draw(self, _canvas, context, width, height):
         self.hits = []
@@ -326,6 +326,14 @@ class Waypie(Gtk.Application):
 
         center_x, center_y = self.display_centers[-1]
         target_center_x, target_center_y = self.menu_centers[-1]
+        pointer_angle = None
+        if self.pointer_position is not None:
+            pointer_x, pointer_y = self.pointer_position
+            if math.hypot(pointer_x - center_x, pointer_y - center_y) > 1e-6:
+                pointer_angle = direction_angle(
+                    pointer_x - center_x,
+                    pointer_y - center_y,
+                )
         current = self.item_at_path(self.path)
         center_label = None
         if (
@@ -425,14 +433,25 @@ class Waypie(Gtk.Application):
                 )
 
         for index, item in enumerate(current.items):
-            style = self.item_style(item, active=self.hovered_hit == ("item", index))
+            item_active = self.hovered_hit == ("item", index)
+            style = self.item_style(item, active=item_active)
             resting_distance = self.settings.menu_radius
+            active_style = self.item_style(item, active=True)
+            distance_offset = active_style["distance"] or 0
+            if item_active:
+                distance_factor = 1.0
+            elif pointer_angle is not None:
+                angle_difference = angular_distance(pointer_angle, item.angle)
+                angular_falloff = (1 + math.cos(math.radians(angle_difference))) / 2
+                distance_factor = active_style["follow-distance"] * angular_falloff
+            else:
+                distance_factor = 0.0
             target_distance = max(
                 0,
-                self.settings.menu_radius + (style["distance"] or 0),
+                self.settings.menu_radius + distance_offset * distance_factor,
             )
             distance = self.animated_item_distance(
-                style,
+                target_distance,
                 ("item", index),
                 resting_distance,
             )
@@ -639,11 +658,7 @@ class Waypie(Gtk.Application):
         base_size = style["width"]
         return base_size * current
 
-    def animated_item_distance(self, style, key, resting_distance):
-        target = max(
-            0,
-            self.settings.menu_radius + (style["distance"] or 0),
-        )
+    def animated_item_distance(self, target, key, resting_distance):
         current = self.distance_values.setdefault(key, resting_distance)
         duration = animation_duration(self.styles, "hover-duration")
         animation = self.distance_animations.get(key)
