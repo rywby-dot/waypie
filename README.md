@@ -270,6 +270,8 @@ The share decreases smoothly with angular difference and reaches 0% on the
 opposite side at 180°. Only the pointer angle is used: moving the pointer
 farther from or closer to the center does not change the effect. The active
 circle always receives the full `distance` and does not use this percentage.
+The effect starts only after an item sector becomes active. It is disabled
+while the central hitbox, the return direction, or no action is focused.
 
 Monochrome SVG icons using `currentColor` inherit the CSS `color` property.
 
