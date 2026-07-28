@@ -8,12 +8,12 @@
 # https://github.com/rywby-dot/waypie
 # Colors are setup manually in style.css
 
-menu-radius = 170
-center-hitbox-size = 200
-minimum-edge-distance = 120
+menu-radius = 120
+center-hitbox-size = 160
+minimum-edge-distance = 150
 center-mode = false
-active-label-in-center = false
-preserve-proportions = true
+active-label-in-center = true
+preserve-proportions = false
 auto-alignment = true
 configurator-show-icons = true
 
@@ -99,19 +99,19 @@ angle = 300
 [[menu.items.items]]
 label = "Foot"
 command = "foot"
-angle = 264
+angle = 305
 
 [[menu.items.items]]
 label = "Kitty"
 command = "kitty"
-angle = 192
+angle = 220
 
 [[menu.items.items]]
 label = "Alacritty"
 command = "alacritty"
-angle = 336
+angle = 335
 
 [[menu.items.items]]
 label = "Ghostty"
 command = "ghostty"
-angle = 48
+angle = 20

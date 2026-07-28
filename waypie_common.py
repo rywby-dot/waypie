@@ -41,6 +41,7 @@ DEFAULT_STYLE = {
     "border-width": 0.0,
     "border-radius": "50%",
     "color": (1.0, 1.0, 1.0, 1.0),
+    "cut-indicators": True,
     "distance": None,
     "font-size": 14.0,
     "font-family": "Sans",
@@ -261,6 +262,13 @@ def computed_style(rules, selectors):
                 style[name] = parse_signed_pixels(value, name)
             elif name == "follow-distance":
                 style[name] = parse_percentage(value, name)
+            elif name == "cut-indicators":
+                normalized = value.lower()
+                if normalized not in {"true", "false"}:
+                    raise SystemExit(
+                        "waypie: style.css cut-indicators must be true or false"
+                    )
+                style[name] = normalized == "true"
             elif name in {
                 "border-width",
                 "font-size",
