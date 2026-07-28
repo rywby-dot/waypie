@@ -4,11 +4,11 @@ overlay {
   background-color: transparent;
 }
 
-/* Durations for animations drawn inside an already active layer. */
+/* Durations shared by the runtime menu and configurator preview. */
 animation {
-  /* Circle scale transition when the active direction changes. */
+  /* Circle growth and radial movement when the active item changes. */
   hover-duration: 120ms;
-  /* Opening, closing, submenu movement, and item reveal transition. */
+  /* Opening, closing, movement, item reveal, and auto-layout transition. */
   menu-duration: 180ms;
 }
 
@@ -40,7 +40,7 @@ configurator-history {
   scale: 2;
 }
 
-/* Base style and geometry inherited by every kind of circle. */
+/* Base visual style inherited by every kind of circle. */
 circle {
   /* Circle fill color. */
   background-color: #242424;
@@ -52,8 +52,6 @@ circle {
   border-radius: 50%;
   /* Label color and currentColor color for monochrome SVG icons. */
   color: #ffffff;
-  /* Radial distance from the current menu center. */
-  distance: 170px;
   /* Label font family. */
   font-family: Sans;
   /* Label font size. */
@@ -148,4 +146,6 @@ circle.active {
   opacity: 1;
   /* Active-circle growth multiplier. */
   scale: 1.15;
+  /* Absolute hovered distance from the menu center, not an added offset. */
+  distance: 195px;
 }

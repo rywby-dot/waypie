@@ -17,16 +17,14 @@ class Item:
     command: str | None = None
     angle: float | None = None
     return_angle: float | None = None
-    proportion_angle: float | None = None
     icon_theme: str | None = None
     icon: str | None = None
-    x: float | None = None
-    y: float | None = None
     items: list["Item"] = field(default_factory=list)
 
 
 @dataclass
 class Settings:
+    menu_radius: float
     center_hitbox_size: float | None
     minimum_edge_distance: float
     preserve_proportions: bool
@@ -64,6 +62,7 @@ def load_config():
     if not isinstance(menu, dict):
         raise SystemExit("waypie: config requires a [menu] table")
 
+    menu_radius = positive_number(source.get("menu-radius", 170), "menu-radius")
     center_hitbox_size = optional_nonnegative(
         source.get("center-hitbox-size"),
         "center-hitbox-size",
@@ -87,6 +86,7 @@ def load_config():
     root = parse_item(menu, "menu", True)
     resolve_angles(root, root=True)
     return Settings(
+        menu_radius,
         center_hitbox_size,
         minimum_edge_distance,
         preserve_proportions,
@@ -117,12 +117,6 @@ def parse_item(source, location, root=False):
     angle = optional_number(source.get("angle"), f"{location}.angle")
     if angle is not None:
         angle = round(angle) % 360
-    proportion_angle = optional_number(
-        source.get("proportion-angle"),
-        f"{location}.proportion-angle",
-    )
-    if proportion_angle is not None:
-        proportion_angle = round(proportion_angle) % 360
     icon_theme = source.get("icon-theme")
     icon = source.get("icon")
     if icon_theme is not None and not isinstance(icon_theme, str):
@@ -133,20 +127,12 @@ def parse_item(source, location, root=False):
         raise SystemExit(
             f"waypie: {location}.icon-theme and .icon must be used together"
         )
-    x = optional_number(source.get("x"), f"{location}.x")
-    y = optional_number(source.get("y"), f"{location}.y")
-    if (x is None) != (y is None):
-        raise SystemExit(f"waypie: {location}.x and .y must be used together")
-
     return Item(
         label=label,
         command=command,
         angle=angle,
-        proportion_angle=proportion_angle,
         icon_theme=icon_theme,
         icon=icon,
-        x=x,
-        y=y,
         items=[
             parse_item(child, f"{location}.items[{index}]")
             for index, child in enumerate(children)
@@ -160,6 +146,15 @@ def nonnegative_number(value, location):
     value = float(value)
     if not math.isfinite(value) or value < 0:
         raise SystemExit(f"waypie: {location} cannot be negative")
+    return value
+
+
+def positive_number(value, location):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SystemExit(f"waypie: {location} must be a number")
+    value = float(value)
+    if not math.isfinite(value) or value <= 0:
+        raise SystemExit(f"waypie: {location} must be positive")
     return value
 
 
@@ -194,8 +189,6 @@ def resolve_angles(item, root=False):
         resolve_angles(child)
     if not root and item.items:
         item.return_angle = (item.angle + 180) % 360
-        if item.proportion_angle is None:
-            item.proportion_angle = item.return_angle
 
 
 def largest_gap_angle(angles, preferred=None):
@@ -236,8 +229,11 @@ def load_styles():
             properties[name.strip().lower()] = value.strip()
         for selector in selectors.split(","):
             rules.setdefault(selector.strip().lower(), {}).update(properties)
+    # Ordinary radial distance is menu geometry. State selectors such as
+    # circle.active may still override it for visual interaction.
+    rules.get("circle", {}).pop("distance", None)
     base_circle = computed_style(rules, ("circle",))
-    for name in ("width", "distance"):
+    for name in ("width",):
         if base_circle[name] is None:
             raise SystemExit(f"waypie: style.css requires circle {{ {name}: ...; }}")
     return rules
