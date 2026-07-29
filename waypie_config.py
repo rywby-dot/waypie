@@ -23,7 +23,7 @@ from waypie_common import (
     computed_style,
     content_opacity,
     direction_angle,
-    ease_out_cubic,
+    ease_out_spring,
     icon_path,
     icon_themes,
     largest_gap_angle,
@@ -64,6 +64,7 @@ class Configurator(Gtk.Application):
         self.show_icons_check = None
         self.center_mode_check = None
         self.active_label_in_center_check = None
+        self.close_submenu_on_center_click_check = None
         self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
@@ -246,6 +247,17 @@ class Configurator(Gtk.Application):
             self.on_active_label_in_center_changed,
         )
         properties.append(self.active_label_in_center_check)
+        self.close_submenu_on_center_click_check = Gtk.CheckButton(
+            label="Close on click"
+        )
+        self.close_submenu_on_center_click_check.set_active(
+            self.settings.close_submenu_on_center_click
+        )
+        self.close_submenu_on_center_click_check.connect(
+            "toggled",
+            self.on_close_submenu_on_center_click_changed,
+        )
+        properties.append(self.close_submenu_on_center_click_check)
         properties_scroll = Gtk.ScrolledWindow()
         properties_scroll.set_policy(
             Gtk.PolicyType.NEVER,
@@ -557,7 +569,7 @@ class Configurator(Gtk.Application):
             animation["current"] = animation["target"]
             return
         progress = min(1.0, (now - animation["started"]) / duration)
-        eased = ease_out_cubic(progress)
+        eased = ease_out_spring(progress)
         animation["current"] = tuple(
             start + (target - start) * eased
             for start, target in zip(
@@ -617,7 +629,7 @@ class Configurator(Gtk.Application):
                 if duration == 0
                 else min(1.0, (now - departure["started"]) / duration)
             )
-            eased = ease_out_cubic(progress)
+            eased = ease_out_spring(progress)
             geometry = tuple(
                 start + (target - start) * eased
                 for start, target in zip(
@@ -1202,6 +1214,12 @@ class Configurator(Gtk.Application):
         )
         self.set_status("Unsaved changes")
 
+    def on_close_submenu_on_center_click_changed(self, _check):
+        self.settings.close_submenu_on_center_click = (
+            self.close_submenu_on_center_click_check.get_active()
+        )
+        self.set_status("Unsaved changes")
+
     def aligned_angle(self, angle):
         if self.alignment_check.get_active():
             return min(
@@ -1494,6 +1512,10 @@ def serialize_config(settings):
     lines.append(f"center-mode = {str(settings.center_mode).lower()}")
     lines.append(
         f"active-label-in-center = {str(settings.active_label_in_center).lower()}"
+    )
+    lines.append(
+        "close-submenu-on-center-click = "
+        f"{str(settings.close_submenu_on_center_click).lower()}"
     )
     lines.append(f"preserve-proportions = {str(settings.preserve_proportions).lower()}")
     lines.append(f"auto-alignment = {str(settings.auto_alignment).lower()}")
