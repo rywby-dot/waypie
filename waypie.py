@@ -119,6 +119,8 @@ class Waypie(Gtk.Application):
         self.current_connectors = []
         self.departing_scene = []
         self.departing_connectors = []
+        self.returning_item_index = None
+        self.returning_item_scene = None
         self.visual_positions = {}
         self.scale_values = {}
         self.scale_animations = {}
@@ -247,6 +249,8 @@ class Waypie(Gtk.Application):
         self.current_connectors = []
         self.departing_scene = []
         self.departing_connectors = []
+        self.returning_item_index = None
+        self.returning_item_scene = None
         self.visual_positions = {}
         self.closing = False
         self.action_closing = False
@@ -316,6 +320,8 @@ class Waypie(Gtk.Application):
         self.current_connectors = []
         self.departing_scene = []
         self.departing_connectors = []
+        self.returning_item_index = None
+        self.returning_item_scene = None
         self.visual_positions = {}
         self.scale_values.clear()
         self.scale_animations.clear()
@@ -408,13 +414,6 @@ class Waypie(Gtk.Application):
             and self.hovered_hit[0] == "item"
         ):
             center_label = current.items[self.hovered_hit[1]].label
-        elif (
-            self.settings.active_label_in_center
-            and self.hovered_hit is not None
-            and self.hovered_hit[0] == "parent"
-            and self.path
-        ):
-            center_label = self.item_at_path(self.path[:-1]).label
         style = self.item_style(
             current, center=True, active=self.hovered_hit == ("center", None)
         )
@@ -554,6 +553,7 @@ class Waypie(Gtk.Application):
                 item.angle,
                 distance,
             )
+            target_item_x, target_item_y = x, y
             hit_x, hit_y = self.radial_position(
                 (target_center_x, target_center_y),
                 item.angle,
@@ -582,42 +582,104 @@ class Waypie(Gtk.Application):
                 ("item", index),
                 self.item_style(item)["scale"],
             )
-            self.draw_item(
-                context,
-                x,
-                y,
-                size * reveal,
-                item,
-                style,
-                reveal,
-                active=(item_active and not self.settings.active_label_in_center),
-                hide_label=(
-                    item_active
-                    and self.settings.active_label_in_center
-                    and bool(item.icon)
-                ),
-                submenu_indicators=bool(item.items),
-                submenu_indicators_active=item_active,
-            )
-            scene.append(
+            if (
+                index == self.returning_item_index
+                and self.returning_item_scene is not None
+            ):
                 (
+                    old_x,
+                    old_y,
+                    old_size,
+                    old_item,
+                    old_style,
+                    old_opacity,
+                    old_indicators,
+                    old_active,
+                    old_label_override,
+                    old_hide_label,
+                    old_indicators_active,
+                ) = self.returning_item_scene
+                x = old_x + (target_item_x - old_x) * self.transition_progress
+                y = old_y + (target_item_y - old_y) * self.transition_progress
+                drawn_size = old_size + (size - old_size) * self.transition_progress
+                if item.items:
+                    self.draw_submenu_indicators(
+                        context,
+                        x,
+                        y,
+                        drawn_size,
+                        item,
+                        style,
+                        old_opacity,
+                        active=item_active,
+                        reveal=self.transition_progress,
+                    )
+                self.draw_item(
+                    context,
+                    x,
+                    y,
+                    drawn_size,
+                    old_item,
+                    old_style,
+                    old_opacity,
+                    active=old_active,
+                    label_override=old_label_override,
+                    hide_label=old_hide_label,
+                    submenu_indicators=old_indicators,
+                    submenu_indicators_active=old_indicators_active,
+                )
+                scene.append(
+                    (
+                        x,
+                        y,
+                        drawn_size,
+                        old_item,
+                        old_style,
+                        old_opacity,
+                        old_indicators,
+                        old_active,
+                        old_label_override,
+                        old_hide_label,
+                        old_indicators_active,
+                    )
+                )
+            else:
+                self.draw_item(
+                    context,
                     x,
                     y,
                     size * reveal,
                     item,
                     style,
                     reveal,
-                    bool(item.items),
-                    item_active and not self.settings.active_label_in_center,
-                    None,
-                    (
+                    active=(item_active and not self.settings.active_label_in_center),
+                    hide_label=(
                         item_active
                         and self.settings.active_label_in_center
                         and bool(item.icon)
                     ),
-                    item_active,
+                    submenu_indicators=bool(item.items),
+                    submenu_indicators_active=item_active,
                 )
-            )
+                scene.append(
+                    (
+                        x,
+                        y,
+                        size * reveal,
+                        item,
+                        style,
+                        reveal,
+                        bool(item.items),
+                        item_active and not self.settings.active_label_in_center,
+                        None,
+                        (
+                            item_active
+                            and self.settings.active_label_in_center
+                            and bool(item.icon)
+                        ),
+                        item_active,
+                    )
+                )
             self.visual_positions[("item", index)] = (x, y)
             self.hits.append((hit_x, hit_y, size, "item", index, item.angle))
 
@@ -949,6 +1011,7 @@ class Waypie(Gtk.Application):
         submenu_style,
         opacity,
         active=False,
+        reveal=1.0,
     ):
         selectors = ["submenu-indicator"]
         if active:
@@ -961,8 +1024,11 @@ class Waypie(Gtk.Application):
             or indicator_size is None
             or indicator_size <= 0
             or protrusion <= 0
+            or reveal <= 0
         ):
             return
+        indicator_size *= reveal
+        protrusion *= reveal
         orbit = max(0, circle_size / 2 - indicator_size / 2 + protrusion)
         context.save()
         if style["cut-indicators"]:
@@ -1000,7 +1066,7 @@ class Waypie(Gtk.Application):
             set_source_color(
                 context,
                 style["color"],
-                style["opacity"] * opacity,
+                style["opacity"] * opacity * reveal,
             )
             context.fill()
         context.restore()
@@ -1071,7 +1137,11 @@ class Waypie(Gtk.Application):
             self.hide_menu()
             return
         if kind == "parent":
-            self.departing_scene = list(self.current_scene)
+            self.returning_item_index = self.path[index]
+            self.returning_item_scene = (
+                self.current_scene[0] if self.current_scene else None
+            )
+            self.departing_scene = list(self.current_scene[1:])
             self.departing_connectors = self.current_connectors[-1:]
             self.path = self.path[:index]
             self.menu_centers = self.menu_centers[: index + 1]
@@ -1214,6 +1284,8 @@ class Waypie(Gtk.Application):
             self.menu_animation_started = None
             self.departing_scene = []
             self.departing_connectors = []
+            self.returning_item_index = None
+            self.returning_item_scene = None
             return
         self.menu_progress = start
         self.transition_progress = 0.0
@@ -1256,6 +1328,8 @@ class Waypie(Gtk.Application):
                 self.menu_animation_started = None
                 self.departing_scene = []
                 self.departing_connectors = []
+                self.returning_item_index = None
+                self.returning_item_scene = None
                 if self.closing:
                     self.finish_hide(from_animation=True)
                     return False
