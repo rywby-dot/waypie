@@ -13,7 +13,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["waypie.py", "waypie_config.py", "waypie_common.py"]
+only-include = [
+    "waypie.py",
+    "waypie_animation.py",
+    "waypie_config.py",
+    "waypie_common.py",
+]
 
 [project.scripts]
 waypie = "waypie:main"

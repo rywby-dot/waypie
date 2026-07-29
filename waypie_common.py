@@ -425,17 +425,6 @@ def animation_number(rules, name, default):
     return positive_number_string(value.strip(), name)
 
 
-def ease_out_spring(progress):
-    if progress <= 0:
-        return 0.0
-    if progress >= 1:
-        return 1.0
-    stiffness = 9
-    value = 1 - (1 + stiffness * progress) * math.exp(-stiffness * progress)
-    end = 1 - (1 + stiffness) * math.exp(-stiffness)
-    return value / end
-
-
 def resolve_radius(value, size):
     value = value.strip().lower()
     if value.endswith("%"):

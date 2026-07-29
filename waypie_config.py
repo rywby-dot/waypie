@@ -12,6 +12,7 @@ gi.require_version("GdkPixbuf", "2.0")
 
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
+from waypie_animation import spring
 from waypie_common import (
     CONFIG_DIR,
     CONFIG_PATH,
@@ -23,7 +24,6 @@ from waypie_common import (
     computed_style,
     content_opacity,
     direction_angle,
-    ease_out_spring,
     icon_path,
     icon_themes,
     largest_gap_angle,
@@ -569,7 +569,7 @@ class Configurator(Gtk.Application):
             animation["current"] = animation["target"]
             return
         progress = min(1.0, (now - animation["started"]) / duration)
-        eased = ease_out_spring(progress)
+        eased = spring(progress)
         animation["current"] = tuple(
             start + (target - start) * eased
             for start, target in zip(
@@ -629,7 +629,7 @@ class Configurator(Gtk.Application):
                 if duration == 0
                 else min(1.0, (now - departure["started"]) / duration)
             )
-            eased = ease_out_spring(progress)
+            eased = spring(progress)
             geometry = tuple(
                 start + (target - start) * eased
                 for start, target in zip(
