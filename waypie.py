@@ -1,12 +1,33 @@
 #!/usr/bin/env python3
 
+import os
+import socket
+import sys
+
+
+def send_fast_control_command():
+    if sys.argv[1:] != ["--show"] or not os.environ.get("WAYLAND_DISPLAY"):
+        return
+
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    display = os.environ["WAYLAND_DISPLAY"]
+    socket_path = os.path.join(runtime_dir, "waypie", f"control-{display}.sock")
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        connection.sendto(b"show", socket_path)
+    except OSError:
+        return
+    finally:
+        connection.close()
+    raise SystemExit(0)
+
+
+send_fast_control_command()
+
 import ctypes.util
 import math
-import os
 import re
-import socket
 import subprocess
-import sys
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -44,23 +65,6 @@ def control_socket_path():
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
     display = os.environ.get("WAYLAND_DISPLAY", "wayland")
     return Path(runtime_dir) / "waypie" / f"control-{display}.sock"
-
-
-def send_fast_control_command():
-    if sys.argv[1:] != ["--show"] or not os.environ.get("WAYLAND_DISPLAY"):
-        return
-
-    connection = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    try:
-        connection.sendto(b"show", str(control_socket_path()))
-    except OSError:
-        return
-    finally:
-        connection.close()
-    raise SystemExit(0)
-
-
-send_fast_control_command()
 
 
 def preload_layer_shell():
