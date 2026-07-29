@@ -10,9 +10,10 @@ Keep each pull request focused on one concern.
 Before submitting a change, run the same checks as CI:
 
 ```sh
-ruff format --check waypie.py waypie_config.py waypie_common.py
-ruff check waypie.py waypie_config.py waypie_common.py
-python -m py_compile waypie.py waypie_config.py waypie_common.py
+ruff format --check waypie.py waypie_animation.py waypie_config.py waypie_common.py
+ruff check waypie.py waypie_animation.py waypie_config.py waypie_common.py tests
+python -m py_compile waypie.py waypie_animation.py waypie_config.py waypie_common.py
+python -m unittest discover -s tests
 python -m build
 ```
 
