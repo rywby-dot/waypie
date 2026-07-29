@@ -13,6 +13,7 @@ center-hitbox-size = 160
 minimum-edge-distance = 150
 center-mode = false
 active-label-in-center = true
+close-submenu-on-center-click = false
 preserve-proportions = false
 auto-alignment = true
 configurator-show-icons = true

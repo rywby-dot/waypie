@@ -62,14 +62,18 @@ the menu. Escape, right click or clicking the central of the menu also close it.
 Waypie process is running, `waypie --show` starts one and opens the menu.
 
 Closing immediately removes keyboard focus and makes the layer click-through,
-then plays the internal closing animation for `menu-duration`. The layer-shell
+then plays the internal closing animation for `close-duration`. The layer-shell
 window is hidden only after the animation finishes, so the transition does not
 delay interaction with windows below it.
 
-Selecting a command uses a two-stage closing animation. The command starts and
-the layer becomes click-through immediately. Its circle then moves to the
-pointer for `action-duration`, after which the normal `menu-duration` closing
-animation hides the complete menu.
+Selecting a command starts it and makes the layer click-through immediately.
+During the single `close-duration` animation, its circle moves to the pointer,
+keeps growing for the complete transition, and starts fading as soon as it
+arrives. At the same time, the current menu items collapse into its center,
+while central and history circles shrink in place. Their opacity reaches zero
+before their spring-scaled geometry reaches zero. `action-scale` sets the
+selected circle's final size multiplier and defaults to `1.3`. There is no
+additional action delay.
 
 In the default pointer mode, the initial menu center is taken from the first
 pointer-motion event received by the newly activated layer. On some
@@ -154,6 +158,9 @@ The configurator can:
   center;
 - enable **Show active label in center** (`active-label-in-center`) to show the hovered command or
   submenu label in the current central circle instead of on the hovered item.
+- enable **Close on click** (`close-submenu-on-center-click`) to make a
+  submenu's central circle close Waypie instead of returning to its parent.
+  The root central circle always closes Waypie.
 
 The toolbar options are:
 
@@ -215,7 +222,8 @@ Restart the running Waypie process after changing it.
 The example stylesheet documents every supported section:
 
 - `overlay` — full-screen overlay background;
-- `animation` — hover and menu animation durations;
+- `animation` — separate durations for hover movement, icon fading, menu
+  transitions, and selected-action movement;
 - `connector` — lines between opened runtime menus;
 - `parent-link` — thick return-direction line in the configurator;
 - `configurator-history` — appearance and distance of the previous-menu

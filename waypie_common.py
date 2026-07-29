@@ -29,6 +29,7 @@ class Settings:
     minimum_edge_distance: float
     center_mode: bool
     active_label_in_center: bool
+    close_submenu_on_center_click: bool
     preserve_proportions: bool
     auto_alignment: bool
     configurator_show_icons: bool
@@ -82,6 +83,10 @@ def load_config():
         source.get("active-label-in-center", False),
         "active-label-in-center",
     )
+    close_submenu_on_center_click = boolean(
+        source.get("close-submenu-on-center-click", False),
+        "close-submenu-on-center-click",
+    )
     preserve_proportions = boolean(
         source.get("preserve-proportions", False),
         "preserve-proportions",
@@ -102,6 +107,7 @@ def load_config():
         minimum_edge_distance,
         center_mode,
         active_label_in_center,
+        close_submenu_on_center_click,
         preserve_proportions,
         auto_alignment,
         configurator_show_icons,
@@ -398,8 +404,12 @@ def positive_number_string(value, name):
     return number
 
 
-def animation_duration(rules, name):
-    value = rules.get("animation", {}).get(name, "0ms").strip().lower()
+def animation_duration(rules, name, fallback_name=None):
+    animation = rules.get("animation", {})
+    value = animation.get(name)
+    if value is None and fallback_name is not None:
+        value = animation.get(fallback_name)
+    value = (value or "0ms").strip().lower()
     match = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)(ms|s)", value)
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
@@ -408,8 +418,22 @@ def animation_duration(rules, name):
     return seconds / 1000 if unit == "ms" else seconds
 
 
-def ease_out_cubic(progress):
-    return 1 - (1 - progress) ** 3
+def animation_number(rules, name, default):
+    value = rules.get("animation", {}).get(name)
+    if value is None:
+        return default
+    return positive_number_string(value.strip(), name)
+
+
+def ease_out_spring(progress):
+    if progress <= 0:
+        return 0.0
+    if progress >= 1:
+        return 1.0
+    stiffness = 9
+    value = 1 - (1 + stiffness * progress) * math.exp(-stiffness * progress)
+    end = 1 - (1 + stiffness) * math.exp(-stiffness)
+    return value / end
 
 
 def resolve_radius(value, size):

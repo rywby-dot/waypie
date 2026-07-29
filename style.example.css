@@ -3,11 +3,13 @@ overlay {
   background-color: transparent;
 }
 
-/* Animation speed for hover effects, menu transitions, and moving a selected action to the pointer. */
+/* Animation speed for hover effects, icons, menu transitions, and closing the complete menu. */
 animation {
   hover-duration: 300ms;
+  icon-duration: 180ms;
   menu-duration: 300ms;
-  action-duration: 180ms;
+  close-duration: 220ms;
+  action-scale: 1.3;
 }
 
 /* Lines connecting the currently open menu to all previous menus. */
