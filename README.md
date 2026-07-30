@@ -163,6 +163,9 @@ The configurator can:
   The root central circle always closes Waypie.
 - enable **Hover mode** (`hover-mode`) to select without clicking: move toward
   an item and either pause briefly or turn toward the next item.
+- enable **Turbo mode** (`turbo-mode`) to navigate while keeping `Super`,
+  `Alt`, `Ctrl`, or `Shift` held after the opening shortcut. Pauses and turns
+  open submenus; releasing the last held modifier activates the current item.
 
 The toolbar options are:
 

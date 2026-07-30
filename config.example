@@ -15,6 +15,7 @@ center-mode = false
 active-label-in-center = true
 close-submenu-on-center-click = false
 hover-mode = false
+turbo-mode = false
 preserve-proportions = false
 auto-alignment = true
 configurator-show-icons = true

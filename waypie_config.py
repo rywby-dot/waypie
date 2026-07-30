@@ -66,6 +66,7 @@ class Configurator(Gtk.Application):
         self.active_label_in_center_check = None
         self.close_submenu_on_center_click_check = None
         self.hover_mode_check = None
+        self.turbo_mode_check = None
         self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
@@ -266,6 +267,14 @@ class Configurator(Gtk.Application):
         )
         self.hover_mode_check.connect("toggled", self.on_hover_mode_changed)
         properties.append(self.hover_mode_check)
+        self.turbo_mode_check = Gtk.CheckButton(label="Turbo mode")
+        self.turbo_mode_check.set_active(self.settings.turbo_mode)
+        self.turbo_mode_check.set_tooltip_text(
+            "Hold Super, Alt, Ctrl, or Shift while opening the menu; "
+            "release it to activate the selected item."
+        )
+        self.turbo_mode_check.connect("toggled", self.on_turbo_mode_changed)
+        properties.append(self.turbo_mode_check)
         properties_scroll = Gtk.ScrolledWindow()
         properties_scroll.set_policy(
             Gtk.PolicyType.NEVER,
@@ -1232,6 +1241,10 @@ class Configurator(Gtk.Application):
         self.settings.hover_mode = self.hover_mode_check.get_active()
         self.set_status("Unsaved changes")
 
+    def on_turbo_mode_changed(self, _check):
+        self.settings.turbo_mode = self.turbo_mode_check.get_active()
+        self.set_status("Unsaved changes")
+
     def aligned_angle(self, angle):
         if self.alignment_check.get_active():
             return min(
@@ -1530,6 +1543,7 @@ def serialize_config(settings):
         f"{str(settings.close_submenu_on_center_click).lower()}"
     )
     lines.append(f"hover-mode = {str(settings.hover_mode).lower()}")
+    lines.append(f"turbo-mode = {str(settings.turbo_mode).lower()}")
     lines.append(f"preserve-proportions = {str(settings.preserve_proportions).lower()}")
     lines.append(f"auto-alignment = {str(settings.auto_alignment).lower()}")
     lines.append(
