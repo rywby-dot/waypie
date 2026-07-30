@@ -30,7 +30,8 @@ circle {
   text-opacity: 1;
   font-family: Sans;
   font-size: 14px;
-  icon-size: 40px;
+  text-fill: 90%;
+  icon-fill: 57%;
   opacity: 0.8;
   width: 70px;
   scale: 1;

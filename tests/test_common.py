@@ -21,6 +21,16 @@ class FakeSvgPath:
 
 
 class ScaledIconSizeTests(unittest.TestCase):
+    def test_icon_fill_uses_free_space_inside_border(self):
+        style = {
+            "icon-fill": 0.75,
+            "icon-size": 10,
+            "border-width": 4,
+            "width": 80,
+        }
+
+        self.assertEqual(scaled_icon_size(style, 100), 69)
+
     def test_explicit_icon_size_follows_circle_scale(self):
         style = {"icon-size": 40, "width": 80}
 
