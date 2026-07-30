@@ -1,16 +1,6 @@
-# This is config.example.
-# You don't need to change it!
-# Open GUI editor waypie-editor ant setup everything there
-# just copy in to ~/.config
-#   cp config.example ~/.config/waypie/config
-#   cp style.example.css ~/.config/waypie/style.css
-# and read README.md
-# https://github.com/rywby-dot/waypie
-# Colors are setup manually in style.css
-
 menu-radius = 120
 center-hitbox-size = 160
-minimum-edge-distance = 150
+minimum-edge-distance = 200
 center-mode = false
 active-label-in-center = true
 close-submenu-on-center-click = false
@@ -36,42 +26,42 @@ label = "Driftwm Config"
 command = "footclient env QUIET_START=1 zsh -ic 'nvim ~/.config/driftwm/config.toml; unset QUIET_START'"
 icon-theme = "Papirus-Dark"
 icon = "24x24/actions/configure_toolbars.svg"
-angle = 57
+angle = 55
 
 [[menu.items.items]]
 label = "Driftwm State"
 command = "footclient zsh -c 'cat $XDG_RUNTIME_DIR/driftwm/state; exec zsh'"
 icon-theme = "Papirus-Dark"
 icon = "16x16/actions/view-statistics.svg"
-angle = 262
+angle = 260
 
 [[menu.items.items]]
 label = "Fetch"
 command = "footclient -a foot-ff zsh -c 'fastfetch -c screenfetch.jsonc && sleep 9999'"
 icon-theme = "tabler-icons"
 icon = "outline/info-circle.svg"
-angle = 314
+angle = 312
 
 [[menu.items.items]]
 label = "Screen Shots"
 command = "ls -dt /home/rywby/Pictures/Screenshots/* | xargs -d '\\n' ripdrag -r -x -a -s 64 -H 500 -b -W 420"
 icon-theme = "tabler-icons"
 icon = "outline/screenshot.svg"
-angle = 5
+angle = 3
 
 [[menu.items.items]]
 label = "Hypr Picker"
-command = "hyprpicker -a -l"
+command = "sleep 0.5 ; hyprpicker -a -l"
 icon-theme = "tabler-icons"
 icon = "outline/color-picker.svg"
-angle = 159
+angle = 157
 
 [[menu.items.items]]
 label = "Screen Records"
 command = "ls -dt /home/rywby/Videos/Screen-Record/* | xargs -d '\\n' ripdrag -r -x -a -s 64 -H 500 -b -W 420"
 icon-theme = "simple-icons"
 icon = "screencastify.svg"
-angle = 211
+angle = 209
 
 [[menu.items]]
 label = "Apps"
