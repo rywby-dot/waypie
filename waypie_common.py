@@ -281,8 +281,10 @@ def computed_style(rules, selectors):
                 style[name] = parse_color(value, name)
             elif name == "distance":
                 style[name] = parse_signed_pixels(value, name)
-            elif name in {"follow-distance", "icon-fill", "text-fill"}:
+            elif name == "follow-distance":
                 style[name] = parse_percentage(value, name)
+            elif name in {"icon-fill", "text-fill"}:
+                style[name] = parse_percentage(value, name, bounded=False)
             elif name == "cut-indicators":
                 normalized = value.lower()
                 if normalized not in {"true", "false"}:
@@ -437,12 +439,12 @@ def parse_signed_pixels(value, name):
     return float(match.group(1))
 
 
-def parse_percentage(value, name):
+def parse_percentage(value, name, bounded=True):
     match = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)%", value)
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
     percentage = float(match.group(1))
-    if percentage > 100:
+    if bounded and percentage > 100:
         raise SystemExit(f"waypie: {name} must be between 0% and 100%")
     return percentage / 100
 
