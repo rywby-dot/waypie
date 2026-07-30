@@ -254,6 +254,21 @@ The toolbar options are:
   of the checkboxes. In a submenu it centers the group around the fixed return
   direction. In the root menu it chooses the closest axis-based rotation.
 
+Toolbar actions also have global configurator shortcuts, shown below each
+button label:
+
+- `Ctrl+D` — delete the selected item;
+- `Ctrl+Q` — add a command to the currently open menu;
+- `Ctrl+X` — add a submenu;
+- `Ctrl+S` — save;
+- `Ctrl+A` — center the current layout;
+- `Ctrl+Z` — undo the last edit, including additions, deletions, layout
+  changes, dragging, settings, and icon selection.
+
+Configurator shortcuts are global only while a non-editable widget has focus.
+When a text or numeric input field is focused, `Ctrl+…` shortcuts are left to
+that field and do not modify the menu structure.
+
 A click selects an item. Clicking and holding, then moving beyond the drag
 threshold, moves it instead. Clicking the current central circle selects the
 menu itself so its label and icon can be edited.
@@ -283,7 +298,9 @@ The configurator reads and writes all non-visual top-level settings:
 Each menu or action supports `label`, optional `icon-theme` and `icon`, and an
 integer `angle`. Actions contain a `command`; submenus contain further
 `items`. Submenus can be nested to any depth. An item cannot contain both a
-command and children.
+command and children. A submenu may contain no children: it remains editable,
+can be opened in the configurator, and is saved without being converted into
+an action.
 
 ### Saving and applying changes
 
@@ -376,6 +393,15 @@ durations, and active-state scale are controlled here. The normal radial
 distance is `menu-radius` in the configuration, while the absolute hovered
 distance can be set in CSS:
 
+Labels are centered and wrapped inside the actual inner shape of each circle.
+Word boundaries are preferred; words that are too long are split across
+lines. If the complete label still cannot fit, Waypie uses three dots in the
+final line and preserves the label's final three characters. Available line
+width is calculated from the base `circle` scale, border, corner radius, and
+font size. Enlarging a circle does not resize or reflow its text. If a circle
+shrinks below the base `circle` scale, the complete precomputed text block
+shrinks with it without changing its line breaks.
+
 ```css
 circle.active {
   scale: 1.15;
@@ -414,6 +440,18 @@ Waypie does not bundle an icon library. Put downloaded icon sets below:
 
 Every immediate child directory is treated as a separate icon theme. Files in
 that directory are scanned recursively.
+
+The icon picker lists recently used themes first. Recency is updated only when
+an icon is actually chosen, not when a theme is merely viewed. This
+configurator-only history persists in:
+
+```text
+~/.config/waypie/.icon-history.json
+```
+
+Themes with no recorded selection are listed alphabetically after the used
+themes. Removing this history file resets the order and does not affect menu
+icons or `config`.
 
 Example:
 
@@ -471,8 +509,11 @@ roles and both label modes, a missing or unloadable icon always falls back to
 text; Waypie never intentionally leaves an iconless labeled circle blank.
 
 `circle { icon-size: ...; }` and role-specific overrides control icon size.
-SVG files that use `currentColor` can be recolored through CSS. Multicolor SVG
-and raster icons retain their original colors.
+When a circle is scaled by an active style or animation, its icon scales with
+the circle while its text size remains unchanged. SVG icons are rendered at
+each animated size instead of stretching a cached low-resolution frame. SVG
+files that use `currentColor` can be recolored through CSS. Multicolor SVG and
+raster icons retain their original colors.
 
 Useful sources include monochrome SVG collections such as Tabler Icons,
 Lucide, Material Symbols, and Simple Icons, and full-color desktop themes such
