@@ -161,6 +161,8 @@ The configurator can:
 - enable **Close on click** (`close-submenu-on-center-click`) to make a
   submenu's central circle close Waypie instead of returning to its parent.
   The root central circle always closes Waypie.
+- enable **Hover mode** (`hover-mode`) to select without clicking: move toward
+  an item and either pause briefly or turn toward the next item.
 
 The toolbar options are:
 

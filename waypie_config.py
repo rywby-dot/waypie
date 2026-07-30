@@ -65,6 +65,7 @@ class Configurator(Gtk.Application):
         self.center_mode_check = None
         self.active_label_in_center_check = None
         self.close_submenu_on_center_click_check = None
+        self.hover_mode_check = None
         self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
@@ -258,6 +259,13 @@ class Configurator(Gtk.Application):
             self.on_close_submenu_on_center_click_changed,
         )
         properties.append(self.close_submenu_on_center_click_check)
+        self.hover_mode_check = Gtk.CheckButton(label="Hover mode")
+        self.hover_mode_check.set_active(self.settings.hover_mode)
+        self.hover_mode_check.set_tooltip_text(
+            "Select an item by pausing over it or turning the pointer."
+        )
+        self.hover_mode_check.connect("toggled", self.on_hover_mode_changed)
+        properties.append(self.hover_mode_check)
         properties_scroll = Gtk.ScrolledWindow()
         properties_scroll.set_policy(
             Gtk.PolicyType.NEVER,
@@ -1220,6 +1228,10 @@ class Configurator(Gtk.Application):
         )
         self.set_status("Unsaved changes")
 
+    def on_hover_mode_changed(self, _check):
+        self.settings.hover_mode = self.hover_mode_check.get_active()
+        self.set_status("Unsaved changes")
+
     def aligned_angle(self, angle):
         if self.alignment_check.get_active():
             return min(
@@ -1517,6 +1529,7 @@ def serialize_config(settings):
         "close-submenu-on-center-click = "
         f"{str(settings.close_submenu_on_center_click).lower()}"
     )
+    lines.append(f"hover-mode = {str(settings.hover_mode).lower()}")
     lines.append(f"preserve-proportions = {str(settings.preserve_proportions).lower()}")
     lines.append(f"auto-alignment = {str(settings.auto_alignment).lower()}")
     lines.append(
