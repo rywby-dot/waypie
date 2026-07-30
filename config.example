@@ -1,13 +1,3 @@
-# This is config.example.
-# You don't need to change it!
-# Open GUI editor waypie-editor ant setup everything there
-# just copy in to ~/.config
-#   cp config.example ~/.config/waypie/config
-#   cp style.example.css ~/.config/waypie/style.css
-# and read README.md
-# https://github.com/rywby-dot/waypie
-# Colors are setup manually in style.css
-
 menu-radius = 120
 center-hitbox-size = 160
 minimum-edge-distance = 200
@@ -17,32 +7,32 @@ close-submenu-on-center-click = false
 hover-mode = false
 turbo-mode = true
 preserve-proportions = true
-auto-alignment = true
+auto-alignment = false
 configurator-show-icons = true
 
 [menu]
 label = "Waypie"
-icon-theme = "Papirus-Dark"
-icon = "16x16/actions/atmosphere.svg"
+icon-theme = "simple-icons"
+icon = "roamresearch.svg"
 
 [[menu.items]]
 label = "Scripts"
-icon-theme = "Papirus-Dark"
-icon = "16x16/actions/amarok_scripts.svg"
+icon-theme = "simple-icons"
+icon = "scrollreveal.svg"
 angle = 288
 
 [[menu.items.items]]
 label = "Driftwm Config"
 command = "footclient env QUIET_START=1 zsh -ic 'nvim ~/.config/driftwm/config.toml; unset QUIET_START'"
-icon-theme = "Papirus-Dark"
-icon = "24x24/actions/configure_toolbars.svg"
+icon-theme = "tabler-icons"
+icon = "filled/adjustments-horizontal.svg"
 angle = 55
 
 [[menu.items.items]]
 label = "Driftwm State"
 command = "footclient zsh -c 'cat $XDG_RUNTIME_DIR/driftwm/state; exec zsh'"
-icon-theme = "Papirus-Dark"
-icon = "16x16/actions/view-statistics.svg"
+icon-theme = "tabler-icons"
+icon = "filled/list-details.svg"
 angle = 260
 
 [[menu.items.items]]
@@ -222,15 +212,15 @@ angle = 106
 
 [[menu.items]]
 label = "System"
-icon-theme = "Papirus-Dark"
-icon = "16x16/devices/system.svg"
+icon-theme = "tabler-icons"
+icon = "outline/folder-symlink.svg"
 angle = 0
 
 [[menu.items.items]]
 label = "Config"
 command = "waypie-config"
-icon-theme = "Papirus-Dark"
-icon = "16x16/actions/rabbitvcs-settings.svg"
+icon-theme = "tabler-icons"
+icon = "filled/settings.svg"
 angle = 252
 
 [[menu.items.items]]
@@ -242,8 +232,8 @@ angle = 108
 [[menu.items.items.items]]
 label = "Reboot"
 command = "loginctl reboot"
-icon-theme = "Papirus-Dark"
-icon = "16x16/actions/system-reboot.svg"
+icon-theme = "tabler-icons"
+icon = "outline/reload.svg"
 angle = 353
 
 [[menu.items.items.items]]
@@ -270,6 +260,6 @@ angle = 36
 [[menu.items.items]]
 label = "lock"
 command = "swaylock -f -c 000000 -kl"
-icon-theme = "Papirus-Dark"
-icon = "16x16/actions/object-locked.svg"
+icon-theme = "tabler-icons"
+icon = "outline/lock.svg"
 angle = 324
