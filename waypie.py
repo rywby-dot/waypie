@@ -64,7 +64,6 @@ send_fast_control_command()
 
 import ctypes.util
 import math
-import re
 import subprocess
 from dataclasses import dataclass
 from itertools import pairwise
@@ -81,16 +80,19 @@ from waypie_common import (
     angular_distance,
     animation_duration,
     animation_number,
+    colored_svg_source,
     computed_style,
     content_opacity,
     direction_angle,
+    draw_wrapped_text,
+    fixed_text_geometry,
     icon_path,
     load_config,
     load_styles,
     resolve_radius,
     rounded_rectangle,
+    scaled_icon_size,
     set_source_color,
-    truncate,
 )
 from waypie_hover import HoverGestureDetector
 
@@ -1178,7 +1180,7 @@ class Waypie(Gtk.Application):
             role_selectors = ["circle.history"]
         else:
             role_selectors = ["circle.item"]
-            if item.items:
+            if item.is_submenu:
                 role_selectors.append("circle.submenu")
         selectors.extend(role_selectors)
         if active:
@@ -1333,18 +1335,21 @@ class Waypie(Gtk.Application):
         label_text = item.label if label_override is None else label_override
         if (hide_label and icon_drawn) or not label_text:
             return
-        context.select_font_face(
-            style["font-family"], cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
+        layout_size, text_scale = fixed_text_geometry(
+            style,
+            size,
+            computed_style(self.styles, ("circle",))["scale"],
         )
-        context.set_font_size(style["font-size"])
-        set_source_color(context, style["color"], content_opacity(style) * opacity)
-        label = truncate(label_text, max(1, int(size / style["font-size"] * 1.5)))
-        extents = context.text_extents(label)
-        context.move_to(
-            x - extents.width / 2 - extents.x_bearing,
-            y - extents.height / 2 - extents.y_bearing,
+        draw_wrapped_text(
+            context,
+            x,
+            y,
+            layout_size,
+            label_text,
+            style,
+            opacity,
+            text_scale,
         )
-        context.show_text(label)
 
     def draw_submenu_indicators(
         self,
@@ -1420,7 +1425,7 @@ class Waypie(Gtk.Application):
         path = icon_path(item.icon_theme, item.icon)
         if path is None:
             return False
-        size = round(style.get("icon-size") or circle_size * 0.55)
+        size = round(scaled_icon_size(style, circle_size))
         if size <= 0:
             return False
         color = style["color"]
@@ -1429,24 +1434,7 @@ class Waypie(Gtk.Application):
         if pixbuf is None:
             try:
                 if path.suffix.lower() == ".svg":
-                    red, green, blue, _alpha = color
-                    replacement = (
-                        f"#{round(red * 255):02x}{round(green * 255):02x}"
-                        f"{round(blue * 255):02x}"
-                    )
-                    source = path.read_text(encoding="utf-8")
-                    if "currentColor" in source:
-                        source = source.replace("currentColor", replacement)
-                    elif not re.search(
-                        r"""(?:fill|stroke)\s*=\s*["'](?:#|rgb|hsl)""",
-                        source,
-                        re.IGNORECASE,
-                    ):
-                        source = source.replace(
-                            "<svg",
-                            f'<svg fill="{replacement}"',
-                            1,
-                        )
+                    source = colored_svg_source(path, color)
                     loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
                     loader.set_size(size, size)
                     loader.write(source.encode())
@@ -1494,7 +1482,7 @@ class Waypie(Gtk.Application):
             return
 
         item = self.item_at_path(self.path).items[index]
-        if item.items:
+        if item.is_submenu:
             interrupted_return_index = self.returning_item_index
             self.returning_item_index = None
             self.returning_item_scene = None
