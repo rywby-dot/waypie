@@ -2,6 +2,7 @@ import unittest
 
 from waypie_common import (
     colored_svg_source,
+    computed_style,
     fixed_text_geometry,
     parse_item,
     resolve_angles,
@@ -21,6 +22,20 @@ class FakeSvgPath:
 
 
 class ScaledIconSizeTests(unittest.TestCase):
+    def test_content_fill_can_exceed_one_hundred_percent(self):
+        style = computed_style(
+            {
+                "circle": {
+                    "icon-fill": "125%",
+                    "text-fill": "150%",
+                }
+            },
+            ("circle",),
+        )
+
+        self.assertEqual(style["icon-fill"], 1.25)
+        self.assertEqual(style["text-fill"], 1.5)
+
     def test_icon_fill_uses_free_space_inside_border(self):
         style = {
             "icon-fill": 0.75,
