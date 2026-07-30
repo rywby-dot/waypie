@@ -484,7 +484,8 @@ In the configurator:
 2. Press **Choose icon…**.
 3. Select the icon theme. The theme name is the directory name under
    `icons/`.
-4. Search by file name.
+4. Search by file name. Select **All icon sets** to search every theme at
+   once; global search also matches theme names.
 5. Click an icon.
 6. Press **Save**, close the currently visible menu if necessary, and open it
    again with `waypie --show`.
