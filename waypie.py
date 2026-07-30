@@ -179,6 +179,9 @@ class Waypie(Gtk.Application):
         self.icon_cache = {}
         self.hover_detector = HoverGestureDetector()
         self.hover_timeout_source = None
+        self.turbo_modifiers = 0
+        self.turbo_release_source = None
+        self.close_failsafe_source = None
 
     def do_activate(self):
         if self.window is not None:
@@ -235,6 +238,7 @@ class Waypie(Gtk.Application):
 
         keyboard = Gtk.EventControllerKey()
         keyboard.connect("key-pressed", self.on_key_pressed)
+        keyboard.connect("key-released", self.on_key_released)
         self.window.add_controller(keyboard)
 
         self.window.set_child(self.canvas)
@@ -310,6 +314,10 @@ class Waypie(Gtk.Application):
         self.action_item_index = None
         self.action_start_position = None
         self.action_target_position = None
+        self.turbo_modifiers = 0
+        if self.turbo_release_source is not None:
+            GLib.source_remove(self.turbo_release_source)
+            self.turbo_release_source = None
         self.reset_hover_detector()
         self.window.set_cursor_from_name("default")
         self.canvas.set_cursor_from_name("default")
@@ -348,10 +356,21 @@ class Waypie(Gtk.Application):
             Timeline(now, duration),
             has_action=self.action_item_index is not None,
         )
+        maximum_duration = max(
+            duration,
+            animation_duration(self.styles, "menu-duration"),
+        )
+        self.close_failsafe_source = GLib.timeout_add(
+            max(1, math.ceil((maximum_duration + 0.25) * 1000)),
+            self.on_close_failsafe,
+        )
         self.ensure_animation_tick()
         self.canvas.queue_draw()
 
     def finish_hide(self, from_animation=False):
+        if self.close_failsafe_source is not None:
+            GLib.source_remove(self.close_failsafe_source)
+            self.close_failsafe_source = None
         self.closing = False
         self.close_animation = None
         self.close_scale = 1.0
@@ -391,7 +410,14 @@ class Waypie(Gtk.Application):
             self.canvas.remove_tick_callback(self.animation_tick)
         self.animation_tick = None
         Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
+        self.set_click_through(True)
         self.window.set_visible(False)
+
+    def on_close_failsafe(self):
+        self.close_failsafe_source = None
+        if self.closing:
+            self.finish_hide()
+        return False
 
     def set_click_through(self, enabled):
         surface = self.window.get_surface()
@@ -404,7 +430,30 @@ class Waypie(Gtk.Application):
             return True
         return False
 
-    def on_pointer_event(self, _controller, x, y):
+    def on_key_released(self, _controller, keyval, _keycode, _state):
+        if not self.turbo_modifiers or self.closing:
+            return
+        released = self.modifier_for_keyval(keyval)
+        if not released:
+            return
+        self.turbo_modifiers &= ~released
+        if self.turbo_modifiers:
+            return
+        self.reset_hover_detector()
+        position = self.pointer_position
+        if position is not None and self.turbo_release_source is None:
+            self.turbo_release_source = GLib.idle_add(
+                self.finish_turbo_release,
+                position,
+            )
+
+    def finish_turbo_release(self, position):
+        self.turbo_release_source = None
+        if self.window.get_visible() and not self.closing:
+            self.activate_at(*position, hover=True)
+        return False
+
+    def on_pointer_event(self, controller, x, y):
         if not self.window.get_visible() or self.closing:
             return
         self.pointer_position = (x, y)
@@ -420,13 +469,64 @@ class Waypie(Gtk.Application):
         hovered_hit = self.target_at(x, y)
         if hovered_hit != self.hovered_hit:
             self.hovered_hit = hovered_hit
-        if self.settings.hover_mode:
+        if self.settings.turbo_mode and not self.turbo_modifiers:
+            self.turbo_modifiers = self.event_modifiers(
+                controller.get_current_event_state()
+            )
+            if self.turbo_modifiers:
+                self.reset_hover_detector(self.menu_centers[-1])
+        if self.settings.hover_mode or self.turbo_modifiers:
             now = GLib.get_monotonic_time() / 1_000_000
             selection = self.hover_detector.on_motion((x, y), now)
             self.schedule_hover_timeout(now)
             if selection is not None:
-                self.activate_at(selection.x, selection.y, hover=True)
+                self.activate_at(
+                    selection.x,
+                    selection.y,
+                    hover=True,
+                    submenu_only=bool(self.turbo_modifiers),
+                )
         self.canvas.queue_draw()
+
+    @staticmethod
+    def event_modifiers(state):
+        supported = (
+            Gdk.ModifierType.SHIFT_MASK
+            | Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK
+            | Gdk.ModifierType.META_MASK
+            | Gdk.ModifierType.HYPER_MASK
+        )
+        return int(state & supported)
+
+    @staticmethod
+    def modifier_for_keyval(keyval):
+        keys = (
+            ((Gdk.KEY_Shift_L, Gdk.KEY_Shift_R), Gdk.ModifierType.SHIFT_MASK),
+            (
+                (Gdk.KEY_Control_L, Gdk.KEY_Control_R),
+                Gdk.ModifierType.CONTROL_MASK,
+            ),
+            ((Gdk.KEY_Alt_L, Gdk.KEY_Alt_R), Gdk.ModifierType.ALT_MASK),
+            (
+                (
+                    Gdk.KEY_Super_L,
+                    Gdk.KEY_Super_R,
+                    Gdk.KEY_Meta_L,
+                    Gdk.KEY_Meta_R,
+                    Gdk.KEY_Hyper_L,
+                    Gdk.KEY_Hyper_R,
+                ),
+                Gdk.ModifierType.SUPER_MASK
+                | Gdk.ModifierType.META_MASK
+                | Gdk.ModifierType.HYPER_MASK,
+            ),
+        )
+        for keyvals, modifier in keys:
+            if keyval in keyvals:
+                return int(modifier)
+        return 0
 
     def reset_hover_detector(self, position=None):
         if self.hover_timeout_source is not None:
@@ -447,7 +547,7 @@ class Waypie(Gtk.Application):
     def on_hover_timeout(self):
         self.hover_timeout_source = None
         if (
-            not self.settings.hover_mode
+            not (self.settings.hover_mode or self.turbo_modifiers)
             or not self.window.get_visible()
             or self.closing
         ):
@@ -457,7 +557,12 @@ class Waypie(Gtk.Application):
         if selection is None:
             self.schedule_hover_timeout(now)
             return False
-        self.activate_at(selection.x, selection.y, hover=True)
+        self.activate_at(
+            selection.x,
+            selection.y,
+            hover=True,
+            submenu_only=bool(self.turbo_modifiers),
+        )
         return False
 
     def draw(self, _canvas, context, width, height):
@@ -1325,7 +1430,7 @@ class Waypie(Gtk.Application):
     def on_click(self, _gesture, _presses, x, y):
         self.activate_at(x, y)
 
-    def activate_at(self, x, y, hover=False):
+    def activate_at(self, x, y, hover=False, submenu_only=False):
         if not self.hits:
             return
 
@@ -1385,6 +1490,8 @@ class Waypie(Gtk.Application):
             self.reset_hover_detector(child_center)
             self.canvas.queue_draw()
         else:
+            if submenu_only:
+                return
             launch(item.command)
             self.hide_after_action(index, x, y)
 
@@ -1597,6 +1704,12 @@ class Waypie(Gtk.Application):
         return animating
 
     def do_shutdown(self):
+        if self.turbo_release_source is not None:
+            GLib.source_remove(self.turbo_release_source)
+            self.turbo_release_source = None
+        if self.close_failsafe_source is not None:
+            GLib.source_remove(self.close_failsafe_source)
+            self.close_failsafe_source = None
         if self.control_source is not None:
             GLib.source_remove(self.control_source)
             self.control_source = None
