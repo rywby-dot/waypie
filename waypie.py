@@ -5,13 +5,51 @@ import socket
 import sys
 
 
+def fast_runtime_path(kind):
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    display = os.environ.get("WAYLAND_DISPLAY", "wayland")
+    return os.path.join(runtime_dir, "waypie", f"{kind}-{display}")
+
+
+def kill_running_waypie():
+    if sys.argv[1:] != ["--kill"]:
+        return
+
+    pid_path = fast_runtime_path("process") + ".pid"
+    try:
+        with open(pid_path, encoding="ascii") as file:
+            pid = int(file.read().strip())
+        process = f"/proc/{pid}"
+        if os.stat(process).st_uid != os.getuid():
+            raise OSError("process belongs to another user")
+        with open(f"{process}/cmdline", "rb") as file:
+            command = file.read().replace(b"\0", b" ").decode(errors="replace")
+        if "waypie" not in command.casefold():
+            raise OSError("PID does not belong to Waypie")
+        import signal
+
+        os.kill(pid, signal.SIGKILL)
+        for stale_path in (pid_path, fast_runtime_path("control") + ".sock"):
+            try:
+                os.unlink(stale_path)
+            except OSError:
+                pass
+    except (OSError, ValueError) as error:
+        raise SystemExit(
+            f"waypie: cannot kill the running instance: {error}"
+        ) from error
+    print(f"waypie: killed process {pid}")
+    raise SystemExit(0)
+
+
+kill_running_waypie()
+
+
 def send_fast_control_command():
     if sys.argv[1:] != ["--show"] or not os.environ.get("WAYLAND_DISPLAY"):
         return
 
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
-    display = os.environ["WAYLAND_DISPLAY"]
-    socket_path = os.path.join(runtime_dir, "waypie", f"control-{display}.sock")
+    socket_path = fast_runtime_path("control") + ".sock"
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     try:
         connection.sendto(b"show", socket_path)
@@ -63,9 +101,11 @@ CONFIGURATOR_MODE = os.environ.get("WAYPIE_CONFIGURATOR") == "1" or sys.argv[1:]
 
 
 def control_socket_path():
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
-    display = os.environ.get("WAYLAND_DISPLAY", "wayland")
-    return Path(runtime_dir) / "waypie" / f"control-{display}.sock"
+    return Path(fast_runtime_path("control") + ".sock")
+
+
+def process_pid_path():
+    return Path(fast_runtime_path("process") + ".pid")
 
 
 def preload_layer_shell():
@@ -261,6 +301,9 @@ class Waypie(Gtk.Application):
         self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.control_socket.bind(str(path))
         self.control_socket.setblocking(False)
+        temporary_pid_path = process_pid_path().with_suffix(".pid.tmp")
+        temporary_pid_path.write_text(f"{os.getpid()}\n", encoding="ascii")
+        temporary_pid_path.replace(process_pid_path())
         self.control_source = GLib.io_add_watch(
             self.control_socket.fileno(),
             GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR,
@@ -1719,6 +1762,14 @@ class Waypie(Gtk.Application):
         try:
             control_socket_path().unlink()
         except FileNotFoundError:
+            pass
+        try:
+            if (
+                int(process_pid_path().read_text(encoding="ascii").strip())
+                == os.getpid()
+            ):
+                process_pid_path().unlink()
+        except (FileNotFoundError, OSError, ValueError):
             pass
         Gtk.Application.do_shutdown(self)
 
