@@ -1,3 +1,13 @@
+# This is config.example.
+# You don't need to change it!
+# Open GUI editor waypie-editor ant setup everything there
+# just copy in to ~/.config
+#   cp config.example ~/.config/waypie/config
+#   cp style.example.css ~/.config/waypie/style.css
+# and read README.md
+# https://github.com/rywby-dot/waypie
+# Colors are setup manually in style.css
+
 menu-radius = 120
 center-hitbox-size = 160
 minimum-edge-distance = 200
