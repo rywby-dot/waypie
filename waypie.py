@@ -1139,7 +1139,7 @@ class Waypie(Gtk.Application):
         if show_icon and icon_drawn:
             return
         label_text = item.label if label_override is None else label_override
-        if hide_label or not label_text:
+        if (hide_label and icon_drawn) or not label_text:
             return
         context.select_font_face(
             style["font-family"], cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
