@@ -23,13 +23,18 @@ cd waypie
 pipx install .
 ```
 
-Create the configuration directory and install the example files:
+Create the configuration directory and install the example files and bundled
+icon sets:
 
 ```sh
-mkdir -p ~/.config/waypie
+mkdir -p ~/.config/waypie/icons
 cp config.example ~/.config/waypie/config
 cp style.example.css ~/.config/waypie/style.css
+cp -r icons/. ~/.config/waypie/icons/
 ```
+
+The last command copies the bundled Simple Icons and Tabler Icons themes. It
+also works when `~/.config/waypie/icons/` already exists.
 
 To update an existing installation:
 
@@ -217,7 +222,9 @@ than by writing TOML manually.
 The configurator can:
 
 - add commands and submenus at any nesting depth;
-- delete items;
+- create, open, edit, and save empty submenus;
+- delete items without leaving the currently open submenu, including its last
+  item;
 - edit labels, shell commands, angles, and icons;
 - open a submenu with a click and return by clicking the translucent previous
   menu center;
@@ -267,7 +274,9 @@ button label:
 
 Configurator shortcuts are global only while a non-editable widget has focus.
 When a text or numeric input field is focused, `Ctrl+…` shortcuts are left to
-that field and do not modify the menu structure.
+that field and do not modify the menu structure. Clicking outside an editable
+field clears its text cursor and returns keyboard focus to the configurator.
+Plain `Delete` is deliberately not a shortcut; deletion requires `Ctrl+D`.
 
 A click selects an item. Clicking and holding, then moving beyond the drag
 threshold, moves it instead. Clicking the current central circle selects the
@@ -432,14 +441,16 @@ Monochrome SVG icons using `currentColor` inherit the CSS `color` property.
 
 <img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/fa3fb5f0-a64c-4216-96af-55f1c2ac155d" />
 
-Waypie does not bundle an icon library. Put downloaded icon sets below:
+The repository includes the monochrome Simple Icons and Tabler Icons
+collections. The installation commands above copy them to:
 
 ```text
 ~/.config/waypie/icons/
 ```
 
 Every immediate child directory is treated as a separate icon theme. Files in
-that directory are scanned recursively.
+that directory are scanned recursively. Additional downloaded themes can be
+copied alongside the bundled ones.
 
 The icon picker lists recently used themes first. Recency is updated only when
 an icon is actually chosen, not when a theme is merely viewed. This
@@ -485,7 +496,8 @@ In the configurator:
 3. Select the icon theme. The theme name is the directory name under
    `icons/`.
 4. Search by file name. Select **All icon sets** to search every theme at
-   once; global search also matches theme names.
+   once; global search also matches theme names and relative paths. At most
+   400 results are drawn at once, so refine the search when more matches exist.
 5. Click an icon.
 6. Press **Save**, close the currently visible menu if necessary, and open it
    again with `waypie --show`.
@@ -514,7 +526,10 @@ When a circle is scaled by an active style or animation, its icon scales with
 the circle while its text size remains unchanged. SVG icons are rendered at
 each animated size instead of stretching a cached low-resolution frame. SVG
 files that use `currentColor` can be recolored through CSS. Multicolor SVG and
-raster icons retain their original colors.
+raster icons retain their original colors. The configurator applies the same
+rules: `currentColor` and otherwise unstyled monochrome SVGs receive the
+preview's CSS icon color, while explicitly colored SVGs and raster images keep
+their own colors.
 
 Useful sources include monochrome SVG collections such as Tabler Icons,
 Lucide, Material Symbols, and Simple Icons, and full-color desktop themes such
