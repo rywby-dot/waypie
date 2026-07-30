@@ -51,6 +51,7 @@ DEFAULT_PARENT_LINK = {
     "width": "12px",
 }
 DEFAULT_HISTORY = {"opacity": "0.35", "scale": "2"}
+ALL_ICON_THEMES = "__waypie_all_icon_themes__"
 
 
 class Configurator(Gtk.Application):
@@ -1595,10 +1596,11 @@ class Configurator(Gtk.Application):
 
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         theme_select = Gtk.ComboBoxText()
+        theme_select.append(ALL_ICON_THEMES, "All icon sets")
         for theme in themes:
             theme_select.append(theme, theme)
         theme_select.set_active_id(
-            item.icon_theme if item.icon_theme in themes else themes[0]
+            item.icon_theme if item.icon_theme in themes else ALL_ICON_THEMES
         )
         theme_select.set_hexpand(True)
         search = Gtk.SearchEntry(placeholder_text="Search icons…")
@@ -1623,9 +1625,16 @@ class Configurator(Gtk.Application):
         scroll.set_child(flow)
         content.append(scroll)
 
-        def choose(icon):
+        icons_by_theme = {}
+
+        def icons_for(theme):
+            if theme not in icons_by_theme:
+                icons_by_theme[theme] = theme_icons(theme)
+            return icons_by_theme[theme]
+
+        def choose(theme, icon):
             self.push_undo()
-            item.icon_theme = theme_select.get_active_id()
+            item.icon_theme = theme
             item.icon = icon
             remember_icon_theme(item.icon_theme)
             self.sync_fields()
@@ -1636,18 +1645,28 @@ class Configurator(Gtk.Application):
         def rebuild(*_args):
             while child := flow.get_child_at_index(0):
                 flow.remove(child)
-            theme = theme_select.get_active_id()
+            selected_theme = theme_select.get_active_id()
             term = search.get_text().strip().casefold()
-            icons = theme_icons(theme)
-            matches = [icon for icon in icons if not term or term in icon.casefold()]
-            visible = matches[:400]
-            result_label.set_text(
-                f"{len(matches)} icons"
-                + (" — refine the search to see more" if len(matches) > 400 else "")
+            searched_themes = (
+                themes if selected_theme == ALL_ICON_THEMES else [selected_theme]
             )
-            for icon in visible:
+            visible = []
+            match_count = 0
+            for theme in searched_themes:
+                theme_matches = term and term in theme.casefold()
+                for icon in icons_for(theme):
+                    if term and not theme_matches and term not in icon.casefold():
+                        continue
+                    match_count += 1
+                    if len(visible) < 400:
+                        visible.append((theme, icon))
+            result_label.set_text(
+                f"{match_count} icons"
+                + (" — refine the search to see more" if match_count > 400 else "")
+            )
+            for theme, icon in visible:
                 path = icon_path(theme, icon)
-                button = Gtk.Button(tooltip_text=icon)
+                button = Gtk.Button(tooltip_text=f"{theme}: {icon}")
                 try:
                     pixbuf = self.load_icon_pixbuf(path, 56, icon_style["color"])
                 except (GLib.Error, OSError, UnicodeError):
@@ -1656,7 +1675,13 @@ class Configurator(Gtk.Application):
                 picture.set_content_fit(Gtk.ContentFit.CONTAIN)
                 picture.set_size_request(56, 56)
                 button.set_child(picture)
-                button.connect("clicked", lambda _button, name=icon: choose(name))
+                button.connect(
+                    "clicked",
+                    lambda _button, selected_theme=theme, name=icon: choose(
+                        selected_theme,
+                        name,
+                    ),
+                )
                 flow.append(button)
 
         def remove_icon(_button):
