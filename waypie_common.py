@@ -56,8 +56,10 @@ DEFAULT_STYLE = {
     "font-size": 14.0,
     "font-family": "Sans",
     "follow-distance": 0.0,
+    "icon-fill": None,
     "icon-size": None,
     "opacity": 1.0,
+    "text-fill": 1.0,
     "text-opacity": None,
     "protrusion": 0.0,
     "scale": 1.0,
@@ -279,7 +281,7 @@ def computed_style(rules, selectors):
                 style[name] = parse_color(value, name)
             elif name == "distance":
                 style[name] = parse_signed_pixels(value, name)
-            elif name == "follow-distance":
+            elif name in {"follow-distance", "icon-fill", "text-fill"}:
                 style[name] = parse_percentage(value, name)
             elif name == "cut-indicators":
                 normalized = value.lower()
@@ -313,6 +315,10 @@ def content_opacity(style):
 
 
 def scaled_icon_size(style, circle_size):
+    icon_fill = style.get("icon-fill")
+    if icon_fill is not None:
+        inner_size = max(0.0, circle_size - 2 * style.get("border-width", 0.0))
+        return inner_size * icon_fill
     icon_size = style.get("icon-size")
     if icon_size is None:
         return circle_size * 0.55
@@ -617,13 +623,16 @@ def draw_wrapped_text(
     font_ascent, font_descent, font_height, _max_x, _max_y = context.font_extents()
     line_height = max(font_height, style["font-size"])
     border_width = style["border-width"]
-    inner_half = max(0.0, layout_size / 2 - border_width)
+    full_inner_half = max(0.0, layout_size / 2 - border_width)
+    inner_half = full_inner_half * style.get("text-fill", 1.0)
     if inner_half <= 0 or line_height <= 0:
         context.restore()
         return
     corner_radius = max(
         0.0,
-        resolve_radius(style["border-radius"], layout_size) - border_width,
+        resolve_radius(style["border-radius"], layout_size)
+        - border_width
+        - (full_inner_half - inner_half),
     )
     max_lines = max(1, int(2 * inner_half // line_height))
     measure = lambda value: context.text_extents(value).width
