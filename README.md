@@ -58,8 +58,33 @@ waypie --show
 ```
 
 `waypie --show` is a toggle. Running it again while the menu is visible closes
-the menu. Escape, right click or clicking the central of the menu also close it. If no
-Waypie process is running, `waypie --show` starts one and opens the menu.
+the menu. If no Waypie process is running, `waypie --show` starts one and opens
+the menu.
+
+The complete menu can be closed with:
+
+- `Escape`;
+- right click anywhere on the layer;
+- another `waypie --show`;
+- a left click on the root menu's central hitbox;
+- a left click on a submenu center when **Close on click** is enabled;
+- selection of a command.
+
+When **Close on click** is disabled, clicking a submenu's central circle returns
+to its parent instead. A central hitbox size of `0` disables center clicks, but
+does not change directional selection.
+
+If the layer becomes unresponsive, kill only the current Waypie process:
+
+```sh
+waypie --kill
+```
+
+The command reads Waypie's PID from `$XDG_RUNTIME_DIR/waypie` and verifies the
+process owner and command before sending `SIGKILL`. Other layer-shell
+applications are not affected. If the desktop remains captured after this
+command has killed Waypie, the Wayland client and its surfaces no longer exist;
+the compositor failed to clear the destroyed layer's input focus.
 
 Closing immediately removes keyboard focus and makes the layer click-through,
 then plays the internal closing animation for `close-duration`. The layer-shell
@@ -95,9 +120,58 @@ indicator; the complete angular sector is the actual hit area. This allows an
 action to remain selectable even when the cursor is farther away from its
 circle (see kando behavior here https://youtu.be/ZTdfnUDMO9k?t=37&si=x9jvLQj-XF3lyw7R).
 
-The central circle belongs to the currently open menu. Its optional central
-hitbox closes Waypie. Hovering an item applies the `circle.active` style, and a
+The central circle belongs to the currently open menu. Its optional hitbox
+closes the root menu and either returns from or closes a submenu according to
+**Close on click**. Hovering an item applies the `circle.active` style, and a
 left click executes its command or opens its submenu.
+
+### Pointer mode
+
+Pointer mode is always available:
+
+- move the pointer into an item's angular sector to focus it;
+- left click to execute a command or open a submenu;
+- click the nearest previous-menu direction to return;
+- click the current center to close the root menu or apply the configured
+  submenu-center behavior.
+
+The visible circles are not button hitboxes. Except for an enabled central
+hitbox, selection depends only on the direction from the active menu center.
+
+### Hover Mode
+
+Enable `hover-mode` in the configurator to navigate and select without
+clicking. Once the pointer has made a sufficiently long movement, Waypie
+selects the current direction when either:
+
+- the pointer remains nearly stationary for a short time; or
+- the movement makes a sufficiently sharp turn.
+
+Hover Mode can open submenus, return to previous menus, and immediately execute
+commands. The detector uses the same default thresholds as Kando: a `15px`
+activation distance, `150px` minimum stroke, `20deg` turn, `10px` jitter
+threshold, and `100ms` pause. Developers can tune these constants together at
+the top of `waypie_hover.py`.
+
+### Turbo Mode
+
+Enable `turbo-mode` to use the modifier from the compositor shortcut as a
+temporary mouse button:
+
+1. Press a shortcut such as `Super+R`, `Alt+Space`, or `Ctrl+Shift+Space`.
+2. Keep its modifier key or keys held after Waypie opens.
+3. Use pauses or turns to move through submenus without clicking.
+4. Point toward the final action and release the last held modifier.
+
+While a modifier is held, gesture selections open submenus and return through
+the menu chain, but do not execute final commands. The current action is
+executed only when the last held `Super`, `Alt`, `Ctrl`, or `Shift` key is
+released. Releasing the non-modifier part of the shortcut first is supported.
+
+Waypie reads the modifiers that are actually held from GDK pointer events, so
+the shortcut does not need to be duplicated in `config`. Hover Mode and Turbo
+Mode can be enabled independently. A compositor that does not forward the
+modifier-release event may not support Turbo Mode reliably.
 
 When a submenu opens:
 
@@ -156,13 +230,14 @@ The configurator can:
   `minimum-edge-distance`;
 - enable **Center mode** to open the root menu immediately at the screen
   center;
-- enable **Show active label in center** (`active-label-in-center`) to show the hovered command or
-  submenu label in the current central circle instead of on the hovered item.
+- enable **Show active label in center** (`active-label-in-center`) to show the
+  hovered command or submenu label in the current central circle instead of on
+  the hovered item;
 - enable **Close on click** (`close-submenu-on-center-click`) to make a
   submenu's central circle close Waypie instead of returning to its parent.
-  The root central circle always closes Waypie.
+  The root central circle always closes Waypie;
 - enable **Hover mode** (`hover-mode`) to select without clicking: move toward
-  an item and either pause briefly or turn toward the next item.
+  an item and either pause briefly or turn toward the next item;
 - enable **Turbo mode** (`turbo-mode`) to navigate while keeping `Super`,
   `Alt`, `Ctrl`, or `Shift` held after the opening shortcut. Pauses and turns
   open submenus; releasing the last held modifier activates the current item.
@@ -182,6 +257,33 @@ The toolbar options are:
 A click selects an item. Clicking and holding, then moving beyond the drag
 threshold, moves it instead. Clicking the current central circle selects the
 menu itself so its label and icon can be edited.
+
+### Configuration settings
+
+The configurator reads and writes all non-visual top-level settings:
+
+- `menu-radius` — normal radial distance from the active center to its items
+  and the minimum safe length of a newly created submenu connection;
+- `center-hitbox-size` — diameter of the central click target; use `0` to
+  disable center clicks;
+- `minimum-edge-distance` — minimum permitted distance between a newly active
+  menu center and a screen edge;
+- `center-mode` — open the root menu at the screen center instead of waiting
+  for an initial pointer event;
+- `active-label-in-center` — move the focused item's label to the active
+  center;
+- `close-submenu-on-center-click` — close Waypie from a submenu center instead
+  of returning to its parent;
+- `hover-mode` — enable pause-and-turn selection without clicking;
+- `turbo-mode` — enable gesture navigation while a shortcut modifier is held
+  and final selection on modifier release;
+- `preserve-proportions`, `auto-alignment`, and
+  `configurator-show-icons` — persistent preferences used by the configurator.
+
+Each menu or action supports `label`, optional `icon-theme` and `icon`, and an
+integer `angle`. Actions contain a `command`; submenus contain further
+`items`. Submenus can be nested to any depth. An item cannot contain both a
+command and children.
 
 ### Saving and applying changes
 
@@ -363,11 +465,10 @@ interaction style. If no icon is assigned, the label is always shown.
 With **Show active label in center** enabled, the hovered item keeps its icon
 and its label replaces the icon or label of the current central circle. This
 works for commands, submenu items, and return targets. The active outer or
-return circle never shows its own label; without an icon it stays visually
-empty while its label is displayed in the center. When no outer item is active,
-including while the center itself is focused, the central circle shows only
-its own icon and never its own label. A center without an assigned icon is
-therefore empty in this mode.
+return circle hides its own label only when it has an icon to show instead.
+Likewise, the central circle prefers its icon when available. Across all
+roles and both label modes, a missing or unloadable icon always falls back to
+text; Waypie never intentionally leaves an iconless labeled circle blank.
 
 `circle { icon-size: ...; }` and role-specific overrides control icon size.
 SVG files that use `currentColor` can be recolored through CSS. Multicolor SVG
