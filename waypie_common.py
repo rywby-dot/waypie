@@ -30,6 +30,7 @@ class Settings:
     center_mode: bool
     active_label_in_center: bool
     close_submenu_on_center_click: bool
+    hover_mode: bool
     preserve_proportions: bool
     auto_alignment: bool
     configurator_show_icons: bool
@@ -87,6 +88,7 @@ def load_config():
         source.get("close-submenu-on-center-click", False),
         "close-submenu-on-center-click",
     )
+    hover_mode = boolean(source.get("hover-mode", False), "hover-mode")
     preserve_proportions = boolean(
         source.get("preserve-proportions", False),
         "preserve-proportions",
@@ -108,6 +110,7 @@ def load_config():
         center_mode,
         active_label_in_center,
         close_submenu_on_center_click,
+        hover_mode,
         preserve_proportions,
         auto_alignment,
         configurator_show_icons,

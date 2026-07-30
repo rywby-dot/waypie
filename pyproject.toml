@@ -18,6 +18,7 @@ only-include = [
     "waypie_animation.py",
     "waypie_config.py",
     "waypie_common.py",
+    "waypie_hover.py",
 ]
 
 [project.scripts]

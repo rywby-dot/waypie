@@ -54,6 +54,7 @@ from waypie_common import (
     set_source_color,
     truncate,
 )
+from waypie_hover import HoverGestureDetector
 
 LAYER_SHELL_LIBRARY = "libgtk4-layer-shell.so"
 CONFIGURATOR_MODE = os.environ.get("WAYPIE_CONFIGURATOR") == "1" or sys.argv[1:] == [
@@ -176,6 +177,8 @@ class Waypie(Gtk.Application):
         self.control_socket = None
         self.control_source = None
         self.icon_cache = {}
+        self.hover_detector = HoverGestureDetector()
+        self.hover_timeout_source = None
 
     def do_activate(self):
         if self.window is not None:
@@ -307,6 +310,7 @@ class Waypie(Gtk.Application):
         self.action_item_index = None
         self.action_start_position = None
         self.action_target_position = None
+        self.reset_hover_detector()
         self.window.set_cursor_from_name("default")
         self.canvas.set_cursor_from_name("default")
         Gtk4LayerShell.set_keyboard_mode(
@@ -325,6 +329,7 @@ class Waypie(Gtk.Application):
         self.hits = []
         self.hovered_hit = None
         self.pointer_position = None
+        self.reset_hover_detector()
         self.scale_animations.clear()
         self.distance_animations.clear()
         duration = animation_duration(
@@ -409,12 +414,51 @@ class Waypie(Gtk.Application):
             self.display_centers = [(x, y)]
             if target != (x, y):
                 self.start_navigation_animation(reveal_items=False)
+            self.reset_hover_detector(target)
             self.canvas.queue_draw()
             return
         hovered_hit = self.target_at(x, y)
         if hovered_hit != self.hovered_hit:
             self.hovered_hit = hovered_hit
+        if self.settings.hover_mode:
+            now = GLib.get_monotonic_time() / 1_000_000
+            selection = self.hover_detector.on_motion((x, y), now)
+            self.schedule_hover_timeout(now)
+            if selection is not None:
+                self.activate_at(selection.x, selection.y, hover=True)
         self.canvas.queue_draw()
+
+    def reset_hover_detector(self, position=None):
+        if self.hover_timeout_source is not None:
+            GLib.source_remove(self.hover_timeout_source)
+            self.hover_timeout_source = None
+        self.hover_detector.reset(position)
+
+    def schedule_hover_timeout(self, now):
+        if self.hover_timeout_source is not None:
+            GLib.source_remove(self.hover_timeout_source)
+            self.hover_timeout_source = None
+        deadline = self.hover_detector.pause_deadline
+        if deadline is None:
+            return
+        delay = max(1, math.ceil((deadline - now) * 1000))
+        self.hover_timeout_source = GLib.timeout_add(delay, self.on_hover_timeout)
+
+    def on_hover_timeout(self):
+        self.hover_timeout_source = None
+        if (
+            not self.settings.hover_mode
+            or not self.window.get_visible()
+            or self.closing
+        ):
+            return False
+        now = GLib.get_monotonic_time() / 1_000_000
+        selection = self.hover_detector.on_timeout(now)
+        if selection is None:
+            self.schedule_hover_timeout(now)
+            return False
+        self.activate_at(selection.x, selection.y, hover=True)
+        return False
 
     def draw(self, _canvas, context, width, height):
         self.hits = []
@@ -1279,6 +1323,9 @@ class Waypie(Gtk.Application):
         return True
 
     def on_click(self, _gesture, _presses, x, y):
+        self.activate_at(x, y)
+
+    def activate_at(self, x, y, hover=False):
         if not self.hits:
             return
 
@@ -1286,6 +1333,8 @@ class Waypie(Gtk.Application):
         if target is None:
             return
         kind, index = target
+        if hover and kind == "center":
+            return
         if kind == "center":
             if self.path and not self.settings.close_submenu_on_center_click:
                 self.return_to_parent(len(self.path) - 1, x, y)
@@ -1333,6 +1382,7 @@ class Waypie(Gtk.Application):
             self.hovered_hit = None
             self.reset_item_animations()
             self.start_navigation_animation(reveal_items=True)
+            self.reset_hover_detector(child_center)
             self.canvas.queue_draw()
         else:
             launch(item.command)
@@ -1365,6 +1415,7 @@ class Waypie(Gtk.Application):
         self.hovered_hit = None
         self.reset_item_animations()
         self.start_navigation_animation(reveal_items=True)
+        self.reset_hover_detector(self.menu_centers[-1])
         self.canvas.queue_draw()
 
     def hide_after_action(self, index, x, y):
