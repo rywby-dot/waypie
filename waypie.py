@@ -1,51 +1,58 @@
 #!/usr/bin/env python3
 
-import ctypes.util
-import math
 import os
-import re
 import socket
-import subprocess
 import sys
-from itertools import pairwise
-from pathlib import Path
-
-from waypie_common import (
-    angular_distance,
-    animation_duration,
-    animation_number,
-    computed_style,
-    content_opacity,
-    direction_angle,
-    ease_out_spring,
-    icon_path,
-    load_config,
-    load_styles,
-    resolve_radius,
-    rounded_rectangle,
-    set_source_color,
-    truncate,
-)
-
-LAYER_SHELL_LIBRARY = "libgtk4-layer-shell.so"
-CONFIGURATOR_MODE = os.environ.get("WAYPIE_CONFIGURATOR") == "1" or sys.argv[1:] == [
-    "--configure"
-]
 
 
-def control_socket_path():
+def fast_runtime_path(kind):
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
     display = os.environ.get("WAYLAND_DISPLAY", "wayland")
-    return Path(runtime_dir) / "waypie" / f"control-{display}.sock"
+    return os.path.join(runtime_dir, "waypie", f"{kind}-{display}")
+
+
+def kill_running_waypie():
+    if sys.argv[1:] != ["--kill"]:
+        return
+
+    pid_path = fast_runtime_path("process") + ".pid"
+    try:
+        with open(pid_path, encoding="ascii") as file:
+            pid = int(file.read().strip())
+        process = f"/proc/{pid}"
+        if os.stat(process).st_uid != os.getuid():
+            raise OSError("process belongs to another user")
+        with open(f"{process}/cmdline", "rb") as file:
+            command = file.read().replace(b"\0", b" ").decode(errors="replace")
+        if "waypie" not in command.casefold():
+            raise OSError("PID does not belong to Waypie")
+        import signal
+
+        os.kill(pid, signal.SIGKILL)
+        for stale_path in (pid_path, fast_runtime_path("control") + ".sock"):
+            try:
+                os.unlink(stale_path)
+            except OSError:
+                pass
+    except (OSError, ValueError) as error:
+        raise SystemExit(
+            f"waypie: cannot kill the running instance: {error}"
+        ) from error
+    print(f"waypie: killed process {pid}")
+    raise SystemExit(0)
+
+
+kill_running_waypie()
 
 
 def send_fast_control_command():
     if sys.argv[1:] != ["--show"] or not os.environ.get("WAYLAND_DISPLAY"):
         return
 
+    socket_path = fast_runtime_path("control") + ".sock"
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     try:
-        connection.sendto(b"show", str(control_socket_path()))
+        connection.sendto(b"show", socket_path)
     except OSError:
         return
     finally:
@@ -54,6 +61,53 @@ def send_fast_control_command():
 
 
 send_fast_control_command()
+
+import ctypes.util
+import math
+import subprocess
+from dataclasses import dataclass
+from itertools import pairwise
+from pathlib import Path
+
+from waypie_animation import (
+    CloseAnimation,
+    NavigationAnimation,
+    ScalarAnimation,
+    Timeline,
+    spring,
+)
+from waypie_common import (
+    angular_distance,
+    animation_duration,
+    animation_number,
+    colored_svg_source,
+    computed_style,
+    content_opacity,
+    direction_angle,
+    draw_wrapped_text,
+    fixed_text_geometry,
+    icon_path,
+    load_config,
+    load_styles,
+    resolve_radius,
+    rounded_rectangle,
+    scaled_icon_size,
+    set_source_color,
+)
+from waypie_hover import HoverGestureDetector
+
+LAYER_SHELL_LIBRARY = "libgtk4-layer-shell.so"
+CONFIGURATOR_MODE = os.environ.get("WAYPIE_CONFIGURATOR") == "1" or sys.argv[1:] == [
+    "--configure"
+]
+
+
+def control_socket_path():
+    return Path(fast_runtime_path("control") + ".sock")
+
+
+def process_pid_path():
+    return Path(fast_runtime_path("process") + ".pid")
 
 
 def preload_layer_shell():
@@ -99,6 +153,25 @@ else:
 Gtk.Window.set_auto_startup_notification(False)
 
 
+@dataclass(frozen=True)
+class RenderedItem:
+    x: float
+    y: float
+    size: float
+    item: object
+    style: dict
+    opacity: float
+    submenu_indicators: bool = False
+    active: bool = False
+    label_override: str | None = None
+    hide_label: bool = False
+    submenu_indicators_active: bool = False
+
+    @property
+    def position(self):
+        return self.x, self.y
+
+
 class Waypie(Gtk.Application):
     def __init__(self, settings, styles, start_visible):
         super().__init__(application_id="dev.waypie.Waypie")
@@ -111,11 +184,8 @@ class Waypie(Gtk.Application):
         self.pointer_position = None
         self.display_centers = []
         self.menu_progress = 1.0
-        self.menu_animation_started = None
-        self.menu_animation_from = 1.0
-        self.menu_animation_to = 1.0
-        self.menu_start_centers = []
-        self.close_animation_started = None
+        self.navigation_animation = None
+        self.close_animation = None
         self.close_scale = 1.0
         self.transition_progress = 1.0
         self.transition_raw_progress = 1.0
@@ -136,7 +206,6 @@ class Waypie(Gtk.Application):
         self.icon_opacity_animations = {}
         self.animation_tick = None
         self.closing = False
-        self.action_closing = False
         self.action_progress = 1.0
         self.action_growth_progress = 1.0
         self.action_opacity = 1.0
@@ -150,6 +219,11 @@ class Waypie(Gtk.Application):
         self.control_socket = None
         self.control_source = None
         self.icon_cache = {}
+        self.hover_detector = HoverGestureDetector()
+        self.hover_timeout_source = None
+        self.turbo_modifiers = 0
+        self.turbo_release_source = None
+        self.close_failsafe_source = None
 
     def do_activate(self):
         if self.window is not None:
@@ -194,6 +268,11 @@ class Waypie(Gtk.Application):
         click.connect("released", self.on_click)
         self.canvas.add_controller(click)
 
+        right_click = Gtk.GestureClick()
+        right_click.set_button(3)
+        right_click.connect("released", self.on_right_click)
+        self.canvas.add_controller(right_click)
+
         pointer = Gtk.EventControllerMotion()
         pointer.connect("enter", self.on_pointer_event)
         pointer.connect("motion", self.on_pointer_event)
@@ -201,6 +280,7 @@ class Waypie(Gtk.Application):
 
         keyboard = Gtk.EventControllerKey()
         keyboard.connect("key-pressed", self.on_key_pressed)
+        keyboard.connect("key-released", self.on_key_released)
         self.window.add_controller(keyboard)
 
         self.window.set_child(self.canvas)
@@ -223,6 +303,9 @@ class Waypie(Gtk.Application):
         self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.control_socket.bind(str(path))
         self.control_socket.setblocking(False)
+        temporary_pid_path = process_pid_path().with_suffix(".pid.tmp")
+        temporary_pid_path.write_text(f"{os.getpid()}\n", encoding="ascii")
+        temporary_pid_path.replace(process_pid_path())
         self.control_source = GLib.io_add_watch(
             self.control_socket.fileno(),
             GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR,
@@ -264,10 +347,10 @@ class Waypie(Gtk.Application):
         self.visual_positions = {}
         self.icon_opacity_values.clear()
         self.icon_opacity_animations.clear()
+        self.navigation_animation = None
         self.closing = False
-        self.close_animation_started = None
+        self.close_animation = None
         self.close_scale = 1.0
-        self.action_closing = False
         self.action_progress = 1.0
         self.action_growth_progress = 1.0
         self.action_opacity = 1.0
@@ -276,6 +359,11 @@ class Waypie(Gtk.Application):
         self.action_item_index = None
         self.action_start_position = None
         self.action_target_position = None
+        self.turbo_modifiers = 0
+        if self.turbo_release_source is not None:
+            GLib.source_remove(self.turbo_release_source)
+            self.turbo_release_source = None
+        self.reset_hover_detector()
         self.window.set_cursor_from_name("default")
         self.canvas.set_cursor_from_name("default")
         Gtk4LayerShell.set_keyboard_mode(
@@ -287,13 +375,14 @@ class Waypie(Gtk.Application):
         self.canvas.queue_draw()
 
     def hide_menu(self):
-        if self.closing or self.action_closing or not self.window.get_visible():
+        if self.closing or not self.window.get_visible():
             return
         Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
         self.set_click_through(True)
         self.hits = []
         self.hovered_hit = None
         self.pointer_position = None
+        self.reset_hover_detector()
         self.scale_animations.clear()
         self.distance_animations.clear()
         duration = animation_duration(
@@ -307,15 +396,29 @@ class Waypie(Gtk.Application):
         self.closing = True
         self.close_scale = 1.0
         self.close_opacity = 1.0
-        self.close_animation_started = GLib.get_monotonic_time() / 1_000_000
+        now = GLib.get_monotonic_time() / 1_000_000
+        self.close_animation = CloseAnimation(
+            Timeline(now, duration),
+            has_action=self.action_item_index is not None,
+        )
+        maximum_duration = max(
+            duration,
+            animation_duration(self.styles, "menu-duration"),
+        )
+        self.close_failsafe_source = GLib.timeout_add(
+            max(1, math.ceil((maximum_duration + 0.25) * 1000)),
+            self.on_close_failsafe,
+        )
         self.ensure_animation_tick()
         self.canvas.queue_draw()
 
     def finish_hide(self, from_animation=False):
+        if self.close_failsafe_source is not None:
+            GLib.source_remove(self.close_failsafe_source)
+            self.close_failsafe_source = None
         self.closing = False
-        self.close_animation_started = None
+        self.close_animation = None
         self.close_scale = 1.0
-        self.action_closing = False
         self.action_progress = 1.0
         self.action_growth_progress = 1.0
         self.action_opacity = 1.0
@@ -330,9 +433,7 @@ class Waypie(Gtk.Application):
         self.hovered_hit = None
         self.pointer_position = None
         self.menu_progress = 1.0
-        self.menu_animation_started = None
-        self.menu_animation_from = 1.0
-        self.menu_animation_to = 1.0
+        self.navigation_animation = None
         self.transition_progress = 1.0
         self.transition_raw_progress = 1.0
         self.close_opacity = 1.0
@@ -354,7 +455,14 @@ class Waypie(Gtk.Application):
             self.canvas.remove_tick_callback(self.animation_tick)
         self.animation_tick = None
         Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
+        self.set_click_through(True)
         self.window.set_visible(False)
+
+    def on_close_failsafe(self):
+        self.close_failsafe_source = None
+        if self.closing:
+            self.finish_hide()
+        return False
 
     def set_click_through(self, enabled):
         surface = self.window.get_surface()
@@ -367,8 +475,31 @@ class Waypie(Gtk.Application):
             return True
         return False
 
-    def on_pointer_event(self, _controller, x, y):
-        if not self.window.get_visible() or self.closing or self.action_closing:
+    def on_key_released(self, _controller, keyval, _keycode, _state):
+        if not self.turbo_modifiers or self.closing:
+            return
+        released = self.modifier_for_keyval(keyval)
+        if not released:
+            return
+        self.turbo_modifiers &= ~released
+        if self.turbo_modifiers:
+            return
+        self.reset_hover_detector()
+        position = self.pointer_position
+        if position is not None and self.turbo_release_source is None:
+            self.turbo_release_source = GLib.idle_add(
+                self.finish_turbo_release,
+                position,
+            )
+
+    def finish_turbo_release(self, position):
+        self.turbo_release_source = None
+        if self.window.get_visible() and not self.closing:
+            self.activate_at(*position, hover=True)
+        return False
+
+    def on_pointer_event(self, controller, x, y):
+        if not self.window.get_visible() or self.closing:
             return
         self.pointer_position = (x, y)
         if not self.menu_centers:
@@ -376,13 +507,108 @@ class Waypie(Gtk.Application):
             self.menu_centers = [target]
             self.display_centers = [(x, y)]
             if target != (x, y):
-                self.start_menu_animation(reveal_items=False)
+                self.start_navigation_animation(reveal_items=False)
+            self.reset_hover_detector(target)
             self.canvas.queue_draw()
             return
         hovered_hit = self.target_at(x, y)
         if hovered_hit != self.hovered_hit:
             self.hovered_hit = hovered_hit
+        if self.settings.turbo_mode and not self.turbo_modifiers:
+            self.turbo_modifiers = self.event_modifiers(
+                controller.get_current_event_state()
+            )
+            if self.turbo_modifiers:
+                self.reset_hover_detector(self.menu_centers[-1])
+        if self.settings.hover_mode or self.turbo_modifiers:
+            now = GLib.get_monotonic_time() / 1_000_000
+            selection = self.hover_detector.on_motion((x, y), now)
+            self.schedule_hover_timeout(now)
+            if selection is not None:
+                self.activate_at(
+                    selection.x,
+                    selection.y,
+                    hover=True,
+                    submenu_only=bool(self.turbo_modifiers),
+                )
         self.canvas.queue_draw()
+
+    @staticmethod
+    def event_modifiers(state):
+        supported = (
+            Gdk.ModifierType.SHIFT_MASK
+            | Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK
+            | Gdk.ModifierType.META_MASK
+            | Gdk.ModifierType.HYPER_MASK
+        )
+        return int(state & supported)
+
+    @staticmethod
+    def modifier_for_keyval(keyval):
+        keys = (
+            ((Gdk.KEY_Shift_L, Gdk.KEY_Shift_R), Gdk.ModifierType.SHIFT_MASK),
+            (
+                (Gdk.KEY_Control_L, Gdk.KEY_Control_R),
+                Gdk.ModifierType.CONTROL_MASK,
+            ),
+            ((Gdk.KEY_Alt_L, Gdk.KEY_Alt_R), Gdk.ModifierType.ALT_MASK),
+            (
+                (
+                    Gdk.KEY_Super_L,
+                    Gdk.KEY_Super_R,
+                    Gdk.KEY_Meta_L,
+                    Gdk.KEY_Meta_R,
+                    Gdk.KEY_Hyper_L,
+                    Gdk.KEY_Hyper_R,
+                ),
+                Gdk.ModifierType.SUPER_MASK
+                | Gdk.ModifierType.META_MASK
+                | Gdk.ModifierType.HYPER_MASK,
+            ),
+        )
+        for keyvals, modifier in keys:
+            if keyval in keyvals:
+                return int(modifier)
+        return 0
+
+    def reset_hover_detector(self, position=None):
+        if self.hover_timeout_source is not None:
+            GLib.source_remove(self.hover_timeout_source)
+            self.hover_timeout_source = None
+        self.hover_detector.reset(position)
+
+    def schedule_hover_timeout(self, now):
+        if self.hover_timeout_source is not None:
+            GLib.source_remove(self.hover_timeout_source)
+            self.hover_timeout_source = None
+        deadline = self.hover_detector.pause_deadline
+        if deadline is None:
+            return
+        delay = max(1, math.ceil((deadline - now) * 1000))
+        self.hover_timeout_source = GLib.timeout_add(delay, self.on_hover_timeout)
+
+    def on_hover_timeout(self):
+        self.hover_timeout_source = None
+        if (
+            not (self.settings.hover_mode or self.turbo_modifiers)
+            or not self.window.get_visible()
+            or self.closing
+        ):
+            return False
+        now = GLib.get_monotonic_time() / 1_000_000
+        selection = self.hover_detector.on_timeout(now)
+        if selection is None:
+            self.schedule_hover_timeout(now)
+            return False
+        self.activate_at(
+            selection.x,
+            selection.y,
+            hover=True,
+            submenu_only=bool(self.turbo_modifiers),
+        )
+        return False
 
     def draw(self, _canvas, context, width, height):
         self.hits = []
@@ -471,7 +697,7 @@ class Waypie(Gtk.Application):
             visual_key=("center", None),
         )
         scene.append(
-            (
+            RenderedItem(
                 center_x,
                 center_y,
                 size * geometry_reveal,
@@ -482,7 +708,6 @@ class Waypie(Gtk.Application):
                 center_active,
                 center_label,
                 center_hide_label,
-                False,
             )
         )
         hitbox_size = (
@@ -633,22 +858,13 @@ class Waypie(Gtk.Application):
                     item.angle,
                     target_distance,
                 )
-                (
-                    old_x,
-                    old_y,
-                    old_size,
-                    old_item,
-                    old_style,
-                    old_opacity,
-                    old_indicators,
-                    old_active,
-                    old_label_override,
-                    old_hide_label,
-                    old_indicators_active,
-                ) = self.returning_item_scene
+                previous = self.returning_item_scene
+                old_x, old_y = previous.position
                 x = old_x + (target_item_x - old_x) * self.transition_progress
                 y = old_y + (target_item_y - old_y) * self.transition_progress
-                drawn_size = old_size + (size - old_size) * self.transition_progress
+                drawn_size = (
+                    previous.size + (size - previous.size) * self.transition_progress
+                )
                 if self.closing:
                     drawn_size *= self.close_scale
                 if item.items:
@@ -659,7 +875,7 @@ class Waypie(Gtk.Application):
                         drawn_size,
                         item,
                         style,
-                        old_opacity * closing_opacity,
+                        previous.opacity * closing_opacity,
                         active=item_active,
                         reveal=self.transition_progress,
                     )
@@ -668,28 +884,28 @@ class Waypie(Gtk.Application):
                     x,
                     y,
                     drawn_size,
-                    old_item,
-                    old_style,
-                    old_opacity * closing_opacity,
-                    active=old_active,
-                    label_override=old_label_override,
-                    hide_label=old_hide_label,
-                    submenu_indicators=old_indicators,
-                    submenu_indicators_active=old_indicators_active,
+                    previous.item,
+                    previous.style,
+                    previous.opacity * closing_opacity,
+                    active=previous.active,
+                    label_override=previous.label_override,
+                    hide_label=previous.hide_label,
+                    submenu_indicators=previous.submenu_indicators,
+                    submenu_indicators_active=previous.submenu_indicators_active,
                 )
                 scene.append(
-                    (
+                    RenderedItem(
                         x,
                         y,
                         drawn_size,
-                        old_item,
-                        old_style,
-                        old_opacity * closing_opacity,
-                        old_indicators,
-                        old_active,
-                        old_label_override,
-                        old_hide_label,
-                        old_indicators_active,
+                        previous.item,
+                        previous.style,
+                        previous.opacity * closing_opacity,
+                        previous.submenu_indicators,
+                        previous.active,
+                        previous.label_override,
+                        previous.hide_label,
+                        previous.submenu_indicators_active,
                     )
                 )
             else:
@@ -718,7 +934,7 @@ class Waypie(Gtk.Application):
                     visual_key=("item", index),
                 )
                 scene.append(
-                    (
+                    RenderedItem(
                         x,
                         y,
                         drawn_size,
@@ -733,13 +949,12 @@ class Waypie(Gtk.Application):
                         ),
                         bool(item.items),
                         item_active and not self.settings.active_label_in_center,
-                        None,
-                        (
+                        hide_label=(
                             item_active
                             and self.settings.active_label_in_center
                             and bool(item.icon)
                         ),
-                        item_active,
+                        submenu_indicators_active=item_active,
                     )
                 )
             self.visual_positions[("item", index)] = (x, y)
@@ -750,7 +965,7 @@ class Waypie(Gtk.Application):
             if hovered_hit != self.hovered_hit:
                 self.hovered_hit = hovered_hit
                 self.canvas.queue_draw()
-        if self.closing or self.action_closing:
+        if self.closing:
             self.hits = []
         self.current_scene = scene
 
@@ -759,7 +974,7 @@ class Waypie(Gtk.Application):
         opacity_remaining = max(
             0.0,
             1
-            - ease_out_spring(
+            - spring(
                 min(1.0, self.transition_raw_progress / 0.8),
             ),
         )
@@ -803,19 +1018,8 @@ class Waypie(Gtk.Application):
                 start[1] + (end[1] - start[1]) * geometry_remaining,
             )
             context.stroke()
-        for (
-            x,
-            y,
-            size,
-            item,
-            style,
-            opacity,
-            submenu_indicators,
-            active,
-            label_override,
-            hide_label,
-            submenu_indicators_active,
-        ) in self.departing_scene:
+        for rendered in self.departing_scene:
+            x, y = rendered.position
             if departing_center is not None:
                 x = departing_center[0] + (x - departing_center[0]) * geometry_remaining
                 y = departing_center[1] + (y - departing_center[1]) * geometry_remaining
@@ -823,15 +1027,15 @@ class Waypie(Gtk.Application):
                 context,
                 x,
                 y,
-                size * geometry_remaining,
-                item,
-                style,
-                opacity * opacity_remaining,
-                active=active,
-                label_override=label_override,
-                hide_label=hide_label,
-                submenu_indicators=submenu_indicators,
-                submenu_indicators_active=submenu_indicators_active,
+                rendered.size * geometry_remaining,
+                rendered.item,
+                rendered.style,
+                rendered.opacity * opacity_remaining,
+                active=rendered.active,
+                label_override=rendered.label_override,
+                hide_label=rendered.hide_label,
+                submenu_indicators=rendered.submenu_indicators,
+                submenu_indicators_active=rendered.submenu_indicators_active,
             )
 
     def draw_connectors(self, context):
@@ -976,7 +1180,7 @@ class Waypie(Gtk.Application):
             role_selectors = ["circle.history"]
         else:
             role_selectors = ["circle.item"]
-            if item.items:
+            if item.is_submenu:
                 role_selectors.append("circle.submenu")
         selectors.extend(role_selectors)
         if active:
@@ -997,10 +1201,14 @@ class Waypie(Gtk.Application):
             self.scale_animations.pop(key, None)
             current = target
         elif abs(current - target) > 1e-6 and (
-            animation is None or animation[1] != target
+            animation is None or animation.target != target
         ):
             started = GLib.get_monotonic_time() / 1_000_000
-            self.scale_animations[key] = (current, target, started, duration)
+            self.scale_animations[key] = ScalarAnimation(
+                current,
+                target,
+                Timeline(started, duration),
+            )
             self.ensure_animation_tick()
         base_size = style["width"]
         return base_size * current
@@ -1014,10 +1222,14 @@ class Waypie(Gtk.Application):
             self.distance_animations.pop(key, None)
             current = target
         elif abs(current - target) > 1e-6 and (
-            animation is None or animation[1] != target
+            animation is None or animation.target != target
         ):
             started = GLib.get_monotonic_time() / 1_000_000
-            self.distance_animations[key] = (current, target, started, duration)
+            self.distance_animations[key] = ScalarAnimation(
+                current,
+                target,
+                Timeline(started, duration),
+            )
             self.ensure_animation_tick()
         return current
 
@@ -1035,14 +1247,13 @@ class Waypie(Gtk.Application):
             self.icon_opacity_animations.pop(key, None)
             return target
         if abs(current - target) > 1e-6 and (
-            animation is None or animation[1] != target
+            animation is None or animation.target != target
         ):
             started = GLib.get_monotonic_time() / 1_000_000
-            self.icon_opacity_animations[key] = (
+            self.icon_opacity_animations[key] = ScalarAnimation(
                 current,
                 target,
-                started,
-                duration,
+                Timeline(started, duration),
             )
             self.ensure_animation_tick()
         return current
@@ -1122,20 +1333,23 @@ class Waypie(Gtk.Application):
         if show_icon and icon_drawn:
             return
         label_text = item.label if label_override is None else label_override
-        if hide_label or not label_text:
+        if (hide_label and icon_drawn) or not label_text:
             return
-        context.select_font_face(
-            style["font-family"], cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
+        layout_size, text_scale = fixed_text_geometry(
+            style,
+            size,
+            computed_style(self.styles, ("circle",))["scale"],
         )
-        context.set_font_size(style["font-size"])
-        set_source_color(context, style["color"], content_opacity(style) * opacity)
-        label = truncate(label_text, max(1, int(size / style["font-size"] * 1.5)))
-        extents = context.text_extents(label)
-        context.move_to(
-            x - extents.width / 2 - extents.x_bearing,
-            y - extents.height / 2 - extents.y_bearing,
+        draw_wrapped_text(
+            context,
+            x,
+            y,
+            layout_size,
+            label_text,
+            style,
+            opacity,
+            text_scale,
         )
-        context.show_text(label)
 
     def draw_submenu_indicators(
         self,
@@ -1211,7 +1425,7 @@ class Waypie(Gtk.Application):
         path = icon_path(item.icon_theme, item.icon)
         if path is None:
             return False
-        size = round(style.get("icon-size") or circle_size * 0.55)
+        size = round(scaled_icon_size(style, circle_size))
         if size <= 0:
             return False
         color = style["color"]
@@ -1220,24 +1434,7 @@ class Waypie(Gtk.Application):
         if pixbuf is None:
             try:
                 if path.suffix.lower() == ".svg":
-                    red, green, blue, _alpha = color
-                    replacement = (
-                        f"#{round(red * 255):02x}{round(green * 255):02x}"
-                        f"{round(blue * 255):02x}"
-                    )
-                    source = path.read_text(encoding="utf-8")
-                    if "currentColor" in source:
-                        source = source.replace("currentColor", replacement)
-                    elif not re.search(
-                        r"""(?:fill|stroke)\s*=\s*["'](?:#|rgb|hsl)""",
-                        source,
-                        re.IGNORECASE,
-                    ):
-                        source = source.replace(
-                            "<svg",
-                            f'<svg fill="{replacement}"',
-                            1,
-                        )
+                    source = colored_svg_source(path, color)
                     loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
                     loader.set_size(size, size)
                     loader.write(source.encode())
@@ -1262,6 +1459,9 @@ class Waypie(Gtk.Application):
         return True
 
     def on_click(self, _gesture, _presses, x, y):
+        self.activate_at(x, y)
+
+    def activate_at(self, x, y, hover=False, submenu_only=False):
         if not self.hits:
             return
 
@@ -1269,6 +1469,8 @@ class Waypie(Gtk.Application):
         if target is None:
             return
         kind, index = target
+        if hover and kind == "center":
+            return
         if kind == "center":
             if self.path and not self.settings.close_submenu_on_center_click:
                 self.return_to_parent(len(self.path) - 1, x, y)
@@ -1280,7 +1482,7 @@ class Waypie(Gtk.Application):
             return
 
         item = self.item_at_path(self.path).items[index]
-        if item.items:
+        if item.is_submenu:
             interrupted_return_index = self.returning_item_index
             self.returning_item_index = None
             self.returning_item_scene = None
@@ -1295,7 +1497,7 @@ class Waypie(Gtk.Application):
             ]
             self.departing_connectors = []
             self.departing_center = (
-                self.current_scene[0][:2]
+                self.current_scene[0].position
                 if self.current_scene
                 else self.menu_centers[-1]
             )
@@ -1315,11 +1517,17 @@ class Waypie(Gtk.Application):
             self.align_menu_chain()
             self.hovered_hit = None
             self.reset_item_animations()
-            self.start_menu_animation(reveal_items=True)
+            self.start_navigation_animation(reveal_items=True)
+            self.reset_hover_detector(child_center)
             self.canvas.queue_draw()
         else:
+            if submenu_only:
+                return
             launch(item.command)
             self.hide_after_action(index, x, y)
+
+    def on_right_click(self, _gesture, _presses, _x, _y):
+        self.hide_menu()
 
     def return_to_parent(self, depth, x, y):
         interrupted_return_index = self.returning_item_index
@@ -1328,7 +1536,7 @@ class Waypie(Gtk.Application):
             self.current_scene[0] if self.current_scene else None
         )
         self.departing_center = (
-            self.current_scene[0][:2] if self.current_scene else None
+            self.current_scene[0].position if self.current_scene else None
         )
         self.departing_scene = [
             scene_item
@@ -1344,7 +1552,8 @@ class Waypie(Gtk.Application):
         self.align_menu_chain()
         self.hovered_hit = None
         self.reset_item_animations()
-        self.start_menu_animation(reveal_items=True)
+        self.start_navigation_animation(reveal_items=True)
+        self.reset_hover_detector(self.menu_centers[-1])
         self.canvas.queue_draw()
 
     def hide_after_action(self, index, x, y):
@@ -1360,7 +1569,6 @@ class Waypie(Gtk.Application):
         self.hide_menu()
         if not self.closing:
             return
-        self.action_closing = True
 
     def clamp_menu_position(self, x, y):
         width = self.canvas.get_width()
@@ -1427,16 +1635,15 @@ class Waypie(Gtk.Application):
         self.icon_opacity_values.clear()
         self.icon_opacity_animations.clear()
 
-    def start_menu_animation(self, reveal_items):
+    def start_navigation_animation(self, reveal_items):
         duration = animation_duration(self.styles, "menu-duration")
-        self.menu_start_centers = list(self.display_centers)
         start = 0.0 if reveal_items else 1.0
         if duration == 0:
             self.display_centers = list(self.menu_centers)
             self.menu_progress = 1.0
             self.transition_progress = 1.0
             self.transition_raw_progress = 1.0
-            self.menu_animation_started = None
+            self.navigation_animation = None
             self.departing_scene = []
             self.departing_connectors = []
             self.departing_center = None
@@ -1446,9 +1653,13 @@ class Waypie(Gtk.Application):
         self.menu_progress = start
         self.transition_progress = 0.0
         self.transition_raw_progress = 0.0
-        self.menu_animation_from = start
-        self.menu_animation_to = 1.0
-        self.menu_animation_started = GLib.get_monotonic_time() / 1_000_000
+        now = GLib.get_monotonic_time() / 1_000_000
+        self.navigation_animation = NavigationAnimation(
+            Timeline(now, duration),
+            start,
+            1.0,
+            tuple(self.display_centers),
+        )
         self.ensure_animation_tick()
 
     def ensure_animation_tick(self):
@@ -1459,111 +1670,63 @@ class Waypie(Gtk.Application):
         now = frame_clock.get_frame_time() / 1_000_000
         animating = False
 
-        if self.menu_animation_started is not None:
-            duration = animation_duration(self.styles, "menu-duration")
-            progress = min(1.0, (now - self.menu_animation_started) / duration)
-            self.transition_raw_progress = progress
-            eased = ease_out_spring(progress)
-            self.transition_progress = eased
-            self.menu_progress = (
-                self.menu_animation_from
-                + (self.menu_animation_to - self.menu_animation_from) * eased
-            )
-            self.display_centers = [
-                (
-                    start[0] + (target[0] - start[0]) * eased,
-                    start[1] + (target[1] - start[1]) * eased,
-                )
-                for start, target in zip(
-                    self.menu_start_centers,
-                    self.menu_centers,
-                    strict=True,
-                )
-            ]
-            if progress < 1:
+        if self.navigation_animation is not None:
+            frame = self.navigation_animation.frame(now, self.menu_centers)
+            self.transition_raw_progress = frame.progress
+            self.transition_progress = frame.eased
+            self.menu_progress = frame.reveal
+            self.display_centers = list(frame.centers)
+            if not frame.done:
                 animating = True
             else:
-                self.menu_animation_started = None
+                self.navigation_animation = None
                 self.departing_scene = []
                 self.departing_connectors = []
                 self.departing_center = None
                 self.returning_item_index = None
                 self.returning_item_scene = None
-                if self.closing and self.close_animation_started is None:
+                if self.closing and self.close_animation is None:
                     self.finish_hide(from_animation=True)
                     return False
 
-        if self.close_animation_started is not None:
-            duration = animation_duration(
-                self.styles,
-                "close-duration",
-                fallback_name="menu-duration",
-            )
-            progress = min(1.0, (now - self.close_animation_started) / duration)
-            eased = ease_out_spring(progress)
-            self.close_scale = max(0.0, 1 - eased)
-            self.close_opacity = max(
-                0.0,
-                1 - ease_out_spring(min(1.0, progress / 0.8)),
-            )
-            if self.action_item_index is not None:
-                flight_end = 2 / 3
-                self.action_progress = ease_out_spring(min(1.0, progress / flight_end))
-                self.action_growth_progress = ease_out_spring(progress)
-                action_fade_progress = max(
-                    0.0,
-                    min(1.0, (progress - flight_end) / (1 - flight_end)),
-                )
-                self.action_opacity = max(
-                    0.0,
-                    1 - ease_out_spring(action_fade_progress),
-                )
-            if progress < 1:
+        if self.close_animation is not None:
+            frame = self.close_animation.frame(now)
+            self.close_scale = frame.scale
+            self.close_opacity = frame.opacity
+            self.action_progress = frame.action_position
+            self.action_growth_progress = frame.action_scale
+            self.action_opacity = frame.action_opacity
+            if not frame.done:
                 animating = True
             else:
-                self.close_animation_started = None
-                if self.menu_animation_started is None:
+                self.close_animation = None
+                if self.navigation_animation is None:
                     self.finish_hide(from_animation=True)
                     return False
                 animating = True
 
-        for key, (start, target, started, duration) in list(
-            self.scale_animations.items()
-        ):
-            progress = min(1.0, (now - started) / duration)
-            self.scale_values[key] = start + (target - start) * ease_out_spring(
-                progress
-            )
-            if progress < 1:
+        for key, animation in list(self.scale_animations.items()):
+            value, done = animation.frame(now)
+            self.scale_values[key] = value
+            if not done:
                 animating = True
             else:
-                self.scale_values[key] = target
                 del self.scale_animations[key]
 
-        for key, (start, target, started, duration) in list(
-            self.distance_animations.items()
-        ):
-            progress = min(1.0, (now - started) / duration)
-            self.distance_values[key] = start + (target - start) * ease_out_spring(
-                progress
-            )
-            if progress < 1:
+        for key, animation in list(self.distance_animations.items()):
+            value, done = animation.frame(now)
+            self.distance_values[key] = value
+            if not done:
                 animating = True
             else:
-                self.distance_values[key] = target
                 del self.distance_animations[key]
 
-        for key, (start, target, started, duration) in list(
-            self.icon_opacity_animations.items()
-        ):
-            progress = min(1.0, (now - started) / duration)
-            self.icon_opacity_values[key] = start + (target - start) * ease_out_spring(
-                progress
-            )
-            if progress < 1:
+        for key, animation in list(self.icon_opacity_animations.items()):
+            value, done = animation.frame(now)
+            self.icon_opacity_values[key] = value
+            if not done:
                 animating = True
             else:
-                self.icon_opacity_values[key] = target
                 del self.icon_opacity_animations[key]
 
         self.canvas.queue_draw()
@@ -1572,6 +1735,12 @@ class Waypie(Gtk.Application):
         return animating
 
     def do_shutdown(self):
+        if self.turbo_release_source is not None:
+            GLib.source_remove(self.turbo_release_source)
+            self.turbo_release_source = None
+        if self.close_failsafe_source is not None:
+            GLib.source_remove(self.close_failsafe_source)
+            self.close_failsafe_source = None
         if self.control_source is not None:
             GLib.source_remove(self.control_source)
             self.control_source = None
@@ -1581,6 +1750,14 @@ class Waypie(Gtk.Application):
         try:
             control_socket_path().unlink()
         except FileNotFoundError:
+            pass
+        try:
+            if (
+                int(process_pid_path().read_text(encoding="ascii").strip())
+                == os.getpid()
+            ):
+                process_pid_path().unlink()
+        except (FileNotFoundError, OSError, ValueError):
             pass
         Gtk.Application.do_shutdown(self)
 

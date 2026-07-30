@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import shutil
@@ -12,6 +13,7 @@ gi.require_version("GdkPixbuf", "2.0")
 
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
+from waypie_animation import spring
 from waypie_common import (
     CONFIG_DIR,
     CONFIG_PATH,
@@ -20,21 +22,26 @@ from waypie_common import (
     angular_delta,
     angular_distance,
     animation_duration,
+    colored_svg_source,
     computed_style,
     content_opacity,
     direction_angle,
-    ease_out_spring,
+    draw_wrapped_text,
+    fixed_text_geometry,
     icon_path,
     icon_themes,
     largest_gap_angle,
     load_config,
+    load_icon_theme_history,
     load_styles,
+    remember_icon_theme,
     resolve_angles,
     resolve_radius,
     rounded_rectangle,
+    scaled_icon_size,
     set_source_color,
+    sort_icon_themes,
     theme_icons,
-    truncate,
 )
 
 ALIGNMENT_ANGLES = tuple(range(0, 360, 5))
@@ -44,6 +51,7 @@ DEFAULT_PARENT_LINK = {
     "width": "12px",
 }
 DEFAULT_HISTORY = {"opacity": "0.35", "scale": "2"}
+ALL_ICON_THEMES = "__waypie_all_icon_themes__"
 
 
 class Configurator(Gtk.Application):
@@ -65,6 +73,8 @@ class Configurator(Gtk.Application):
         self.center_mode_check = None
         self.active_label_in_center_check = None
         self.close_submenu_on_center_click_check = None
+        self.hover_mode_check = None
+        self.turbo_mode_check = None
         self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
@@ -86,6 +96,11 @@ class Configurator(Gtk.Application):
         self.preview_departures = []
         self.preview_tick = None
         self.preview_hover_target = None
+        self.icon_cache = {}
+        self.rebuilding_tree = False
+        self.restoring_undo = False
+        self.undo_history = []
+        self.drag_undo_recorded = False
 
     def do_activate(self):
         if self.window is not None:
@@ -103,16 +118,21 @@ class Configurator(Gtk.Application):
         root.set_margin_end(8)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        for label, callback in (
-            ("Add command", self.on_add_command),
-            ("Add submenu", self.on_add_submenu),
-            ("Delete", self.on_delete),
-            ("Open submenu", self.on_open_submenu),
-            ("Up", self.on_up),
-            ("Center layout", self.on_center_layout),
-            ("Save", self.on_save),
+        for label, shortcut, callback in (
+            ("Add command", "Ctrl+Q", self.on_add_command),
+            ("Add submenu", "Ctrl+X", self.on_add_submenu),
+            ("Delete", "Ctrl+D", self.on_delete),
+            ("Center layout", "Ctrl+A", self.on_center_layout),
+            ("Save", "Ctrl+S", self.on_save),
         ):
-            button = Gtk.Button(label=label)
+            button = Gtk.Button()
+            button_content = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL,
+                spacing=1,
+            )
+            button_content.append(Gtk.Label(label=label))
+            button_content.append(Gtk.Label(label=shortcut))
+            button.set_child(button_content)
             button.connect("clicked", callback)
             toolbar.append(button)
         self.preserve_check = Gtk.CheckButton(label="Preserve proportions")
@@ -258,6 +278,21 @@ class Configurator(Gtk.Application):
             self.on_close_submenu_on_center_click_changed,
         )
         properties.append(self.close_submenu_on_center_click_check)
+        self.hover_mode_check = Gtk.CheckButton(label="Hover mode")
+        self.hover_mode_check.set_active(self.settings.hover_mode)
+        self.hover_mode_check.set_tooltip_text(
+            "Select an item by pausing over it or turning the pointer."
+        )
+        self.hover_mode_check.connect("toggled", self.on_hover_mode_changed)
+        properties.append(self.hover_mode_check)
+        self.turbo_mode_check = Gtk.CheckButton(label="Turbo mode")
+        self.turbo_mode_check.set_active(self.settings.turbo_mode)
+        self.turbo_mode_check.set_tooltip_text(
+            "Hold Super, Alt, Ctrl, or Shift while opening the menu; "
+            "release it to activate the selected item."
+        )
+        self.turbo_mode_check.connect("toggled", self.on_turbo_mode_changed)
+        properties.append(self.turbo_mode_check)
         properties_scroll = Gtk.ScrolledWindow()
         properties_scroll.set_policy(
             Gtk.PolicyType.NEVER,
@@ -272,6 +307,15 @@ class Configurator(Gtk.Application):
         self.angle_spin.connect("value-changed", self.on_property_changed)
 
         self.window.set_child(root)
+        shortcuts = Gtk.EventControllerKey()
+        shortcuts.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        shortcuts.connect("key-pressed", self.on_shortcut_pressed)
+        self.window.add_controller(shortcuts)
+        focus_click = Gtk.GestureClick()
+        focus_click.set_button(0)
+        focus_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        focus_click.connect("pressed", self.on_window_pressed)
+        self.window.add_controller(focus_click)
         self.rebuild_tree()
         self.sync_fields()
         self.window.present()
@@ -295,7 +339,7 @@ class Configurator(Gtk.Application):
         self.path_rows.clear()
 
         def add(item, path, depth):
-            suffix = " ▸" if item.items else ""
+            suffix = " ▸" if item.is_submenu else ""
             row = Gtk.ListBoxRow()
             label = Gtk.Label(label=f"{'  ' * depth}{item.label}{suffix}", xalign=0)
             label.set_margin_top(4)
@@ -310,10 +354,14 @@ class Configurator(Gtk.Application):
         add(self.settings.root, (), 0)
         row = self.path_rows.get(self.selected_path)
         if row is not None:
-            self.tree.select_row(row)
+            self.rebuilding_tree = True
+            try:
+                self.tree.select_row(row)
+            finally:
+                self.rebuilding_tree = False
 
     def on_tree_selected(self, _tree, row):
-        if row is None:
+        if row is None or self.rebuilding_tree:
             return
         self.selected_path = self.row_paths[row]
         if self.selected_path:
@@ -325,7 +373,7 @@ class Configurator(Gtk.Application):
 
     def on_tree_activated(self, _tree, row):
         path = self.row_paths[row]
-        if self.item_at(path).items:
+        if self.item_at(path).is_submenu:
             self.open_submenu(path)
 
     def sync_fields(self):
@@ -334,7 +382,7 @@ class Configurator(Gtk.Application):
         self.updating_fields = True
         self.label_entry.set_text(item.label)
         self.command_entry.set_text(item.command or "")
-        self.command_entry.set_sensitive(not is_root and not item.items)
+        self.command_entry.set_sensitive(not is_root and not item.is_submenu)
         self.angle_spin.set_value(item.angle or 0)
         self.angle_spin.set_sensitive(not is_root)
         self.icon_button.set_label(
@@ -345,9 +393,10 @@ class Configurator(Gtk.Application):
     def on_property_changed(self, _widget):
         if self.updating_fields:
             return
+        self.push_undo()
         item = self.item_at(self.selected_path)
         item.label = self.label_entry.get_text()
-        if self.selected_path and not item.items:
+        if self.selected_path and not item.is_submenu:
             item.command = self.command_entry.get_text()
         if self.selected_path:
             requested_angle = round(self.angle_spin.get_value()) % 360
@@ -360,7 +409,7 @@ class Configurator(Gtk.Application):
                 self.set_item_angle(item, self.aligned_angle(requested_angle))
         row = self.path_rows.get(self.selected_path)
         if row is not None:
-            suffix = " ▸" if item.items else ""
+            suffix = " ▸" if item.is_submenu else ""
             row.get_child().set_text(
                 f"{'  ' * len(self.selected_path)}{item.label}{suffix}"
             )
@@ -368,12 +417,16 @@ class Configurator(Gtk.Application):
         self.canvas.queue_draw()
 
     def on_config_setting_changed(self, spin, name):
+        if self.restoring_undo:
+            return
+        self.push_undo()
         value = round(spin.get_value())
         setattr(self.settings, name, value)
         self.canvas.queue_draw()
         self.set_status("Unsaved changes")
 
     def on_add_command(self, _button):
+        self.push_undo()
         menu = self.item_at(self.current_path)
         angle = largest_gap_angle([item.angle % 360 for item in menu.items])
         if angle is None:
@@ -384,6 +437,7 @@ class Configurator(Gtk.Application):
         self.after_structure_change()
 
     def on_add_submenu(self, _button):
+        self.push_undo()
         menu = self.item_at(self.current_path)
         angle = largest_gap_angle([item.angle % 360 for item in menu.items])
         if angle is None:
@@ -402,6 +456,7 @@ class Configurator(Gtk.Application):
         if not self.selected_path:
             self.set_status("The root menu cannot be deleted", error=True)
             return
+        self.push_undo()
         parent_path = self.selected_path[:-1]
         parent = self.item_at(parent_path)
         self.capture_preview_departures([self.item_at(self.selected_path)])
@@ -410,12 +465,9 @@ class Configurator(Gtk.Application):
         self.current_path = parent_path
         self.after_structure_change()
 
-    def on_open_submenu(self, _button):
-        self.open_submenu(self.selected_path)
-
     def open_submenu(self, path):
         item = self.item_at(path)
-        if not item.items:
+        if not item.is_submenu:
             self.set_status("The selected item is not a submenu", error=True)
             return
         self.preview_animations.pop(("item", id(item)), None)
@@ -434,6 +486,103 @@ class Configurator(Gtk.Application):
         self.rebuild_tree()
         self.sync_fields()
         self.canvas.queue_draw()
+
+    def on_shortcut_pressed(self, _controller, keyval, _keycode, state):
+        focus = self.window.get_focus()
+        if self.is_editable_widget(focus):
+            return False
+        control = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        keyval = Gdk.keyval_to_lower(keyval)
+        if control and keyval == Gdk.KEY_d:
+            self.on_delete(None)
+        elif control and keyval == Gdk.KEY_q:
+            self.on_add_command(None)
+        elif control and keyval == Gdk.KEY_x:
+            self.on_add_submenu(None)
+        elif control and keyval == Gdk.KEY_s:
+            self.on_save(None)
+        elif control and keyval == Gdk.KEY_a:
+            self.on_center_layout(None)
+        elif control and keyval == Gdk.KEY_z:
+            self.undo()
+        else:
+            return False
+        return True
+
+    @staticmethod
+    def is_editable_widget(widget):
+        while widget is not None:
+            if isinstance(
+                widget,
+                (
+                    Gtk.Entry,
+                    Gtk.SearchEntry,
+                    Gtk.SpinButton,
+                    Gtk.Text,
+                    Gtk.TextView,
+                ),
+            ):
+                return True
+            widget = widget.get_parent()
+        return False
+
+    def on_window_pressed(self, _gesture, _presses, x, y):
+        target = self.window.pick(x, y, Gtk.PickFlags.DEFAULT)
+        if not self.is_editable_widget(target):
+            self.window.set_focus(None)
+
+    def push_undo(self):
+        if self.restoring_undo:
+            return
+        self.undo_history.append(
+            (
+                copy.deepcopy(self.settings),
+                self.selected_path,
+                self.current_path,
+            )
+        )
+        if len(self.undo_history) > 100:
+            del self.undo_history[0]
+
+    def undo(self):
+        if not self.undo_history:
+            return
+        settings, selected_path, current_path = self.undo_history.pop()
+        self.restoring_undo = True
+        try:
+            self.settings = settings
+            self.selected_path = selected_path
+            self.current_path = current_path
+            for name, spin in self.setting_spins.items():
+                value = getattr(self.settings, name)
+                if value is None:
+                    value = computed_style(self.styles, ("circle",))["width"]
+                spin.set_value(value)
+            for check, value in (
+                (self.preserve_check, self.settings.preserve_proportions),
+                (self.alignment_check, self.settings.auto_alignment),
+                (self.show_icons_check, self.settings.configurator_show_icons),
+                (self.center_mode_check, self.settings.center_mode),
+                (
+                    self.active_label_in_center_check,
+                    self.settings.active_label_in_center,
+                ),
+                (
+                    self.close_submenu_on_center_click_check,
+                    self.settings.close_submenu_on_center_click,
+                ),
+                (self.hover_mode_check, self.settings.hover_mode),
+                (self.turbo_mode_check, self.settings.turbo_mode),
+            ):
+                check.set_active(value)
+        finally:
+            self.restoring_undo = False
+        self.preview_animations.clear()
+        self.preview_departures.clear()
+        self.rebuild_tree()
+        self.sync_fields()
+        self.canvas.queue_draw()
+        self.set_status("Unsaved changes")
 
     def after_structure_change(self):
         resolve_angles(self.settings.root, root=True)
@@ -509,7 +658,7 @@ class Configurator(Gtk.Application):
     def preview_style(self, item, selected=False, center=False, previous=False):
         selectors = ["circle"]
         role_selectors = ["circle.center" if center else "circle.item"]
-        if not center and item.items:
+        if not center and item.is_submenu:
             role_selectors.append("circle.submenu")
         selectors.extend(role_selectors)
         if previous:
@@ -569,7 +718,7 @@ class Configurator(Gtk.Application):
             animation["current"] = animation["target"]
             return
         progress = min(1.0, (now - animation["started"]) / duration)
-        eased = ease_out_spring(progress)
+        eased = spring(progress)
         animation["current"] = tuple(
             start + (target - start) * eased
             for start, target in zip(
@@ -629,7 +778,7 @@ class Configurator(Gtk.Application):
                 if duration == 0
                 else min(1.0, (now - departure["started"]) / duration)
             )
-            eased = ease_out_spring(progress)
+            eased = spring(progress)
             geometry = tuple(
                 start + (target - start) * eased
                 for start, target in zip(
@@ -925,11 +1074,9 @@ class Configurator(Gtk.Application):
         if item.icon and show_icon:
             path = icon_path(item.icon_theme, item.icon)
             if path is not None:
-                icon_size = round(style.get("icon-size") or size * 0.55)
+                icon_size = round(scaled_icon_size(style, size))
                 try:
-                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                        str(path), icon_size, icon_size, True
-                    )
+                    pixbuf = self.load_icon_pixbuf(path, icon_size, style["color"])
                     context.save()
                     Gdk.cairo_set_source_pixbuf(
                         context,
@@ -940,24 +1087,47 @@ class Configurator(Gtk.Application):
                     context.paint_with_alpha(content_opacity(style) * opacity)
                     context.restore()
                     return
-                except (GLib.Error, OSError):
+                except (GLib.Error, OSError, UnicodeError):
                     pass
         if not item.label:
             return
-        context.select_font_face(
-            style["font-family"],
-            cairo.FONT_SLANT_NORMAL,
-            cairo.FONT_WEIGHT_NORMAL,
+        layout_size, text_scale = fixed_text_geometry(
+            style,
+            size,
+            computed_style(self.styles, ("circle",))["scale"],
         )
-        context.set_font_size(style["font-size"])
-        set_source_color(context, style["color"], content_opacity(style) * opacity)
-        label = truncate(item.label, max(1, int(size / style["font-size"] * 1.5)))
-        extents = context.text_extents(label)
-        context.move_to(
-            x - extents.width / 2 - extents.x_bearing,
-            y - extents.height / 2 - extents.y_bearing,
+        draw_wrapped_text(
+            context,
+            x,
+            y,
+            layout_size,
+            item.label,
+            style,
+            opacity,
+            text_scale,
         )
-        context.show_text(label)
+
+    def load_icon_pixbuf(self, path, size, color):
+        key = (str(path), path.stat().st_mtime_ns, size, color)
+        pixbuf = self.icon_cache.get(key)
+        if pixbuf is not None:
+            return pixbuf
+        if path.suffix.lower() == ".svg":
+            source = colored_svg_source(path, color)
+            loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+            loader.set_size(size, size)
+            loader.write(source.encode())
+            loader.close()
+            pixbuf = loader.get_pixbuf()
+        else:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                str(path),
+                size,
+                size,
+                True,
+            )
+        self.icon_cache[key] = pixbuf
+        return pixbuf
 
     def draw_preview_submenu_indicators(
         self,
@@ -1097,11 +1267,12 @@ class Configurator(Gtk.Application):
         self.select_preview_item(index)
         if index is not None:
             path = (*self.current_path, index)
-            if self.item_at(path).items:
+            if self.item_at(path).is_submenu:
                 self.open_submenu(path)
 
     def on_drag_begin(self, _gesture, x, y):
         self.drag_active = False
+        self.drag_undo_recorded = False
         self.drag_index = None
         if not self.preview_center_hit(x, y) and not self.preview_parent_center_hit(
             x, y
@@ -1128,6 +1299,9 @@ class Configurator(Gtk.Application):
                 return
             self.drag_active = True
             self.drag_happened = True
+            if not self.drag_undo_recorded:
+                self.push_undo()
+                self.drag_undo_recorded = True
         x = self.drag_origin[0] + offset_x
         y = self.drag_origin[1] + offset_y
         center_x, center_y = self.preview_menu_center(self.current_path)
@@ -1177,6 +1351,7 @@ class Configurator(Gtk.Application):
         )
         self.drag_index = None
         self.drag_active = False
+        self.drag_undo_recorded = False
         self.drag_initial_angles = []
         self.drag_reorder_armed = False
         self.drag_item = None
@@ -1187,6 +1362,9 @@ class Configurator(Gtk.Application):
             self.canvas.queue_draw()
 
     def on_layout_option_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
         self.settings.preserve_proportions = self.preserve_check.get_active()
         self.settings.auto_alignment = self.alignment_check.get_active()
         if self.preserve_check.get_active():
@@ -1200,24 +1378,50 @@ class Configurator(Gtk.Application):
         self.set_status("Unsaved changes")
 
     def on_show_icons_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
         self.settings.configurator_show_icons = self.show_icons_check.get_active()
         self.canvas.queue_draw()
         self.set_status("Unsaved changes")
 
     def on_center_mode_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
         self.settings.center_mode = self.center_mode_check.get_active()
         self.set_status("Unsaved changes")
 
     def on_active_label_in_center_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
         self.settings.active_label_in_center = (
             self.active_label_in_center_check.get_active()
         )
         self.set_status("Unsaved changes")
 
     def on_close_submenu_on_center_click_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
         self.settings.close_submenu_on_center_click = (
             self.close_submenu_on_center_click_check.get_active()
         )
+        self.set_status("Unsaved changes")
+
+    def on_hover_mode_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
+        self.settings.hover_mode = self.hover_mode_check.get_active()
+        self.set_status("Unsaved changes")
+
+    def on_turbo_mode_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
+        self.settings.turbo_mode = self.turbo_mode_check.get_active()
         self.set_status("Unsaved changes")
 
     def aligned_angle(self, angle):
@@ -1232,6 +1436,7 @@ class Configurator(Gtk.Application):
         menu = self.item_at(self.current_path)
         if not menu.items:
             return
+        self.push_undo()
 
         if self.current_path:
             step = 360 / (len(menu.items) + 1)
@@ -1365,13 +1570,17 @@ class Configurator(Gtk.Application):
             self.rotate_descendants(child, delta)
 
     def on_choose_icon(self, _button):
-        themes = icon_themes()
+        themes = sort_icon_themes(icon_themes(), load_icon_theme_history())
         if not themes:
             ICON_DIR.mkdir(parents=True, exist_ok=True)
             self.set_status(f"Add icon folders to {ICON_DIR}", error=True)
             return
 
         item = self.item_at(self.selected_path)
+        icon_style = self.preview_style(
+            item,
+            center=self.selected_path == self.current_path,
+        )
         window = Gtk.Window(
             title="Choose icon",
             transient_for=self.window,
@@ -1387,10 +1596,11 @@ class Configurator(Gtk.Application):
 
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         theme_select = Gtk.ComboBoxText()
+        theme_select.append(ALL_ICON_THEMES, "All icon sets")
         for theme in themes:
             theme_select.append(theme, theme)
         theme_select.set_active_id(
-            item.icon_theme if item.icon_theme in themes else themes[0]
+            item.icon_theme if item.icon_theme in themes else ALL_ICON_THEMES
         )
         theme_select.set_hexpand(True)
         search = Gtk.SearchEntry(placeholder_text="Search icons…")
@@ -1415,9 +1625,18 @@ class Configurator(Gtk.Application):
         scroll.set_child(flow)
         content.append(scroll)
 
-        def choose(icon):
-            item.icon_theme = theme_select.get_active_id()
+        icons_by_theme = {}
+
+        def icons_for(theme):
+            if theme not in icons_by_theme:
+                icons_by_theme[theme] = theme_icons(theme)
+            return icons_by_theme[theme]
+
+        def choose(theme, icon):
+            self.push_undo()
+            item.icon_theme = theme
             item.icon = icon
+            remember_icon_theme(item.icon_theme)
             self.sync_fields()
             self.canvas.queue_draw()
             self.set_status("Unsaved changes")
@@ -1426,26 +1645,47 @@ class Configurator(Gtk.Application):
         def rebuild(*_args):
             while child := flow.get_child_at_index(0):
                 flow.remove(child)
-            theme = theme_select.get_active_id()
+            selected_theme = theme_select.get_active_id()
             term = search.get_text().strip().casefold()
-            icons = theme_icons(theme)
-            matches = [icon for icon in icons if not term or term in icon.casefold()]
-            visible = matches[:400]
-            result_label.set_text(
-                f"{len(matches)} icons"
-                + (" — refine the search to see more" if len(matches) > 400 else "")
+            searched_themes = (
+                themes if selected_theme == ALL_ICON_THEMES else [selected_theme]
             )
-            for icon in visible:
+            visible = []
+            match_count = 0
+            for theme in searched_themes:
+                theme_matches = term and term in theme.casefold()
+                for icon in icons_for(theme):
+                    if term and not theme_matches and term not in icon.casefold():
+                        continue
+                    match_count += 1
+                    if len(visible) < 400:
+                        visible.append((theme, icon))
+            result_label.set_text(
+                f"{match_count} icons"
+                + (" — refine the search to see more" if match_count > 400 else "")
+            )
+            for theme, icon in visible:
                 path = icon_path(theme, icon)
-                button = Gtk.Button(tooltip_text=icon)
-                picture = Gtk.Picture.new_for_filename(str(path))
+                button = Gtk.Button(tooltip_text=f"{theme}: {icon}")
+                try:
+                    pixbuf = self.load_icon_pixbuf(path, 56, icon_style["color"])
+                except (GLib.Error, OSError, UnicodeError):
+                    continue
+                picture = Gtk.Picture.new_for_pixbuf(pixbuf)
                 picture.set_content_fit(Gtk.ContentFit.CONTAIN)
                 picture.set_size_request(56, 56)
                 button.set_child(picture)
-                button.connect("clicked", lambda _button, name=icon: choose(name))
+                button.connect(
+                    "clicked",
+                    lambda _button, selected_theme=theme, name=icon: choose(
+                        selected_theme,
+                        name,
+                    ),
+                )
                 flow.append(button)
 
         def remove_icon(_button):
+            self.push_undo()
             item.icon_theme = None
             item.icon = None
             self.sync_fields()
@@ -1488,8 +1728,8 @@ class Configurator(Gtk.Application):
 def validate_editable_tree(item, root=True, location="menu"):
     if not item.label:
         raise ValueError(f"{location}: label cannot be empty")
-    if not root and bool(item.command) == bool(item.items):
-        raise ValueError(f"{location}: use either a command or child items")
+    if not root and not item.is_submenu and not item.command:
+        raise ValueError(f"{location}: command cannot be empty")
     for index, child in enumerate(item.items):
         validate_editable_tree(
             child,
@@ -1517,6 +1757,8 @@ def serialize_config(settings):
         "close-submenu-on-center-click = "
         f"{str(settings.close_submenu_on_center_click).lower()}"
     )
+    lines.append(f"hover-mode = {str(settings.hover_mode).lower()}")
+    lines.append(f"turbo-mode = {str(settings.turbo_mode).lower()}")
     lines.append(f"preserve-proportions = {str(settings.preserve_proportions).lower()}")
     lines.append(f"auto-alignment = {str(settings.auto_alignment).lower()}")
     lines.append(

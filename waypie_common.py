@@ -1,5 +1,7 @@
+import json
 import math
 import re
+import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,6 +10,7 @@ CONFIG_DIR = Path.home() / ".config" / "waypie"
 CONFIG_PATH = CONFIG_DIR / "config"
 STYLE_PATH = CONFIG_DIR / "style.css"
 ICON_DIR = CONFIG_DIR / "icons"
+ICON_HISTORY_PATH = CONFIG_DIR / ".icon-history.json"
 ICON_EXTENSIONS = {".svg", ".png", ".webp", ".jpg", ".jpeg", ".gif"}
 
 
@@ -21,6 +24,10 @@ class Item:
     icon: str | None = None
     items: list["Item"] = field(default_factory=list)
 
+    @property
+    def is_submenu(self):
+        return self.command is None
+
 
 @dataclass
 class Settings:
@@ -30,6 +37,8 @@ class Settings:
     center_mode: bool
     active_label_in_center: bool
     close_submenu_on_center_click: bool
+    hover_mode: bool
+    turbo_mode: bool
     preserve_proportions: bool
     auto_alignment: bool
     configurator_show_icons: bool
@@ -87,6 +96,8 @@ def load_config():
         source.get("close-submenu-on-center-click", False),
         "close-submenu-on-center-click",
     )
+    hover_mode = boolean(source.get("hover-mode", False), "hover-mode")
+    turbo_mode = boolean(source.get("turbo-mode", False), "turbo-mode")
     preserve_proportions = boolean(
         source.get("preserve-proportions", False),
         "preserve-proportions",
@@ -108,6 +119,8 @@ def load_config():
         center_mode,
         active_label_in_center,
         close_submenu_on_center_click,
+        hover_mode,
+        turbo_mode,
         preserve_proportions,
         auto_alignment,
         configurator_show_icons,
@@ -128,10 +141,10 @@ def parse_item(source, location, root=False):
         raise SystemExit(f"waypie: {location}.command must be text")
     if not isinstance(children, list):
         raise SystemExit(f"waypie: {location}.items must be an array")
-    if command and children:
+    if command is not None and children:
         raise SystemExit(f"waypie: {location} cannot have command and items")
-    if not root and not command and not children:
-        raise SystemExit(f"waypie: {location} needs command or items")
+    if command is not None and not command:
+        raise SystemExit(f"waypie: {location}.command cannot be empty")
 
     angle = optional_number(source.get("angle"), f"{location}.angle")
     if angle is not None:
@@ -206,7 +219,7 @@ def resolve_angles(item, root=False):
         if child.angle is None:
             child.angle = round(index * step) % 360
         resolve_angles(child)
-    if not root and item.items:
+    if not root and item.is_submenu:
         item.return_angle = (item.angle + 180) % 360
 
 
@@ -299,6 +312,33 @@ def content_opacity(style):
     return style["opacity"] if value is None else value
 
 
+def scaled_icon_size(style, circle_size):
+    icon_size = style.get("icon-size")
+    if icon_size is None:
+        return circle_size * 0.55
+    base_circle_size = style.get("width")
+    if base_circle_size is None or base_circle_size <= 0:
+        return icon_size
+    return icon_size * circle_size / base_circle_size
+
+
+def colored_svg_source(path, color):
+    red, green, blue, _alpha = color
+    replacement = (
+        f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
+    )
+    source = path.read_text(encoding="utf-8")
+    if "currentColor" in source:
+        return source.replace("currentColor", replacement)
+    if not re.search(
+        r"""(?:fill|stroke)\s*=\s*["'](?:#|rgb|hsl)""",
+        source,
+        re.IGNORECASE,
+    ):
+        return source.replace("<svg", f'<svg fill="{replacement}"', 1)
+    return source
+
+
 def icon_themes():
     try:
         return sorted(
@@ -308,6 +348,47 @@ def icon_themes():
         )
     except OSError:
         return []
+
+
+def load_icon_theme_history():
+    try:
+        source = json.loads(ICON_HISTORY_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(source, dict):
+        return {}
+    return {
+        theme: selected_at
+        for theme, selected_at in source.items()
+        if isinstance(theme, str)
+        and not isinstance(selected_at, bool)
+        and isinstance(selected_at, (int, float))
+    }
+
+
+def sort_icon_themes(themes, history):
+    return sorted(
+        themes,
+        key=lambda theme: (-history.get(theme, 0), theme.casefold(), theme),
+    )
+
+
+def remember_icon_theme(theme):
+    history = load_icon_theme_history()
+    selected_at = time.time_ns()
+    if history:
+        selected_at = max(selected_at, max(history.values()) + 1)
+    history[theme] = selected_at
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = ICON_HISTORY_PATH.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(history, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(ICON_HISTORY_PATH)
+    except OSError:
+        pass
 
 
 def theme_icons(theme):
@@ -425,17 +506,6 @@ def animation_number(rules, name, default):
     return positive_number_string(value.strip(), name)
 
 
-def ease_out_spring(progress):
-    if progress <= 0:
-        return 0.0
-    if progress >= 1:
-        return 1.0
-    stiffness = 9
-    value = 1 - (1 + stiffness * progress) * math.exp(-stiffness * progress)
-    end = 1 - (1 + stiffness) * math.exp(-stiffness)
-    return value / end
-
-
 def resolve_radius(value, size):
     value = value.strip().lower()
     if value.endswith("%"):
@@ -461,10 +531,154 @@ def rounded_rectangle(context, x, y, width, height, radius):
     context.close_path()
 
 
-def truncate(text, limit):
-    if len(text) <= limit:
-        return text
-    return text[: max(1, limit - 1)] + "…"
+def fit_text_prefix(text, width, measure):
+    end = 0
+    for index in range(1, len(text) + 1):
+        if measure(text[:index]) > width:
+            break
+        end = index
+    return end
+
+
+def middle_ellipsis(text, width, measure):
+    suffix = text[-3:]
+    marker = f"...{suffix}"
+    if measure(marker) > width:
+        return "." * fit_text_prefix("...", width, measure)
+    prefix_limit = fit_text_prefix(text, width - measure(marker), measure)
+    prefix = text[:prefix_limit].rstrip()
+    while prefix and measure(f"{prefix}{marker}") > width:
+        prefix = prefix[:-1].rstrip()
+    return f"{prefix}{marker}"
+
+
+def wrap_text_to_widths(text, widths, measure):
+    remaining = " ".join(text.split())
+    lines = []
+    if not remaining:
+        return lines, True
+    for index, width in enumerate(widths):
+        if width <= 0:
+            lines.append("")
+            continue
+        if measure(remaining) <= width:
+            lines.append(remaining)
+            return lines, True
+        if index == len(widths) - 1:
+            lines.append(middle_ellipsis(remaining, width, measure))
+            return lines, False
+        prefix_length = fit_text_prefix(remaining, width, measure)
+        if prefix_length == 0:
+            lines.append("")
+            continue
+        prefix = remaining[:prefix_length]
+        if prefix_length < len(remaining) and remaining[prefix_length].isspace():
+            lines.append(prefix.rstrip())
+            remaining = remaining[prefix_length:].lstrip()
+            continue
+        word_break = prefix.rfind(" ")
+        if word_break > 0:
+            lines.append(prefix[:word_break].rstrip())
+            remaining = remaining[word_break + 1 :].lstrip()
+        else:
+            lines.append(prefix.rstrip())
+            remaining = remaining[prefix_length:].lstrip()
+    return lines, not remaining
+
+
+def fixed_text_geometry(style, circle_size, base_scale):
+    layout_size = style["width"] * base_scale
+    if layout_size <= 0:
+        return 0.0, 0.0
+    return layout_size, min(1.0, max(0.0, circle_size / layout_size))
+
+
+def draw_wrapped_text(
+    context,
+    x,
+    y,
+    layout_size,
+    text,
+    style,
+    opacity=1.0,
+    visual_scale=1.0,
+):
+    if not text or layout_size <= 0 or visual_scale <= 0:
+        return
+    context.save()
+    context.translate(x, y)
+    context.scale(visual_scale, visual_scale)
+    context.select_font_face(
+        style["font-family"],
+        0,
+        0,
+    )
+    context.set_font_size(style["font-size"])
+    font_ascent, font_descent, font_height, _max_x, _max_y = context.font_extents()
+    line_height = max(font_height, style["font-size"])
+    border_width = style["border-width"]
+    inner_half = max(0.0, layout_size / 2 - border_width)
+    if inner_half <= 0 or line_height <= 0:
+        context.restore()
+        return
+    corner_radius = max(
+        0.0,
+        resolve_radius(style["border-radius"], layout_size) - border_width,
+    )
+    max_lines = max(1, int(2 * inner_half // line_height))
+    measure = lambda value: context.text_extents(value).width
+
+    def widths_for(line_count):
+        widths = []
+        glyph_half_height = min(
+            line_height / 2,
+            (font_ascent + font_descent) / 2,
+        )
+        for index in range(line_count):
+            offset = (index - (line_count - 1) / 2) * line_height
+            vertical_extent = abs(offset) + glyph_half_height
+            if vertical_extent > inner_half:
+                widths.append(0.0)
+                continue
+            straight_half_height = inner_half - corner_radius
+            if corner_radius == 0 or vertical_extent <= straight_half_height:
+                horizontal_half = inner_half
+            else:
+                corner_y = vertical_extent - straight_half_height
+                horizontal_half = (
+                    inner_half
+                    - corner_radius
+                    + math.sqrt(max(0.0, corner_radius**2 - corner_y**2))
+                )
+            widths.append(2 * horizontal_half)
+        return widths
+
+    lines = []
+    for line_count in range(1, max_lines + 1):
+        candidate, complete = wrap_text_to_widths(
+            text,
+            widths_for(line_count),
+            measure,
+        )
+        lines = candidate
+        if complete:
+            break
+    if not lines:
+        context.restore()
+        return
+
+    set_source_color(context, style["color"], content_opacity(style) * opacity)
+    for index, line in enumerate(lines):
+        if not line:
+            continue
+        extents = context.text_extents(line)
+        offset = (index - (len(lines) - 1) / 2) * line_height
+        context.move_to(
+            -extents.width / 2 - extents.x_bearing,
+            offset - extents.y_bearing - extents.height / 2,
+        )
+        context.show_text(line)
+    context.restore()
 
 
 def direction_angle(x, y):
