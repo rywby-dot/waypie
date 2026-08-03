@@ -2,8 +2,8 @@
 <img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/ef3cfe74-ffd4-4c3b-8ef9-32a8a9b49c32" />
 <img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/b534ad4f-f8cf-4159-a3a7-6fad2846d2d6" />
 
-**Waypie is a Kando-like radial menu for Wayland. It uses an overlay
-layer-shell surface, supports arbitrarily nested submenus, animated navigation,
+**Waypie is a Kando-like radial menu for Wayland and X11. It uses an overlay
+surface, supports arbitrarily nested submenus, animated navigation,
 icons, angular selection, and a graphical menu configurator.**
 
 > [!WARNING]
@@ -13,8 +13,9 @@ It is recommended to read about Kando first https://kando.menu/intro/
 
 ## Installation
 
-Waypie requires Python 3.11 or newer, GTK 4, PyGObject, Cairo/Pycairo, and
-gtk4-layer-shell.
+Waypie requires Python 3.11 or newer, GTK 4, PyGObject, and Cairo/Pycairo.
+Wayland sessions additionally require gtk4-layer-shell. X11 sessions require
+libX11 and a compositing manager for a transparent overlay.
 
 Clone the repository and install it into an isolated environment with pipx:
 
@@ -115,6 +116,12 @@ Example compositor binding:
 [keybindings]
 "mod+d" = "spawn waypie --show"
 ```
+
+On X11, use the equivalent command in the window manager's key binding. Waypie
+automatically selects Wayland when `WAYLAND_DISPLAY` is present and X11 when
+only `DISPLAY` is present. `GDK_BACKEND=x11` or `GDK_BACKEND=wayland` can force
+a backend. The menu, configurator, Hover Mode, and Turbo Mode are supported by
+both backends.
 
 ## How selection and navigation work
 
@@ -319,4 +326,3 @@ Contributor checks and packaging instructions are documented in
 
 
 https://github.com/user-attachments/assets/fddcc941-bbec-448d-bd93-f253433c687d
-

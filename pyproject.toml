@@ -1,7 +1,7 @@
 [project]
 name = "waypie"
 version = "1.1.1"
-description = "Kando-like pie menu for Wayland"
+description = "Kando-like pie menu for Wayland and X11"
 requires-python = ">=3.11"
 dependencies = [
     "pycairo>=1.27",
@@ -19,6 +19,7 @@ only-include = [
     "waypie_config.py",
     "waypie_common.py",
     "waypie_hover.py",
+    "waypie_backend.py",
 ]
 
 [project.scripts]

@@ -4,10 +4,12 @@ import os
 import socket
 import sys
 
+from waypie_backend import display_backend, safe_display_name
+
 
 def fast_runtime_path(kind):
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
-    display = os.environ.get("WAYLAND_DISPLAY", "wayland")
+    display = safe_display_name()
     return os.path.join(runtime_dir, "waypie", f"{kind}-{display}")
 
 
@@ -46,7 +48,9 @@ kill_running_waypie()
 
 
 def send_fast_control_command():
-    if sys.argv[1:] != ["--show"] or not os.environ.get("WAYLAND_DISPLAY"):
+    if sys.argv[1:] != ["--show"] or not (
+        os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
+    ):
         return
 
     socket_path = fast_runtime_path("control") + ".sock"
@@ -97,6 +101,7 @@ from waypie_common import (
 from waypie_hover import HoverGestureDetector
 
 LAYER_SHELL_LIBRARY = "libgtk4-layer-shell.so"
+DISPLAY_BACKEND = display_backend()
 CONFIGURATOR_MODE = os.environ.get("WAYPIE_CONFIGURATOR") == "1" or sys.argv[1:] == [
     "--configure"
 ]
@@ -111,7 +116,7 @@ def process_pid_path():
 
 
 def preload_layer_shell():
-    if CONFIGURATOR_MODE:
+    if CONFIGURATOR_MODE or DISPLAY_BACKEND != "wayland":
         return
     if LAYER_SHELL_LIBRARY in os.environ.get("LD_PRELOAD", ""):
         return
@@ -146,9 +151,16 @@ if CONFIGURATOR_MODE:
     from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
     Gtk4LayerShell = None
-else:
+elif DISPLAY_BACKEND == "wayland":
     gi.require_version("Gtk4LayerShell", "1.0")
     from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Gtk4LayerShell
+else:
+    gi.require_version("GdkX11", "4.0")
+    from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk
+
+    Gtk4LayerShell = None
+
+from waypie_backend import WaylandBackend, X11Backend
 
 Gtk.Window.set_auto_startup_notification(False)
 
@@ -224,6 +236,7 @@ class Waypie(Gtk.Application):
         self.turbo_modifiers = 0
         self.turbo_release_source = None
         self.close_failsafe_source = None
+        self.backend = None
 
     def do_activate(self):
         if self.window is not None:
@@ -231,19 +244,11 @@ class Waypie(Gtk.Application):
 
         self.window = Gtk.ApplicationWindow(application=self)
         self.window.set_decorated(False)
-
-        Gtk4LayerShell.init_for_window(self.window)
-        Gtk4LayerShell.set_namespace(self.window, "waypie")
-        Gtk4LayerShell.set_layer(self.window, Gtk4LayerShell.Layer.OVERLAY)
-        Gtk4LayerShell.set_exclusive_zone(self.window, -1)
-        Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
-        for edge in (
-            Gtk4LayerShell.Edge.TOP,
-            Gtk4LayerShell.Edge.RIGHT,
-            Gtk4LayerShell.Edge.BOTTOM,
-            Gtk4LayerShell.Edge.LEFT,
-        ):
-            Gtk4LayerShell.set_anchor(self.window, edge, True)
+        if DISPLAY_BACKEND == "wayland":
+            self.backend = WaylandBackend(Gtk4LayerShell)
+        else:
+            self.backend = X11Backend(GLib, GdkX11)
+        self.backend.configure(self.window)
 
         self.canvas = Gtk.DrawingArea()
         self.canvas.set_cursor_from_name("default")
@@ -366,18 +371,15 @@ class Waypie(Gtk.Application):
         self.reset_hover_detector()
         self.window.set_cursor_from_name("default")
         self.canvas.set_cursor_from_name("default")
-        Gtk4LayerShell.set_keyboard_mode(
-            self.window, Gtk4LayerShell.KeyboardMode.EXCLUSIVE
-        )
         self.set_click_through(False)
-        self.window.set_visible(True)
+        self.backend.show(self.window)
         self.set_click_through(False)
         self.canvas.queue_draw()
 
     def hide_menu(self):
         if self.closing or not self.window.get_visible():
             return
-        Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
+        self.backend.release_input(self.window)
         self.set_click_through(True)
         self.hits = []
         self.hovered_hit = None
@@ -454,7 +456,7 @@ class Waypie(Gtk.Application):
         if self.animation_tick is not None and not from_animation:
             self.canvas.remove_tick_callback(self.animation_tick)
         self.animation_tick = None
-        Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
+        self.backend.release_input(self.window)
         self.set_click_through(True)
         self.window.set_visible(False)
 
@@ -1759,6 +1761,9 @@ class Waypie(Gtk.Application):
                 process_pid_path().unlink()
         except (FileNotFoundError, OSError, ValueError):
             pass
+        if self.backend is not None:
+            self.backend.shutdown()
+            self.backend = None
         Gtk.Application.do_shutdown(self)
 
 
