@@ -1,0 +1,28 @@
+[package]
+name = "waypie"
+version = "1.1.1"
+edition = "2024"
+license = "MIT"
+description = "A lightweight Kando-like radial menu for Wayland"
+
+[dependencies]
+anyhow = "1"
+calloop = "0.13"
+cosmic-text = "0.17"
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+libc = "0.2"
+resvg = "0.45"
+serde = { version = "1", features = ["derive"] }
+smithay-client-toolkit = "0.19.2"
+tiny-skia = "0.11.4"
+toml = "0.9"
+wayland-client = "0.31.11"
+xkbcommon = { version = "0.9", features = ["wayland"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = true
