@@ -1,1 +1,22 @@
-__pycache__
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Python build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Rust build output
+waypie-rust/target/
+
+# Common editor and operating-system files
+*.swp
+*.swo
+*~
+.DS_Store
