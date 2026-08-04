@@ -176,6 +176,11 @@ temporary mouse button:
 3. Point toward the final action.
 4. Release the last modifier to execute it.
 
+Enable `hold-to-turbo` to get the same behavior from the left mouse button.
+A press and release without movement remains a normal click. Any pointer
+movement while the button is held starts Turbo Mode, even if the pointer stays
+inside the current hitbox; releasing selects the current item.
+
 Waypie reads the modifiers delivered through the Wayland keyboard protocol, so
 the shortcut does not need to be duplicated in `config`. Support depends on the
 compositor forwarding modifier press and release events to the layer.
@@ -206,8 +211,9 @@ The main configurator options are:
 - **Show icons** changes only the configurator preview.
 - **Center layout** performs one equal-spacing operation independently of the
   two alignment checkboxes.
-- **Center mode**, **Hover mode**, **Turbo mode**, **Travel item animation**, and
-  **Close on click** control the corresponding runtime behavior.
+- **Center mode**, **Hover mode**, **Turbo mode**, **Hold to turbo**,
+  **Travel item animation**, and **Close on click** control the corresponding
+  runtime behavior.
 
 Shortcuts work while focus is outside text-entry fields:
 
@@ -242,7 +248,8 @@ The GUI manages these settings:
 - `center-hitbox-size` — diameter of the central hitbox; `0` disables it;
 - `minimum-edge-distance` — minimum safe distance for a newly opened menu
   center from an output edge;
-- `center-mode`, `hover-mode`, `turbo-mode`, `travel-item-animation`, and
+- `center-mode`, `hover-mode`, `turbo-mode`, `hold-to-turbo`,
+  `travel-item-animation`, and
   `close-submenu-on-center-click` — runtime switches;
 - `preserve-proportions`, `auto-alignment`, and `configurator-show-icons` —
   configurator-only persistent preferences.

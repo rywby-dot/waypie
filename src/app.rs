@@ -132,6 +132,22 @@ mod animation_profile_tests {
         assert_eq!(profile.close_duration, Duration::from_millis(180));
         assert_eq!(profile.action_scale, 1.4);
     }
+
+    #[test]
+    fn pointer_hold_becomes_turbo_after_any_movement() {
+        let origin = Point { x: 50.0, y: 80.0 };
+        let mut hold = PointerHold::new(origin);
+
+        assert!(!hold.update(origin));
+        assert!(!hold.moved);
+        assert!(hold.update(Point {
+            x: origin.x + 0.01,
+            y: origin.y,
+        }));
+        assert!(hold.moved);
+        assert!(!hold.update(origin));
+        assert!(hold.moved);
+    }
 }
 
 struct OutputLayer {
@@ -156,6 +172,31 @@ struct RenderBuffers {
     width: u32,
     height: u32,
     next: usize,
+}
+
+#[derive(Clone, Copy)]
+struct PointerHold {
+    origin: Point,
+    moved: bool,
+    turbo_active: bool,
+    activated_on_press: bool,
+}
+
+impl PointerHold {
+    fn new(origin: Point) -> Self {
+        Self {
+            origin,
+            moved: false,
+            turbo_active: false,
+            activated_on_press: false,
+        }
+    }
+
+    fn update(&mut self, position: Point) -> bool {
+        let started_moving = !self.moved && position != self.origin;
+        self.moved |= position != self.origin;
+        started_moving
+    }
 }
 
 impl RenderBuffers {
@@ -203,7 +244,8 @@ pub struct App {
     pending_activation: Option<String>,
     hover_detector: HoverDetector,
     pointer_position: Option<Point>,
-    turbo_active: bool,
+    keyboard_turbo_active: bool,
+    pointer_hold: Option<PointerHold>,
     animator: Animator,
     closing_until: Option<Instant>,
 }
@@ -252,7 +294,8 @@ impl App {
             pending_activation: None,
             hover_detector: HoverDetector::default(),
             pointer_position: None,
-            turbo_active: false,
+            keyboard_turbo_active: false,
+            pointer_hold: None,
             animator: Animator::default(),
             closing_until: None,
         }
@@ -324,7 +367,8 @@ impl App {
         self.hover_detector.reset(None);
         self.pending_activation = activation_token;
         self.pointer_position = None;
-        self.turbo_active = false;
+        self.keyboard_turbo_active = false;
+        self.pointer_hold = None;
         self.animator.clear();
         self.closing_until = None;
         self.active_layer = None;
@@ -350,6 +394,7 @@ impl App {
         if self.exit || self.closing_until.is_some() {
             return;
         }
+        self.pointer_hold = None;
         self.visible = false;
         for index in 0..self.layers.len() {
             let surface = &self.layers[index].surface;
@@ -403,7 +448,16 @@ impl App {
     pub fn hover_enabled(&self) -> bool {
         self.config
             .as_ref()
-            .is_some_and(|config| config.hover_mode || self.turbo_active)
+            .is_some_and(|config| config.hover_mode || self.turbo_gesture_active())
+    }
+
+    fn pointer_turbo_active(&self) -> bool {
+        self.pointer_hold
+            .is_some_and(|hold| hold.moved || hold.turbo_active)
+    }
+
+    fn turbo_gesture_active(&self) -> bool {
+        self.keyboard_turbo_active || self.pointer_turbo_active()
     }
 
     pub fn needs_tick(&self) -> bool {
@@ -488,7 +542,7 @@ impl App {
         };
         let path = self.state.path();
         let travel_enabled =
-            config.travel_item_animation && (config.hover_mode || self.turbo_active);
+            config.travel_item_animation && (config.hover_mode || self.turbo_gesture_active());
         let centers = self.state.centers();
         let mut targets = vec![];
         for (depth, center) in centers.iter().copied().enumerate() {
@@ -641,7 +695,7 @@ impl App {
         let changed = self
             .state
             .update_pointer(position, config, self.center_hitbox());
-        let selection = (config.hover_mode || self.turbo_active)
+        let selection = (config.hover_mode || self.turbo_gesture_active())
             .then(|| self.hover_detector.on_motion(position, Instant::now()))
             .flatten();
         let following = matches!(self.state.active(), Some(Target::Item(_)));
@@ -650,12 +704,81 @@ impl App {
             self.draw();
         }
         if let Some(selection) = selection {
-            self.activate_at(selection, true, self.turbo_active);
+            self.activate_at(selection, true, self.turbo_gesture_active());
         }
     }
 
     fn activate(&mut self, position: Point) {
         self.activate_at(position, false, false);
+    }
+
+    fn press_left(&mut self, position: Point) {
+        if !self
+            .config
+            .as_ref()
+            .is_some_and(|config| config.hold_to_turbo)
+        {
+            self.activate(position);
+            return;
+        }
+
+        let Some(index) = self.active_layer else {
+            return;
+        };
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
+        self.state
+            .update_pointer(position, config, self.center_hitbox());
+        let pressed_item = match self.state.active() {
+            Some(Target::Item(item_index)) => Some((
+                item_index,
+                self.state.current(config).items[item_index].is_submenu(),
+            )),
+            _ => None,
+        };
+
+        let mut hold = PointerHold::new(position);
+        hold.turbo_active = pressed_item.is_some();
+        self.pointer_hold = Some(hold);
+
+        if let Some((item_index, true)) = pressed_item {
+            if let Some(hold) = self.pointer_hold.as_mut() {
+                hold.activated_on_press = true;
+            }
+            self.open_submenu(item_index, position, index);
+        } else if pressed_item.is_some() {
+            self.hover_detector
+                .reset(self.state.centers().last().copied());
+            self.sync_visual(false);
+            self.draw();
+        }
+    }
+
+    fn update_pointer_hold(&mut self, position: Point) {
+        let Some(hold) = self.pointer_hold.as_mut() else {
+            return;
+        };
+        if hold.update(position) {
+            self.hover_detector.reset(Some(hold.origin));
+        }
+    }
+
+    fn release_left(&mut self, position: Point) {
+        let Some(hold) = self.pointer_hold.take() else {
+            return;
+        };
+        if hold.activated_on_press && !hold.moved {
+            self.hover_detector
+                .reset(self.state.centers().last().copied());
+        } else if hold.moved || hold.turbo_active {
+            self.hover_detector.reset(None);
+            self.sync_visual(false);
+            self.draw();
+            self.activate_at(position, true, false);
+        } else {
+            self.activate(position);
+        }
     }
 
     fn complete_navigation(&mut self) {
@@ -729,7 +852,7 @@ impl App {
         if self.hover_enabled()
             && let Some(position) = self.hover_detector.on_timeout(Instant::now())
         {
-            self.activate_at(position, true, self.turbo_active);
+            self.activate_at(position, true, self.turbo_gesture_active());
         }
         if self.animator.tick() || self.renderer.is_animating() {
             self.draw();
@@ -1033,11 +1156,16 @@ impl PointerHandler for App {
                 continue;
             }
             match event.kind {
-                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                    self.update_pointer(position)
+                PointerEventKind::Enter { .. } => self.update_pointer(position),
+                PointerEventKind::Motion { .. } => {
+                    self.update_pointer_hold(position);
+                    self.update_pointer(position);
                 }
                 PointerEventKind::Press { button, .. } if button == LEFT_BUTTON => {
-                    self.activate(position)
+                    self.press_left(position)
+                }
+                PointerEventKind::Release { button, .. } if button == LEFT_BUTTON => {
+                    self.release_left(position)
                 }
                 PointerEventKind::Press { button, .. } if button == RIGHT_BUTTON => self.hide(),
                 _ => {}
@@ -1097,16 +1225,16 @@ impl KeyboardHandler for App {
         modifiers: Modifiers,
         _: u32,
     ) {
-        let was_active = self.turbo_active;
+        let was_active = self.keyboard_turbo_active;
         let held = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.logo;
-        self.turbo_active = self
+        self.keyboard_turbo_active = self
             .config
             .as_ref()
             .is_some_and(|config| config.turbo_mode && held);
-        if !was_active && self.turbo_active {
+        if !was_active && self.keyboard_turbo_active {
             self.hover_detector
                 .reset(self.state.centers().last().copied());
-        } else if was_active && !self.turbo_active {
+        } else if was_active && !self.keyboard_turbo_active && !self.pointer_turbo_active() {
             self.hover_detector.reset(None);
             if let Some(position) = self.pointer_position {
                 self.activate_at(position, true, false);

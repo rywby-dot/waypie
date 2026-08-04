@@ -76,6 +76,7 @@ class Configurator(Gtk.Application):
         self.close_submenu_on_center_click_check = None
         self.hover_mode_check = None
         self.turbo_mode_check = None
+        self.hold_to_turbo_check = None
         self.travel_item_animation_check = None
         self.setting_spins = {}
         self.selected_path = ()
@@ -286,6 +287,13 @@ class Configurator(Gtk.Application):
         )
         self.turbo_mode_check.connect("toggled", self.on_turbo_mode_changed)
         properties.append(self.turbo_mode_check)
+        self.hold_to_turbo_check = Gtk.CheckButton(label="Hold to turbo")
+        self.hold_to_turbo_check.set_active(self.settings.hold_to_turbo)
+        self.hold_to_turbo_check.set_tooltip_text(
+            "Hold the left mouse button and move to enter Turbo mode."
+        )
+        self.hold_to_turbo_check.connect("toggled", self.on_hold_to_turbo_changed)
+        properties.append(self.hold_to_turbo_check)
         self.travel_item_animation_check = Gtk.CheckButton(
             label="Travel item animation"
         )
@@ -573,6 +581,7 @@ class Configurator(Gtk.Application):
                 ),
                 (self.hover_mode_check, self.settings.hover_mode),
                 (self.turbo_mode_check, self.settings.turbo_mode),
+                (self.hold_to_turbo_check, self.settings.hold_to_turbo),
                 (
                     self.travel_item_animation_check,
                     self.settings.travel_item_animation,
@@ -1566,6 +1575,13 @@ class Configurator(Gtk.Application):
         self.settings.turbo_mode = self.turbo_mode_check.get_active()
         self.set_status("Unsaved changes")
 
+    def on_hold_to_turbo_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
+        self.settings.hold_to_turbo = self.hold_to_turbo_check.get_active()
+        self.set_status("Unsaved changes")
+
     def on_travel_item_animation_changed(self, _check):
         if self.restoring_undo:
             return
@@ -1908,6 +1924,7 @@ def serialize_config(settings):
     )
     lines.append(f"hover-mode = {str(settings.hover_mode).lower()}")
     lines.append(f"turbo-mode = {str(settings.turbo_mode).lower()}")
+    lines.append(f"hold-to-turbo = {str(settings.hold_to_turbo).lower()}")
     lines.append(
         f"travel-item-animation = {str(settings.travel_item_animation).lower()}"
     )
