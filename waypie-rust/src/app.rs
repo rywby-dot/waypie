@@ -1,6 +1,6 @@
-use std::{env, fs, os::unix::net::UnixDatagram, path::PathBuf, process::Command};
+use std::{path::PathBuf, process::Command, time::Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{
     wp_viewport::{self, WpViewport},
     wp_viewporter::{self, WpViewporter},
@@ -41,6 +41,7 @@ use wayland_client::{
 use crate::{
     config::Config,
     geometry::Point,
+    hover::HoverDetector,
     model::{MenuState, Target},
     render::{Renderer, Scene},
     style::StyleSheet,
@@ -114,6 +115,9 @@ pub struct App {
     state: MenuState,
     config_dir: PathBuf,
     pending_activation: Option<String>,
+    hover_detector: HoverDetector,
+    pointer_position: Option<Point>,
+    turbo_active: bool,
 }
 
 impl App {
@@ -156,32 +160,15 @@ impl App {
             state: MenuState::default(),
             config_dir,
             pending_activation: None,
+            hover_detector: HoverDetector::default(),
+            pointer_position: None,
+            turbo_active: false,
         }
     }
 
     pub fn handle_control(&mut self, command: &[u8]) {
-        let (name, token) = if let Some(separator) = command.iter().position(|byte| *byte == 0) {
-            let (name, token) = command.split_at(separator);
-            (
-                name,
-                std::str::from_utf8(&token[1..]).ok().map(str::to_owned),
-            )
-        } else {
-            (command, None)
-        };
-        match name {
-            b"show" if self.visible => self.hide(),
-            b"show" => {
-                if let Err(error) = self.show(token) {
-                    eprintln!("waypie: {error:#}");
-                }
-            }
-            b"quit" => {
-                self.hide();
-                self.layers.clear();
-                self.exit = true;
-            }
-            b"ping" => {}
+        match command {
+            b"show" | b"quit" => self.hide(),
             _ => {}
         }
     }
@@ -234,7 +221,10 @@ impl App {
         self.config = Some(config);
         self.styles = Some(styles);
         self.state.reset();
+        self.hover_detector.reset(None);
         self.pending_activation = activation_token;
+        self.pointer_position = None;
+        self.turbo_active = false;
         self.active_layer = None;
         self.visible = true;
         for index in 0..self.layers.len() {
@@ -247,32 +237,28 @@ impl App {
     }
 
     pub fn hide(&mut self) {
-        if !self.visible && self.config.is_none() {
+        if self.exit {
             return;
         }
         self.visible = false;
-        self.active_layer = None;
-        self.state.reset();
-        self.config = None;
-        self.styles = None;
-        self.renderer = Renderer::new();
-        self.buffers = None;
-        self.redraw_pending = false;
-        self.pending_activation = None;
         for index in 0..self.layers.len() {
             let surface = &self.layers[index].surface;
             surface.set_keyboard_interactivity(KeyboardInteractivity::None);
             self.set_click_through(surface, true);
             surface.commit();
         }
-        for index in 0..self.layers.len() {
-            self.attach_transparent(index);
-        }
-        trim_allocator();
+        self.layers.clear();
+        self.exit = true;
     }
 
     pub fn visible(&self) -> bool {
         self.visible
+    }
+
+    pub fn hover_enabled(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_some_and(|config| config.hover_mode || self.turbo_active)
     }
 
     fn set_click_through(&self, surface: &LayerSurface, enabled: bool) {
@@ -324,6 +310,7 @@ impl App {
         );
         let hitbox = self.center_hitbox();
         self.state.update_pointer(pointer, config, hitbox);
+        self.hover_detector.reset(Some(center));
         self.draw();
     }
 
@@ -341,6 +328,7 @@ impl App {
     }
 
     fn update_pointer(&mut self, position: Point) {
+        self.pointer_position = Some(position);
         let (Some(config), Some(index)) = (self.config.as_ref(), self.active_layer) else {
             return;
         };
@@ -360,22 +348,39 @@ impl App {
                 self.layers[index].height,
             );
         }
-        if self
+        let changed = self
             .state
-            .update_pointer(position, config, self.center_hitbox())
-        {
+            .update_pointer(position, config, self.center_hitbox());
+        let selection = (config.hover_mode || self.turbo_active)
+            .then(|| self.hover_detector.on_motion(position, Instant::now()))
+            .flatten();
+        if changed {
             self.draw();
+        }
+        if let Some(selection) = selection {
+            self.activate_at(selection, true, self.turbo_active);
         }
     }
 
     fn activate(&mut self, position: Point) {
+        self.activate_at(position, false, false);
+    }
+
+    fn activate_at(&mut self, position: Point, hover: bool, submenu_only: bool) {
         let Some(index) = self.active_layer else {
             return;
         };
-        self.update_pointer(position);
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
+        self.state
+            .update_pointer(position, config, self.center_hitbox());
         let Some(target) = self.state.active() else {
             return;
         };
+        if hover && target == Target::Center {
+            return;
+        }
         match target {
             Target::Center => {
                 let config = self.config.as_ref().unwrap();
@@ -388,6 +393,8 @@ impl App {
                         self.layers[index].width,
                         self.layers[index].height,
                     );
+                    self.hover_detector
+                        .reset(self.state.centers().last().copied());
                     self.draw();
                 } else {
                     self.hide();
@@ -402,6 +409,8 @@ impl App {
                     self.layers[index].width,
                     self.layers[index].height,
                 );
+                self.hover_detector
+                    .reset(self.state.centers().last().copied());
                 self.draw();
             }
             Target::Item(item_index) => {
@@ -416,12 +425,22 @@ impl App {
                         self.layers[index].width,
                         self.layers[index].height,
                     );
+                    self.hover_detector
+                        .reset(self.state.centers().last().copied());
                     self.draw();
-                } else if let Some(command) = item.command {
+                } else if !submenu_only && let Some(command) = item.command {
                     launch(&command);
                     self.hide();
                 }
             }
+        }
+    }
+
+    pub fn tick_hover(&mut self) {
+        if self.hover_enabled()
+            && let Some(position) = self.hover_detector.on_timeout(Instant::now())
+        {
+            self.activate_at(position, true, self.turbo_active);
         }
     }
 
@@ -551,19 +570,6 @@ fn copy_pixmap_to_argb(pixmap: &Pixmap, canvas: &mut [u8]) {
 fn launch(command: &str) {
     let _ = Command::new("sh").arg("-c").arg(command).spawn();
 }
-
-#[cfg(target_env = "gnu")]
-fn trim_allocator() {
-    // SAFETY: malloc_trim is a process-wide glibc allocator operation with no
-    // pointer arguments. Calling it after all per-menu objects were dropped is
-    // safe; concurrent allocations are synchronized internally by glibc.
-    unsafe {
-        libc::malloc_trim(0);
-    }
-}
-
-#[cfg(not(target_env = "gnu"))]
-fn trim_allocator() {}
 
 impl CompositorHandler for App {
     fn scale_factor_changed(
@@ -788,9 +794,24 @@ impl KeyboardHandler for App {
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
         _: u32,
-        _: Modifiers,
+        modifiers: Modifiers,
         _: u32,
     ) {
+        let was_active = self.turbo_active;
+        let held = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.logo;
+        self.turbo_active = self
+            .config
+            .as_ref()
+            .is_some_and(|config| config.turbo_mode && held);
+        if !was_active && self.turbo_active {
+            self.hover_detector
+                .reset(self.state.centers().last().copied());
+        } else if was_active && !self.turbo_active {
+            self.hover_detector.reset(None);
+            if let Some(position) = self.pointer_position {
+                self.activate_at(position, true, false);
+            }
+        }
     }
 }
 
@@ -879,27 +900,4 @@ impl ProvidesRegistryState for App {
         &mut self.registry_state
     }
     registry_handlers![OutputState, SeatState];
-}
-
-pub fn runtime_paths() -> (PathBuf, PathBuf) {
-    let runtime = env::var_os("WAYPIE_RUNTIME_DIR")
-        .or_else(|| env::var_os("XDG_RUNTIME_DIR"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("waypie");
-    let display = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland".into());
-    (
-        runtime.join(format!("control-{display}.sock")),
-        runtime.join(format!("process-{display}.pid")),
-    )
-}
-
-pub fn bind_control_socket() -> Result<(UnixDatagram, PathBuf, PathBuf)> {
-    let (socket_path, pid_path) = runtime_paths();
-    fs::create_dir_all(socket_path.parent().unwrap())?;
-    let socket = UnixDatagram::bind(&socket_path)
-        .with_context(|| format!("cannot bind {}", socket_path.display()))?;
-    socket.set_nonblocking(true)?;
-    fs::write(&pid_path, format!("{}\n", std::process::id()))?;
-    Ok((socket, socket_path, pid_path))
 }

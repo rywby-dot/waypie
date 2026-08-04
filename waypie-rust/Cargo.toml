@@ -10,7 +10,6 @@ anyhow = "1"
 cosmic-text = "0.17"
 dirs = "6"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
-libc = "0.2"
 resvg = "0.45"
 serde = { version = "1", features = ["derive"] }
 smithay-client-toolkit = "0.19.2"

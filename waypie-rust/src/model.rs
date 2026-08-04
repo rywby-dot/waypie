@@ -181,6 +181,8 @@ mod tests {
             center_hitbox_size: Some(40.0),
             minimum_edge_distance: 0.0,
             center_mode: false,
+            hover_mode: false,
+            turbo_mode: false,
             close_submenu_on_center_click: false,
             menu: Item {
                 label: "Root".into(),
