@@ -16,35 +16,16 @@ use tiny_skia::{
 
 use crate::{
     config::{Config, Item, item_at_path},
-    geometry::{Point, angular_distance, direction_angle, radial_position},
+    geometry::{Point, radial_position},
+    model::{MenuState, Target},
     style::{CircleStyle, Color, StyleSheet},
 };
 
 pub struct Scene<'a> {
     pub config: &'a Config,
     pub styles: &'a StyleSheet,
-    pub path: &'a [usize],
-    pub centers: &'a [Point],
-    pub pointer: Option<Point>,
-    pub hovered: Option<Target>,
-    pub hover_origins: &'a HashMap<Target, f64>,
-    pub hover_progress: f64,
+    pub state: &'a MenuState,
     pub icon_root: &'a Path,
-    pub item_reveal: f64,
-    pub close_scale: f64,
-    pub close_opacity: f64,
-    pub action: Option<ActionFrame>,
-}
-
-#[derive(Clone, Copy)]
-pub struct ActionFrame {
-    pub index: usize,
-    pub start: Point,
-    pub target: Point,
-    pub position_progress: f64,
-    pub growth_progress: f64,
-    pub opacity: f64,
-    pub final_scale: f64,
 }
 
 struct IndicatorFrame<'a> {
@@ -52,15 +33,24 @@ struct IndicatorFrame<'a> {
     submenu_style: &'a CircleStyle,
     styles: &'a StyleSheet,
     active: bool,
-    reveal: f64,
-    opacity: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Target {
-    Center,
-    Parent(usize),
-    Item(usize),
+struct ItemFrame<'a> {
+    center: Point,
+    item: &'a Item,
+    style: &'a CircleStyle,
+    styles: &'a StyleSheet,
+    icon_root: &'a Path,
+    active: bool,
+    content: ItemContent<'a>,
+    indicators: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ItemContent<'a> {
+    Default,
+    Label(&'a str),
+    IconOrBlank,
 }
 
 pub struct Renderer {
@@ -91,117 +81,93 @@ impl Renderer {
     pub fn render(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
         let overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
         pixmap.fill(to_skia(overlay.background_color, overlay.opacity));
-        let current = item_at_path(&scene.config.menu, scene.path);
-        if scene.centers.is_empty() {
+        let path = scene.state.path();
+        let centers = scene.state.centers();
+        let current = scene.state.current(scene.config);
+        if centers.is_empty() {
             return;
         }
         self.draw_connectors(pixmap, scene);
 
-        for depth in 0..scene.path.len() {
-            let item = item_at_path(&scene.config.menu, &scene.path[..depth]);
-            let target = Target::Parent(depth);
-            let activity = activity(scene, target);
-            let active = activity > 0.0;
-            let style = animated_style(scene.styles, item, Role::History, activity);
+        for depth in 0..path.len() {
+            let item = item_at_path(&scene.config.menu, &path[..depth]);
+            let active = scene.state.active() == Some(Target::Parent(depth));
+            let style = item_style(scene.styles, item, Role::History, active);
             self.draw_item(
                 pixmap,
-                scene.centers[depth],
-                item,
-                &style,
-                scene.styles,
-                scene.icon_root,
-                active && !scene.config.active_label_in_center,
-                active && scene.config.active_label_in_center,
-                true,
-                scene.close_scale,
-                scene.close_opacity,
+                ItemFrame {
+                    center: centers[depth],
+                    item,
+                    style: &style,
+                    styles: scene.styles,
+                    icon_root: scene.icon_root,
+                    active,
+                    content: if active {
+                        ItemContent::IconOrBlank
+                    } else {
+                        ItemContent::Default
+                    },
+                    indicators: true,
+                },
             );
         }
 
-        let center = *scene.centers.last().unwrap();
-        let center_activity = activity(scene, Target::Center);
-        let center_active = center_activity > 0.0;
-        let center_style = animated_style(scene.styles, current, Role::Center, center_activity);
-        let center_override = if scene.config.active_label_in_center {
-            match scene.hovered {
-                Some(Target::Item(index)) => {
-                    current.items.get(index).map(|item| item.label.as_str())
-                }
-                Some(Target::Parent(_)) => Some(""),
-                _ => None,
-            }
-        } else {
-            None
+        let center = *centers.last().unwrap();
+        let center_active = scene.state.active() == Some(Target::Center);
+        let center_style = item_style(scene.styles, current, Role::Center, center_active);
+        let center_content = match scene.state.active() {
+            Some(Target::Item(index)) => current
+                .items
+                .get(index)
+                .map_or(ItemContent::Default, |item| ItemContent::Label(&item.label)),
+            Some(Target::Parent(_)) => ItemContent::IconOrBlank,
+            _ => ItemContent::Default,
         };
-        self.draw_item_with_label(
+        self.draw_item(
             pixmap,
-            center,
-            current,
-            &center_style,
-            scene.styles,
-            scene.icon_root,
-            center_active && !scene.config.active_label_in_center,
-            false,
-            center_override,
-            false,
-            scene.close_scale,
-            scene.close_opacity,
+            ItemFrame {
+                center,
+                item: current,
+                style: &center_style,
+                styles: scene.styles,
+                icon_root: scene.icon_root,
+                active: center_active,
+                content: center_content,
+                indicators: false,
+            },
         );
 
-        let pointer_angle = scene
-            .pointer
-            .filter(|_| matches!(scene.hovered, Some(Target::Item(_))))
-            .map(|pointer| {
-                direction_angle(Point {
-                    x: pointer.x - center.x,
-                    y: pointer.y - center.y,
-                })
-            });
         for (index, item) in current.items.iter().enumerate() {
-            let target = Target::Item(index);
-            let activity = activity(scene, target);
-            let active = activity > 0.0;
-            let style = animated_style(scene.styles, item, Role::Item, activity);
-            let active_style = item_style(scene.styles, item, Role::Item, true);
-            let factor = if activity > 0.0 {
-                activity
-            } else if let Some(pointer_angle) = pointer_angle {
-                let difference = angular_distance(pointer_angle, item.angle.unwrap_or(0.0));
-                active_style.follow_distance * (1.0 + difference.to_radians().cos()) / 2.0
-            } else {
-                0.0
-            };
-            let distance =
-                (scene.config.menu_radius + active_style.distance.unwrap_or(0.0) * factor).max(0.0);
+            let active = scene.state.active() == Some(Target::Item(index));
+            let style = item_style(scene.styles, item, Role::Item, active);
+            let distance = (scene.config.menu_radius
+                + if active {
+                    style.distance.unwrap_or(0.0)
+                } else {
+                    0.0
+                })
+            .max(0.0);
             let position = radial_position(center, item.angle.unwrap_or(0.0), distance);
-            let mut position = center.lerp(position, scene.item_reveal);
-            let mut geometry_scale = scene.item_reveal * scene.close_scale;
-            let mut opacity = scene.close_opacity;
-            if let Some(action) = scene.action.filter(|action| action.index == index) {
-                position = action.start.lerp(action.target, action.position_progress);
-                geometry_scale =
-                    scene.item_reveal * (1.0 + (action.final_scale - 1.0) * action.growth_progress);
-                opacity = action.opacity;
-            }
-            let hide_label = scene.config.active_label_in_center && active && item.icon.is_some();
             self.draw_item(
                 pixmap,
-                position,
-                item,
-                &style,
-                scene.styles,
-                scene.icon_root,
-                active && !scene.config.active_label_in_center,
-                hide_label,
-                true,
-                geometry_scale,
-                opacity,
+                ItemFrame {
+                    center: position,
+                    item,
+                    style: &style,
+                    styles: scene.styles,
+                    icon_root: scene.icon_root,
+                    active,
+                    content: ItemContent::Default,
+                    indicators: true,
+                },
             );
         }
     }
 
     fn draw_connectors(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
-        if scene.centers.len() < 2 {
+        let centers = scene.state.centers();
+        let path = scene.state.path();
+        if centers.len() < 2 {
             return;
         }
         let style = scene.styles.circle(&["connector"]).unwrap_or_default();
@@ -210,20 +176,18 @@ impl Renderer {
             return;
         }
         let mut paint = Paint::default();
-        paint.set_color(to_skia(style.color, style.opacity * scene.close_opacity));
+        paint.set_color(to_skia(style.color, style.opacity));
         let stroke = Stroke {
             width: width as f32,
             ..Stroke::default()
         };
-        for (depth, pair) in scene.centers.windows(2).enumerate() {
-            let start_item = item_at_path(&scene.config.menu, &scene.path[..depth]);
-            let end_item = item_at_path(&scene.config.menu, &scene.path[..depth + 1]);
+        for (depth, pair) in centers.windows(2).enumerate() {
+            let start_item = item_at_path(&scene.config.menu, &path[..depth]);
+            let end_item = item_at_path(&scene.config.menu, &path[..depth + 1]);
             let start_style = item_style(scene.styles, start_item, Role::History, false);
             let end_style = item_style(scene.styles, end_item, Role::Center, false);
-            let start_radius =
-                start_style.width.unwrap_or(0.0) * start_style.scale * scene.close_scale / 2.0;
-            let end_radius =
-                end_style.width.unwrap_or(0.0) * end_style.scale * scene.close_scale / 2.0;
+            let start_radius = start_style.width.unwrap_or(0.0) * start_style.scale / 2.0;
+            let end_radius = end_style.width.unwrap_or(0.0) * end_style.scale / 2.0;
             let delta = Point {
                 x: pair[1].x - pair[0].x,
                 y: pair[1].y - pair[0].y,
@@ -249,86 +213,53 @@ impl Renderer {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn draw_item(
-        &mut self,
-        pixmap: &mut Pixmap,
-        center: Point,
-        item: &Item,
-        style: &CircleStyle,
-        styles: &StyleSheet,
-        icon_root: &Path,
-        active: bool,
-        hide_label: bool,
-        indicators: bool,
-        geometry_scale: f64,
-        opacity: f64,
-    ) {
-        self.draw_item_with_label(
-            pixmap,
-            center,
-            item,
-            style,
-            styles,
-            icon_root,
-            active,
-            hide_label,
-            None,
-            indicators,
-            geometry_scale,
-            opacity,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn draw_item_with_label(
-        &mut self,
-        pixmap: &mut Pixmap,
-        center: Point,
-        item: &Item,
-        style: &CircleStyle,
-        styles: &StyleSheet,
-        icon_root: &Path,
-        active: bool,
-        hide_label: bool,
-        label_override: Option<&str>,
-        indicators: bool,
-        geometry_scale: f64,
-        opacity: f64,
-    ) {
-        let size = style.width.unwrap_or(0.0) * style.scale * geometry_scale;
+    fn draw_item(&mut self, pixmap: &mut Pixmap, frame: ItemFrame<'_>) {
+        let size = frame.style.width.unwrap_or(0.0) * frame.style.scale;
         if size <= 0.0 {
             return;
         }
-        if indicators && item.is_submenu() {
+        if frame.indicators && frame.item.is_submenu() {
             self.draw_indicators(
                 pixmap,
-                center,
+                frame.center,
                 size,
                 IndicatorFrame {
-                    item,
-                    submenu_style: style,
-                    styles,
-                    active,
-                    reveal: geometry_scale,
-                    opacity,
+                    item: frame.item,
+                    submenu_style: frame.style,
+                    styles: frame.styles,
+                    active: frame.active,
                 },
             );
         }
-        let mut faded_style = style.clone();
-        faded_style.opacity *= opacity;
-        faded_style.text_opacity = Some(style.content_opacity() * opacity);
-        draw_rounded_box(pixmap, center, size, &faded_style);
+        draw_rounded_box(pixmap, frame.center, size, frame.style);
 
-        let show_icon = item.icon.is_some() && label_override.is_none() && !active;
-        let icon_drawn =
-            show_icon && self.draw_icon(pixmap, center, size, item, &faded_style, icon_root);
-        if icon_drawn || hide_label {
+        let show_icon = frame.item.icon.is_some()
+            && matches!(
+                frame.content,
+                ItemContent::Default | ItemContent::IconOrBlank
+            );
+        let icon_drawn = show_icon
+            && self.draw_icon(
+                pixmap,
+                frame.center,
+                size,
+                frame.item,
+                frame.style,
+                frame.icon_root,
+            );
+        if icon_drawn {
             return;
         }
-        let label = label_override.unwrap_or(&item.label);
+        if matches!(frame.content, ItemContent::IconOrBlank) {
+            return;
+        }
+        let label = match frame.content {
+            ItemContent::Default => &frame.item.label,
+            ItemContent::Label(label) => label,
+            ItemContent::IconOrBlank => unreachable!(),
+        };
         if !label.is_empty() {
-            self.draw_text(pixmap, center, size, label, &faded_style);
+            self.draw_text(pixmap, frame.center, size, label, frame.style);
         }
     }
 
@@ -347,17 +278,14 @@ impl Renderer {
         let Ok(style) = frame.styles.circle(&selectors) else {
             return;
         };
-        let size = style.width.unwrap_or(0.0) * frame.reveal;
+        let size = style.width.unwrap_or(0.0);
         if size <= 0.0 || style.protrusion <= 0.0 {
             return;
         }
-        let protrusion = style.protrusion * frame.reveal;
+        let protrusion = style.protrusion;
         let radius = (circle_size / 2.0 - size / 2.0 + protrusion).max(0.0);
         let mut paint = Paint::default();
-        paint.set_color(to_skia(
-            style.color,
-            style.opacity * frame.opacity * frame.reveal,
-        ));
+        paint.set_color(to_skia(style.color, style.opacity));
         let clip = if style.cut_indicators {
             let rect = Rect::from_xywh(
                 (center.x - circle_size / 2.0) as f32,
@@ -540,22 +468,6 @@ fn item_style(styles: &StyleSheet, item: &Item, role: Role, active: bool) -> Cir
         }
     }
     styles.circle(&selectors).unwrap_or_default()
-}
-
-fn animated_style(styles: &StyleSheet, item: &Item, role: Role, activity: f64) -> CircleStyle {
-    let resting = item_style(styles, item, role, false);
-    if activity <= 0.0 {
-        return resting;
-    }
-    let mut active = item_style(styles, item, role, true);
-    active.scale = resting.scale + (active.scale - resting.scale) * activity;
-    active
-}
-
-fn activity(scene: &Scene<'_>, target: Target) -> f64 {
-    let origin = scene.hover_origins.get(&target).copied().unwrap_or(0.0);
-    let destination = f64::from(scene.hovered == Some(target));
-    origin + (destination - origin) * scene.hover_progress
 }
 
 fn draw_rounded_box(pixmap: &mut Pixmap, center: Point, size: f64, style: &CircleStyle) {

@@ -1,8 +1,6 @@
-use std::{collections::HashMap, fs, path::Path, time::Duration};
+use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result, bail};
-
-use crate::animation::Spring;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
@@ -94,19 +92,6 @@ pub enum Radius {
 }
 
 #[derive(Clone, Debug)]
-pub struct AnimationStyle {
-    pub hover_duration: Duration,
-    pub icon_duration: Duration,
-    pub menu_duration: Duration,
-    pub close_duration: Duration,
-    pub action_scale: f64,
-    pub hover_spring: Spring,
-    pub menu_move_spring: Spring,
-    pub item_create_spring: Spring,
-    pub action_spring: Spring,
-}
-
-#[derive(Clone, Debug)]
 pub struct StyleSheet {
     rules: HashMap<String, HashMap<String, String>>,
 }
@@ -161,46 +146,6 @@ impl StyleSheet {
 
     pub fn color_style(&self, selector: &str) -> Result<CircleStyle> {
         self.circle(&[selector])
-    }
-
-    pub fn animation(&self) -> Result<AnimationStyle> {
-        let rule = self.rules.get("animation");
-        let duration = |name: &str, fallback: Option<&str>| -> Result<Duration> {
-            let value = rule
-                .and_then(|rule| rule.get(name))
-                .or_else(|| fallback.and_then(|name| rule.and_then(|rule| rule.get(name))));
-            value.map_or(Ok(Duration::ZERO), |value| parse_duration(value, name))
-        };
-        let number = |name: &str, default: f64| -> Result<f64> {
-            rule.and_then(|rule| rule.get(name))
-                .map_or(Ok(default), |value| parse_positive(value, name))
-        };
-        let spring = |prefix: &str| -> Result<Spring> {
-            let damping_ratio = number(&format!("{prefix}-damping-ratio"), 1.0)?;
-            if !(0.1..=10.0).contains(&damping_ratio) {
-                bail!("{prefix}-damping-ratio must be between 0.1 and 10");
-            }
-            let epsilon = number(&format!("{prefix}-epsilon"), 0.0001)?;
-            if epsilon >= 1.0 {
-                bail!("{prefix}-epsilon must be less than 1");
-            }
-            Ok(Spring {
-                damping_ratio,
-                stiffness: number(&format!("{prefix}-stiffness"), 1000.0)?,
-                epsilon,
-            })
-        };
-        Ok(AnimationStyle {
-            hover_duration: duration("hover-duration", None)?,
-            icon_duration: duration("icon-duration", None)?,
-            menu_duration: duration("menu-duration", None)?,
-            close_duration: duration("close-duration", Some("menu-duration"))?,
-            action_scale: number("action-scale", 1.3)?,
-            hover_spring: spring("hover")?,
-            menu_move_spring: spring("menu-move")?,
-            item_create_spring: spring("item-create")?,
-            action_spring: spring("action")?,
-        })
     }
 
     pub fn raw(&self, selector: &str, property: &str) -> Option<&str> {
@@ -360,22 +305,6 @@ fn parse_positive(value: &str, name: &str) -> Result<f64> {
         bail!("{name} must be positive");
     }
     Ok(number)
-}
-
-fn parse_duration(value: &str, name: &str) -> Result<Duration> {
-    let value = value.trim().to_ascii_lowercase();
-    let (number, multiplier) = if let Some(value) = value.strip_suffix("ms") {
-        (value, 0.001)
-    } else if let Some(value) = value.strip_suffix('s') {
-        (value, 1.0)
-    } else {
-        bail!("invalid {name}: {value}");
-    };
-    let seconds: f64 = number.parse::<f64>()? * multiplier;
-    if !seconds.is_finite() || seconds < 0.0 {
-        bail!("invalid {name}: {value}");
-    }
-    Ok(Duration::from_secs_f64(seconds))
 }
 
 #[cfg(test)]
