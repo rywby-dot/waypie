@@ -316,6 +316,7 @@ impl App {
             spring,
         );
         total_duration = total_duration.max(self.animator.remaining_duration());
+        total_duration = total_duration.max(self.renderer.remaining_duration());
         if total_duration.is_zero() {
             self.finish_hide();
             return;
@@ -341,7 +342,10 @@ impl App {
     }
 
     pub fn needs_tick(&self) -> bool {
-        self.hover_enabled() || self.closing_until.is_some() || self.animator.is_animating()
+        self.hover_enabled()
+            || self.closing_until.is_some()
+            || self.animator.is_animating()
+            || self.renderer.is_animating()
     }
 
     fn set_click_through(&self, surface: &LayerSurface, enabled: bool) {
@@ -749,7 +753,7 @@ impl App {
         {
             self.activate_at(position, true, self.turbo_active);
         }
-        if self.animator.tick() {
+        if self.animator.tick() || self.renderer.is_animating() {
             self.draw();
         }
         if self
