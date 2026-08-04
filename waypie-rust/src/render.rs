@@ -15,6 +15,8 @@ use tiny_skia::{
     SpreadMode, Stroke, Transform,
 };
 
+const ICON_SOURCE_PADDING: u32 = 2;
+
 use crate::{
     config::{Config, Item, item_at_path},
     geometry::{Point, radial_position},
@@ -560,13 +562,16 @@ impl Renderer {
             self.icons.insert(key.clone(), icon);
         }
         let icon = &self.icons[&key];
-        let left = center.x - size / 2.0;
-        let top = center.y - size / 2.0;
-        let Some(rect) = Rect::from_xywh(left as f32, top as f32, size as f32, size as f32) else {
+        let padding = size * f64::from(ICON_SOURCE_PADDING) / f64::from(source_size);
+        let extent = size + padding * 2.0;
+        let left = center.x - extent / 2.0;
+        let top = center.y - extent / 2.0;
+        let Some(rect) = Rect::from_xywh(left as f32, top as f32, extent as f32, extent as f32)
+        else {
             return false;
         };
-        let scale_x = size as f32 / icon.width() as f32;
-        let scale_y = size as f32 / icon.height() as f32;
+        let scale_x = extent as f32 / icon.width() as f32;
+        let scale_y = extent as f32 / icon.height() as f32;
         let paint = Paint {
             shader: Pattern::new(
                 icon.as_ref(),
@@ -732,7 +737,8 @@ fn load_raster(path: &Path, size: u32) -> Option<Pixmap> {
         pixel[1] = (pixel[1] as u16 * alpha / 255) as u8;
         pixel[2] = (pixel[2] as u16 * alpha / 255) as u8;
     }
-    Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(size, size)?)
+    let source = Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(size, size)?)?;
+    padded_pixmap(&source)
 }
 
 fn load_svg(path: &Path, size: u32, color: [u8; 4]) -> Option<Pixmap> {
@@ -747,11 +753,26 @@ fn load_svg(path: &Path, size: u32, color: [u8; 4]) -> Option<Pixmap> {
         resvg::usvg::Tree::from_data(source.as_bytes(), &resvg::usvg::Options::default()).ok()?;
     let tree_size = tree.size();
     let scale = (size as f32 / tree_size.width()).min(size as f32 / tree_size.height());
-    let mut pixmap = Pixmap::new(size, size)?;
+    let extent = size.checked_add(ICON_SOURCE_PADDING * 2)?;
+    let mut pixmap = Pixmap::new(extent, extent)?;
     let transform = Transform::from_scale(scale, scale).post_translate(
-        (size as f32 - tree_size.width() * scale) / 2.0,
-        (size as f32 - tree_size.height() * scale) / 2.0,
+        ICON_SOURCE_PADDING as f32 + (size as f32 - tree_size.width() * scale) / 2.0,
+        ICON_SOURCE_PADDING as f32 + (size as f32 - tree_size.height() * scale) / 2.0,
     );
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     Some(pixmap)
+}
+
+fn padded_pixmap(source: &Pixmap) -> Option<Pixmap> {
+    let extent = source.width().checked_add(ICON_SOURCE_PADDING * 2)?;
+    let mut padded = Pixmap::new(extent, extent)?;
+    padded.draw_pixmap(
+        ICON_SOURCE_PADDING as i32,
+        ICON_SOURCE_PADDING as i32,
+        source.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+    Some(padded)
 }
