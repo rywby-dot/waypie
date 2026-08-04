@@ -3,6 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    time::{Duration, Instant},
 };
 
 use cosmic_text::{
@@ -35,6 +36,7 @@ pub struct Scene<'a> {
 }
 
 struct IndicatorFrame<'a> {
+    key: &'a NodeKey,
     item: &'a Item,
     submenu_style: &'a CircleStyle,
     styles: &'a StyleSheet,
@@ -46,6 +48,7 @@ struct IndicatorFrame<'a> {
 }
 
 struct ItemFrame<'a> {
+    key: &'a NodeKey,
     center: Point,
     item: &'a Item,
     style: &'a CircleStyle,
@@ -73,6 +76,46 @@ fn connector_is_active(role: NodeRole, active: bool) -> bool {
     role == NodeRole::History && active
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ColorAnimationKey {
+    Overlay,
+    NodeBackground(NodeKey),
+    NodeBorder(NodeKey),
+    NodeContent(NodeKey),
+    Connector(NodeKey),
+    Indicator(NodeKey),
+}
+
+#[derive(Clone, Copy)]
+struct ColorAnimation {
+    current: Color,
+    from: Color,
+    target: Color,
+    started: Instant,
+    duration: Duration,
+}
+
+impl ColorAnimation {
+    fn sample(&mut self, now: Instant) -> Color {
+        let progress = if self.duration.is_zero() {
+            1.0
+        } else {
+            ((now - self.started).as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0)
+        };
+        let progress = progress * progress * (3.0 - 2.0 * progress);
+        self.current = if progress >= 1.0 {
+            self.target
+        } else {
+            lerp_color(self.from, self.target, progress as f32)
+        };
+        self.current
+    }
+
+    fn finished(&self, now: Instant) -> bool {
+        self.duration.is_zero() || now - self.started >= self.duration
+    }
+}
+
 pub struct Renderer {
     fonts: FontSystem,
     glyphs: SwashCache,
@@ -80,6 +123,8 @@ pub struct Renderer {
     font_specs: HashMap<String, FontSpec>,
     configured_families: Vec<String>,
     resolved_families: HashMap<String, String>,
+    color_animations: HashMap<ColorAnimationKey, ColorAnimation>,
+    color_duration: Duration,
 }
 
 #[derive(Clone)]
@@ -103,6 +148,8 @@ impl Renderer {
             font_specs: HashMap::new(),
             configured_families: vec![],
             resolved_families: HashMap::new(),
+            color_animations: HashMap::new(),
+            color_duration: Duration::ZERO,
         }
     }
 
@@ -140,8 +187,53 @@ impl Renderer {
         self.resolved_families = resolved;
     }
 
+    pub fn is_animating(&self) -> bool {
+        let now = Instant::now();
+        self.color_animations
+            .values()
+            .any(|animation| !animation.finished(now) || animation.current != animation.target)
+    }
+
+    pub fn remaining_duration(&self) -> Duration {
+        let now = Instant::now();
+        self.color_animations
+            .values()
+            .map(|animation| {
+                animation
+                    .duration
+                    .saturating_sub(now.duration_since(animation.started))
+            })
+            .max()
+            .unwrap_or(Duration::ZERO)
+    }
+
+    fn animated_color(&mut self, key: ColorAnimationKey, target: Color) -> Color {
+        let now = Instant::now();
+        let animation = self.color_animations.entry(key).or_insert(ColorAnimation {
+            current: target,
+            from: target,
+            target,
+            started: now,
+            duration: Duration::ZERO,
+        });
+        animation.sample(now);
+        if animation.target != target {
+            animation.from = animation.current;
+            animation.target = target;
+            animation.started = now;
+            animation.duration = self.color_duration;
+        }
+        animation.sample(now)
+    }
+
     pub fn render(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
-        let overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
+        self.color_duration = scene
+            .styles
+            .animation()
+            .map_or(Duration::ZERO, |animation| animation.color_duration);
+        let mut overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
+        overlay.background_color =
+            self.animated_color(ColorAnimationKey::Overlay, overlay.background_color);
         pixmap.fill(to_skia(overlay.background_color, overlay.opacity));
         let path = scene.state.path();
         let current = scene.state.current(scene.config);
@@ -162,7 +254,19 @@ impl Renderer {
                 NodeRole::Center => Role::Center,
                 NodeRole::Item => Role::Item,
             };
-            let style = item_style(scene.styles, item, role, node.active);
+            let mut style = item_style(scene.styles, item, role, node.active);
+            style.background_color = self.animated_color(
+                ColorAnimationKey::NodeBackground(node.key.clone()),
+                style.background_color,
+            );
+            style.border_color = self.animated_color(
+                ColorAnimationKey::NodeBorder(node.key.clone()),
+                style.border_color,
+            );
+            style.color = self.animated_color(
+                ColorAnimationKey::NodeContent(node.key.clone()),
+                style.color,
+            );
             let content = match node.role {
                 NodeRole::Center if node.item_path == path => match scene.state.active() {
                     Some(Target::Item(index)) => current
@@ -178,6 +282,7 @@ impl Renderer {
             self.draw_item(
                 pixmap,
                 ItemFrame {
+                    key: &node.key,
                     center: node.position,
                     item,
                     style: &style,
@@ -236,7 +341,11 @@ impl Renderer {
             } else {
                 ["connector"].as_slice()
             };
-            let style = scene.styles.circle(selectors).unwrap_or_default();
+            let mut style = scene.styles.circle(selectors).unwrap_or_default();
+            style.color = self.animated_color(
+                ColorAnimationKey::Connector(end_node.key.clone()),
+                style.color,
+            );
             let width = style.width.unwrap_or(0.0);
             if width <= 0.0 {
                 continue;
@@ -294,7 +403,11 @@ impl Renderer {
             if connector_factor <= f64::EPSILON {
                 continue;
             }
-            let style = scene.styles.circle(&["connector"]).unwrap_or_default();
+            let mut style = scene.styles.circle(&["connector"]).unwrap_or_default();
+            style.color = self.animated_color(
+                ColorAnimationKey::Connector(action.key.clone()),
+                style.color,
+            );
             let width = style.width.unwrap_or(0.0);
             if width <= 0.0 {
                 continue;
@@ -348,6 +461,7 @@ impl Renderer {
                 frame.center,
                 size,
                 IndicatorFrame {
+                    key: frame.key,
                     item: frame.item,
                     submenu_style: &visual_style,
                     styles: frame.styles,
@@ -422,9 +536,11 @@ impl Renderer {
                 selectors.push("submenu-indicator.return.active");
             }
         }
-        let Ok(style) = frame.styles.circle(&selectors) else {
+        let Ok(mut style) = frame.styles.circle(&selectors) else {
             return;
         };
+        style.color =
+            self.animated_color(ColorAnimationKey::Indicator(frame.key.clone()), style.color);
         let child_angles = frame
             .item
             .items
@@ -766,6 +882,15 @@ fn to_skia(color: Color, opacity: f64) -> SkColor {
     .unwrap_or(SkColor::TRANSPARENT)
 }
 
+fn lerp_color(from: Color, target: Color, progress: f32) -> Color {
+    Color {
+        red: from.red + (target.red - from.red) * progress,
+        green: from.green + (target.green - from.green) * progress,
+        blue: from.blue + (target.blue - from.blue) * progress,
+        alpha: from.alpha + (target.alpha - from.alpha) * progress,
+    }
+}
+
 fn empty_font_system() -> FontSystem {
     FontSystem::new_with_locale_and_db(current_locale(), cosmic_text::fontdb::Database::new())
 }
@@ -864,5 +989,60 @@ mod tests {
         assert!(!connector_is_active(NodeRole::History, false));
         assert!(!connector_is_active(NodeRole::Center, true));
         assert!(!connector_is_active(NodeRole::Item, true));
+    }
+
+    #[test]
+    fn color_animation_interpolates_rgba_channels() {
+        let from = Color {
+            red: 0.0,
+            green: 0.2,
+            blue: 0.4,
+            alpha: 0.6,
+        };
+        let target = Color {
+            red: 1.0,
+            green: 0.8,
+            blue: 0.6,
+            alpha: 0.4,
+        };
+        let color = lerp_color(from, target, 0.5);
+        assert!((color.red - 0.5).abs() < 0.001);
+        assert!((color.green - 0.5).abs() < 0.001);
+        assert!((color.blue - 0.5).abs() < 0.001);
+        assert!((color.alpha - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn interrupted_color_change_continues_from_the_visible_color() {
+        let mut renderer = Renderer::new();
+        renderer.color_duration = Duration::from_secs(1);
+        let key = ColorAnimationKey::Overlay;
+        let red = Color {
+            red: 1.0,
+            green: 0.0,
+            blue: 0.0,
+            alpha: 1.0,
+        };
+        let green = Color {
+            red: 0.0,
+            green: 1.0,
+            blue: 0.0,
+            alpha: 1.0,
+        };
+        let blue = Color {
+            red: 0.0,
+            green: 0.0,
+            blue: 1.0,
+            alpha: 1.0,
+        };
+        renderer.animated_color(key.clone(), red);
+        renderer.animated_color(key.clone(), green);
+        renderer.color_animations.get_mut(&key).unwrap().started =
+            Instant::now() - Duration::from_millis(500);
+        let visible = renderer.animated_color(key.clone(), green);
+        let retargeted = renderer.animated_color(key, blue);
+        assert!((retargeted.red - visible.red).abs() < 0.001);
+        assert!((retargeted.green - visible.green).abs() < 0.001);
+        assert!((retargeted.blue - visible.blue).abs() < 0.001);
     }
 }

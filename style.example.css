@@ -29,6 +29,7 @@ animation {
   submenu-indicator-stiffness: 1000;
   submenu-indicator-epsilon: 0.0001;
 
+  color-duration: 180ms;
   icon-duration: 180ms;
   connector-duration: 180ms;
   item-delete-duration: 220ms;

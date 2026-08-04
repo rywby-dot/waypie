@@ -94,6 +94,7 @@ class Configurator(Gtk.Application):
         self.click_origin = (0.0, 0.0)
         self.updating_fields = False
         self.preview_animations = {}
+        self.preview_color_animations = {}
         self.preview_departures = []
         self.preview_tick = None
         self.preview_hover_target = None
@@ -564,6 +565,7 @@ class Configurator(Gtk.Application):
         finally:
             self.restoring_undo = False
         self.preview_animations.clear()
+        self.preview_color_animations.clear()
         self.preview_departures.clear()
         self.rebuild_tree()
         self.sync_fields()
@@ -721,6 +723,49 @@ class Configurator(Gtk.Application):
                 self.on_preview_animation_frame
             )
 
+    def animated_preview_color(self, key, target):
+        now = GLib.get_monotonic_time() / 1_000_000
+        duration = animation_duration(self.styles, "color-duration")
+        animation = self.preview_color_animations.get(key)
+        if animation is None:
+            animation = {
+                "current": target,
+                "start": target,
+                "target": target,
+                "started": now,
+                "duration": 0,
+            }
+            self.preview_color_animations[key] = animation
+        self.update_preview_color(animation, now)
+        if animation["target"] != target:
+            animation.update(
+                start=animation["current"],
+                target=target,
+                started=now,
+                duration=duration,
+            )
+        self.update_preview_color(animation, now)
+        if animation["current"] != animation["target"]:
+            self.ensure_preview_tick()
+        return animation["current"]
+
+    @staticmethod
+    def update_preview_color(animation, now):
+        duration = animation["duration"]
+        progress = (
+            1.0 if duration == 0 else min(1.0, (now - animation["started"]) / duration)
+        )
+        if progress >= 1:
+            animation["current"] = animation["target"]
+            return
+        progress = progress * progress * (3 - 2 * progress)
+        animation["current"] = tuple(
+            start + (target - start) * progress
+            for start, target in zip(
+                animation["start"], animation["target"], strict=True
+            )
+        )
+
     def capture_preview_departures(self, items):
         if self.canvas is None:
             return
@@ -793,6 +838,10 @@ class Configurator(Gtk.Application):
         active = False
         for animation in self.preview_animations.values():
             self.update_preview_animation(animation, now)
+            if animation["current"] != animation["target"]:
+                active = True
+        for animation in self.preview_color_animations.values():
+            self.update_preview_color(animation, now)
             if animation["current"] != animation["target"]:
                 active = True
         if any(
@@ -1029,6 +1078,12 @@ class Configurator(Gtk.Application):
         submenu_indicators_return=False,
         submenu_indicator_skip_index=None,
     ):
+        style = dict(style)
+        for property_name in ("background-color", "border-color", "color"):
+            style[property_name] = self.animated_preview_color(
+                ("item-color", id(item), property_name),
+                style[property_name],
+            )
         if submenu_indicators:
             self.draw_preview_submenu_indicators(
                 context,
@@ -1146,6 +1201,10 @@ class Configurator(Gtk.Application):
             if active:
                 selectors.append("submenu-indicator.return.active")
         style = computed_style(self.styles, selectors)
+        style["color"] = self.animated_preview_color(
+            ("indicator-color", id(item)),
+            style["color"],
+        )
 
         def draw_angles(indicator_style, angles):
             indicator_size = indicator_style["width"]
