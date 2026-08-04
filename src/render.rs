@@ -86,6 +86,15 @@ enum ColorAnimationKey {
     Indicator(NodeKey),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum OpacityAnimationKey {
+    Overlay,
+    Node(NodeKey),
+    NodeContent(NodeKey),
+    Connector(NodeKey),
+    Indicator(NodeKey),
+}
+
 #[derive(Clone, Copy)]
 struct ColorAnimation {
     current: Color,
@@ -116,6 +125,36 @@ impl ColorAnimation {
     }
 }
 
+#[derive(Clone, Copy)]
+struct OpacityAnimation {
+    current: f64,
+    from: f64,
+    target: f64,
+    started: Instant,
+    duration: Duration,
+}
+
+impl OpacityAnimation {
+    fn sample(&mut self, now: Instant) -> f64 {
+        let progress = if self.duration.is_zero() {
+            1.0
+        } else {
+            ((now - self.started).as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0)
+        };
+        let progress = progress * progress * (3.0 - 2.0 * progress);
+        self.current = if progress >= 1.0 {
+            self.target
+        } else {
+            self.from + (self.target - self.from) * progress
+        };
+        self.current
+    }
+
+    fn finished(&self, now: Instant) -> bool {
+        self.duration.is_zero() || now - self.started >= self.duration
+    }
+}
+
 pub struct Renderer {
     fonts: FontSystem,
     glyphs: SwashCache,
@@ -125,6 +164,8 @@ pub struct Renderer {
     resolved_families: HashMap<String, String>,
     color_animations: HashMap<ColorAnimationKey, ColorAnimation>,
     color_duration: Duration,
+    opacity_animations: HashMap<OpacityAnimationKey, OpacityAnimation>,
+    opacity_duration: Duration,
 }
 
 #[derive(Clone)]
@@ -150,6 +191,8 @@ impl Renderer {
             resolved_families: HashMap::new(),
             color_animations: HashMap::new(),
             color_duration: Duration::ZERO,
+            opacity_animations: HashMap::new(),
+            opacity_duration: Duration::ZERO,
         }
     }
 
@@ -192,11 +235,16 @@ impl Renderer {
         self.color_animations
             .values()
             .any(|animation| !animation.finished(now) || animation.current != animation.target)
+            || self
+                .opacity_animations
+                .values()
+                .any(|animation| !animation.finished(now) || animation.current != animation.target)
     }
 
     pub fn remaining_duration(&self) -> Duration {
         let now = Instant::now();
-        self.color_animations
+        let color = self
+            .color_animations
             .values()
             .map(|animation| {
                 animation
@@ -204,7 +252,18 @@ impl Renderer {
                     .saturating_sub(now.duration_since(animation.started))
             })
             .max()
-            .unwrap_or(Duration::ZERO)
+            .unwrap_or(Duration::ZERO);
+        let opacity = self
+            .opacity_animations
+            .values()
+            .map(|animation| {
+                animation
+                    .duration
+                    .saturating_sub(now.duration_since(animation.started))
+            })
+            .max()
+            .unwrap_or(Duration::ZERO);
+        color.max(opacity)
     }
 
     fn animated_color(&mut self, key: ColorAnimationKey, target: Color) -> Color {
@@ -226,14 +285,41 @@ impl Renderer {
         animation.sample(now)
     }
 
+    fn animated_opacity(&mut self, key: OpacityAnimationKey, target: f64) -> f64 {
+        let now = Instant::now();
+        let animation = self
+            .opacity_animations
+            .entry(key)
+            .or_insert(OpacityAnimation {
+                current: target,
+                from: target,
+                target,
+                started: now,
+                duration: Duration::ZERO,
+            });
+        animation.sample(now);
+        if animation.target != target {
+            animation.from = animation.current;
+            animation.target = target;
+            animation.started = now;
+            animation.duration = self.opacity_duration;
+        }
+        animation.sample(now)
+    }
+
     pub fn render(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
         self.color_duration = scene
             .styles
             .animation()
             .map_or(Duration::ZERO, |animation| animation.color_duration);
+        self.opacity_duration = scene
+            .styles
+            .animation()
+            .map_or(Duration::ZERO, |animation| animation.opacity_duration);
         let mut overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
         overlay.background_color =
             self.animated_color(ColorAnimationKey::Overlay, overlay.background_color);
+        overlay.opacity = self.animated_opacity(OpacityAnimationKey::Overlay, overlay.opacity);
         pixmap.fill(to_skia(overlay.background_color, overlay.opacity));
         let path = scene.state.path();
         let current = scene.state.current(scene.config);
@@ -255,6 +341,13 @@ impl Renderer {
                 NodeRole::Item => Role::Item,
             };
             let mut style = item_style(scene.styles, item, role, node.active);
+            let content_opacity = style.content_opacity();
+            style.opacity =
+                self.animated_opacity(OpacityAnimationKey::Node(node.key.clone()), style.opacity);
+            style.text_opacity = Some(self.animated_opacity(
+                OpacityAnimationKey::NodeContent(node.key.clone()),
+                content_opacity,
+            ));
             style.background_color = self.animated_color(
                 ColorAnimationKey::NodeBackground(node.key.clone()),
                 style.background_color,
@@ -346,6 +439,10 @@ impl Renderer {
                 ColorAnimationKey::Connector(end_node.key.clone()),
                 style.color,
             );
+            style.opacity = self.animated_opacity(
+                OpacityAnimationKey::Connector(end_node.key.clone()),
+                style.opacity,
+            );
             let width = style.width.unwrap_or(0.0);
             if width <= 0.0 {
                 continue;
@@ -407,6 +504,10 @@ impl Renderer {
             style.color = self.animated_color(
                 ColorAnimationKey::Connector(action.key.clone()),
                 style.color,
+            );
+            style.opacity = self.animated_opacity(
+                OpacityAnimationKey::Connector(action.key.clone()),
+                style.opacity,
             );
             let width = style.width.unwrap_or(0.0);
             if width <= 0.0 {
@@ -541,6 +642,10 @@ impl Renderer {
         };
         style.color =
             self.animated_color(ColorAnimationKey::Indicator(frame.key.clone()), style.color);
+        style.opacity = self.animated_opacity(
+            OpacityAnimationKey::Indicator(frame.key.clone()),
+            style.opacity,
+        );
         let child_angles = frame
             .item
             .items
@@ -1044,5 +1149,19 @@ mod tests {
         assert!((retargeted.red - visible.red).abs() < 0.001);
         assert!((retargeted.green - visible.green).abs() < 0.001);
         assert!((retargeted.blue - visible.blue).abs() < 0.001);
+    }
+
+    #[test]
+    fn interrupted_opacity_change_continues_from_the_visible_value() {
+        let mut renderer = Renderer::new();
+        renderer.opacity_duration = Duration::from_secs(1);
+        let key = OpacityAnimationKey::Overlay;
+        renderer.animated_opacity(key.clone(), 1.0);
+        renderer.animated_opacity(key.clone(), 0.0);
+        renderer.opacity_animations.get_mut(&key).unwrap().started =
+            Instant::now() - Duration::from_millis(500);
+        let visible = renderer.animated_opacity(key.clone(), 0.0);
+        let retargeted = renderer.animated_opacity(key, 0.8);
+        assert!((retargeted - visible).abs() < 0.001);
     }
 }
