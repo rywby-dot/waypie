@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fs,
+    path::Path,
+};
 
 use anyhow::{Context, Result, bail};
 
@@ -146,6 +150,20 @@ impl StyleSheet {
 
     pub fn color_style(&self, selector: &str) -> Result<CircleStyle> {
         self.circle(&[selector])
+    }
+
+    pub fn font_families(&self) -> Vec<String> {
+        let mut families = BTreeSet::new();
+        families.extend(
+            self.rules
+                .values()
+                .filter_map(|properties| properties.get("font-family"))
+                .map(|family| family.trim_matches(['\'', '"']).to_string()),
+        );
+        if families.is_empty() {
+            families.insert(CircleStyle::default().font_family);
+        }
+        families.into_iter().collect()
     }
 
     pub fn raw(&self, selector: &str, property: &str) -> Option<&str> {
@@ -337,6 +355,18 @@ mod tests {
                 .unwrap()
                 .alpha,
             0.25
+        );
+    }
+
+    #[test]
+    fn only_declared_font_families_are_requested() {
+        let sheet = StyleSheet::parse(
+            "circle { font-family: Inter; } circle.history { font-family: Serif; }",
+        );
+        assert_eq!(sheet.font_families(), vec!["Inter", "Serif"]);
+        assert_eq!(
+            StyleSheet::parse("circle { width: 70px; }").font_families(),
+            vec!["Sans"]
         );
     }
 }

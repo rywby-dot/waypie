@@ -205,6 +205,7 @@ impl App {
         }
         let config = Config::load(&self.config_dir.join("config"))?;
         let styles = StyleSheet::load(&self.config_dir.join("style.css"))?;
+        self.renderer.configure_fonts(styles.font_families());
         self.prepare_layers();
         if self.layers.is_empty() {
             bail!("no Wayland outputs are available");

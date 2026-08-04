@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use cosmic_text::{
@@ -57,6 +58,15 @@ pub struct Renderer {
     fonts: FontSystem,
     glyphs: SwashCache,
     icons: HashMap<(PathBuf, u32, [u8; 4]), Pixmap>,
+    font_specs: HashMap<String, FontSpec>,
+    configured_families: Vec<String>,
+    resolved_families: HashMap<String, String>,
+}
+
+#[derive(Clone)]
+struct FontSpec {
+    family: String,
+    file: PathBuf,
 }
 
 impl Default for Renderer {
@@ -68,10 +78,47 @@ impl Default for Renderer {
 impl Renderer {
     pub fn new() -> Self {
         Self {
-            fonts: FontSystem::new(),
+            fonts: empty_font_system(),
             glyphs: SwashCache::new(),
             icons: HashMap::new(),
+            font_specs: HashMap::new(),
+            configured_families: vec![],
+            resolved_families: HashMap::new(),
         }
+    }
+
+    pub fn configure_fonts(&mut self, mut families: Vec<String>) {
+        families.sort_unstable();
+        families.dedup();
+        if families == self.configured_families {
+            return;
+        }
+        let mut database = cosmic_text::fontdb::Database::new();
+        let mut resolved = HashMap::new();
+        for requested in &families {
+            let spec = self
+                .font_specs
+                .get(requested)
+                .cloned()
+                .or_else(|| resolve_font(requested));
+            let Some(spec) = spec else {
+                eprintln!("waypie: font-family {requested:?} was not found by fc-match");
+                continue;
+            };
+            if database.load_font_file(&spec.file).is_ok() {
+                resolved.insert(requested.clone(), spec.family.clone());
+                self.font_specs.insert(requested.clone(), spec);
+            }
+        }
+        if let Some(family) = resolved.get("Sans").or_else(|| resolved.values().next()) {
+            database.set_sans_serif_family(family);
+            database.set_serif_family(family);
+            database.set_monospace_family(family);
+        }
+        self.fonts = FontSystem::new_with_locale_and_db(current_locale(), database);
+        self.glyphs = SwashCache::new();
+        self.configured_families = families;
+        self.resolved_families = resolved;
     }
 
     pub fn clear_icons(&mut self) {
@@ -334,12 +381,17 @@ impl Renderer {
         let available = ((size - style.border_width * 2.0) * style.text_fill).max(1.0) as f32;
         let font_size = style.font_size as f32;
         let line_height = (style.font_size * 1.15) as f32;
+        let family = self
+            .resolved_families
+            .get(&style.font_family)
+            .cloned()
+            .unwrap_or_else(|| style.font_family.clone());
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(font_size, line_height));
         {
             let mut buffer = buffer.borrow_with(&mut self.fonts);
             buffer.set_size(Some(available), Some(available));
             buffer.set_wrap(Wrap::WordOrGlyph);
-            let attrs = Attrs::new().family(Family::Name(&style.font_family));
+            let attrs = Attrs::new().family(Family::Name(&family));
             buffer.set_text(text, &attrs, Shaping::Advanced, Some(Align::Center));
             buffer.shape_until_scroll(true);
         }
@@ -539,6 +591,42 @@ fn to_skia(color: Color, opacity: f64) -> SkColor {
         (color.alpha as f64 * opacity).clamp(0.0, 1.0) as f32,
     )
     .unwrap_or(SkColor::TRANSPARENT)
+}
+
+fn empty_font_system() -> FontSystem {
+    FontSystem::new_with_locale_and_db(current_locale(), cosmic_text::fontdb::Database::new())
+}
+
+fn current_locale() -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .map(|locale| {
+            locale
+                .split(['.', '@'])
+                .next()
+                .unwrap_or("en-US")
+                .replace('_', "-")
+        })
+        .unwrap_or_else(|| "en-US".into())
+}
+
+fn resolve_font(requested: &str) -> Option<FontSpec> {
+    let output = Command::new("fc-match")
+        .args(["-f", "%{family[0]}\n%{file}\n", requested])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let output = String::from_utf8(output.stdout).ok()?;
+    let mut lines = output.lines();
+    let family = lines.next()?.trim();
+    let file = PathBuf::from(lines.next()?.trim());
+    (!family.is_empty() && file.is_file()).then(|| FontSpec {
+        family: family.to_string(),
+        file,
+    })
 }
 
 fn load_raster(path: &Path, size: u32) -> Option<Pixmap> {
