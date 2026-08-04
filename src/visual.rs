@@ -475,7 +475,27 @@ impl Animator {
                 && (target_scale - 1.0).abs() < f64::EPSILON
                 && (node.hover_target_offset != Point::default()
                     || (node.hover_target_scale - 1.0).abs() >= f64::EPSILON);
-            if hover_finished || active_changed || returning_to_rest {
+            let target_changed = target_offset != node.hover_target_offset
+                || (target_scale - node.hover_target_scale).abs() >= f64::EPSILON;
+            let mut restart_hover = hover_finished || active_changed || returning_to_rest;
+            if !restart_hover && target_changed {
+                let progress = ((now - node.hover_started).as_secs_f64()
+                    / node.hover_duration.as_secs_f64())
+                .clamp(0.0, 1.0);
+                let movement = node.hover_spring.sample(progress);
+                if movement < 0.95 {
+                    let remaining = 1.0 - movement;
+                    node.hover_from_offset = Point {
+                        x: (node.hover_offset.x - target_offset.x * movement) / remaining,
+                        y: (node.hover_offset.y - target_offset.y * movement) / remaining,
+                    };
+                    node.hover_from_scale =
+                        (node.hover_scale - target_scale * movement) / remaining;
+                } else {
+                    restart_hover = true;
+                }
+            }
+            if restart_hover {
                 node.hover_from_offset = node.hover_offset;
                 node.hover_from_scale = node.hover_scale;
                 node.hover_started = now;
@@ -752,5 +772,40 @@ mod tests {
         assert!(node.hover_from_offset.distance(displaced) < 0.01);
         assert_eq!(node.hover_target_offset, Point::default());
         assert_eq!(node.hover_duration, duration);
+    }
+
+    #[test]
+    fn changing_follow_direction_preserves_the_current_position() {
+        let key = NodeKey::Action(vec![], 0);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![target(
+                key.clone(),
+                NodeRole::Item,
+                Point { x: 100.0, y: 100.0 },
+            )],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+        let duration = Duration::from_secs(1);
+        let mut first = target(key.clone(), NodeRole::Item, Point { x: 130.0, y: 100.0 });
+        first.rest_position = Point { x: 100.0, y: 100.0 };
+        animator.hover(vec![first], duration, Duration::ZERO, Spring::default());
+        animator.nodes.get_mut(&key).unwrap().hover_started =
+            Instant::now() - Duration::from_millis(250);
+        animator.nodes.get_mut(&key).unwrap().sample(Instant::now());
+        let before = animator.nodes[&key].position;
+
+        let mut second = target(key.clone(), NodeRole::Item, Point { x: 100.0, y: 80.0 });
+        second.rest_position = Point { x: 100.0, y: 100.0 };
+        animator.hover(vec![second], duration, Duration::ZERO, Spring::default());
+
+        assert!(animator.nodes[&key].position.distance(before) < 0.01);
+        assert_eq!(
+            animator.nodes[&key].hover_target_offset,
+            Point { x: 0.0, y: -20.0 }
+        );
     }
 }
