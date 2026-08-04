@@ -1,6 +1,10 @@
 use std::{env, fs, os::unix::net::UnixDatagram, path::PathBuf, process::Command};
 
 use anyhow::{Context, Result, bail};
+use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{
+    wp_viewport::{self, WpViewport},
+    wp_viewporter::{self, WpViewporter},
+};
 use smithay_client_toolkit::{
     activation::{ActivationHandler, ActivationState, RequestData},
     compositor::{CompositorHandler, CompositorState},
@@ -30,7 +34,7 @@ use smithay_client_toolkit::{
 };
 use tiny_skia::Pixmap;
 use wayland_client::{
-    Connection, QueueHandle,
+    Connection, Dispatch, QueueHandle,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_surface},
 };
 
@@ -50,6 +54,15 @@ struct OutputLayer {
     surface: LayerSurface,
     width: u32,
     height: u32,
+    viewport: Option<WpViewport>,
+}
+
+impl Drop for OutputLayer {
+    fn drop(&mut self) {
+        if let Some(viewport) = self.viewport.take() {
+            viewport.destroy();
+        }
+    }
 }
 
 struct RenderBuffers {
@@ -84,6 +97,7 @@ pub struct App {
     pub layer_shell: LayerShell,
     pub shm: Shm,
     pub activation: Option<ActivationState>,
+    pub viewporter: Option<WpViewporter>,
     pub qh: QueueHandle<Self>,
     pub exit: bool,
 
@@ -112,6 +126,7 @@ impl App {
         layer_shell: LayerShell,
         shm: Shm,
         activation: Option<ActivationState>,
+        viewporter: Option<WpViewporter>,
         qh: QueueHandle<Self>,
     ) -> Self {
         let config_dir = dirs::config_dir()
@@ -125,6 +140,7 @@ impl App {
             layer_shell,
             shm,
             activation,
+            viewporter,
             qh,
             exit: false,
             layers: vec![],
@@ -190,11 +206,16 @@ impl App {
             surface.set_keyboard_interactivity(KeyboardInteractivity::None);
             self.set_click_through(&surface, true);
             surface.commit();
+            let viewport = self
+                .viewporter
+                .as_ref()
+                .map(|viewporter| viewporter.get_viewport(surface.wl_surface(), &self.qh, ()));
             self.layers.push(OutputLayer {
                 output,
                 surface,
                 width: 0,
                 height: 0,
+                viewport,
             });
         }
     }
@@ -460,6 +481,9 @@ impl App {
         );
         copy_pixmap_to_argb(&pixmap, canvas);
         let surface = &self.layers[index].surface;
+        if let Some(viewport) = self.layers[index].viewport.as_ref() {
+            viewport.set_destination(width as i32, height as i32);
+        }
         surface
             .wl_surface()
             .damage_buffer(0, 0, width as i32, height as i32);
@@ -484,20 +508,26 @@ impl App {
         if width == 0 || height == 0 {
             return;
         }
-        let needed = width as usize * height as usize * 4;
+        let use_viewport = layer.viewport.is_some();
+        let buffer_width = if use_viewport { 1 } else { width };
+        let buffer_height = if use_viewport { 1 } else { height };
+        let needed = buffer_width as usize * buffer_height as usize * 4;
         let Ok(mut pool) = SlotPool::new(needed, &self.shm) else {
             return;
         };
         let Ok((buffer, canvas)) = pool.create_buffer(
-            width as i32,
-            height as i32,
-            width as i32 * 4,
+            buffer_width as i32,
+            buffer_height as i32,
+            buffer_width as i32 * 4,
             wl_shm::Format::Argb8888,
         ) else {
             return;
         };
         canvas.fill(0);
         let surface = &self.layers[index].surface;
+        if let Some(viewport) = self.layers[index].viewport.as_ref() {
+            viewport.set_destination(width as i32, height as i32);
+        }
         surface
             .wl_surface()
             .damage_buffer(0, 0, width as i32, height as i32);
@@ -784,6 +814,32 @@ impl OutputHandler for App {
 impl ShmHandler for App {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
+    }
+}
+
+impl Dispatch<WpViewporter, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        unreachable!("wp_viewporter has no events")
+    }
+}
+
+impl Dispatch<WpViewport, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        unreachable!("wp_viewport has no events")
     }
 }
 

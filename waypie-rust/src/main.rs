@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use smithay_client_toolkit::{
     activation::ActivationState,
     compositor::CompositorState,
@@ -88,6 +89,7 @@ fn run() -> Result<()> {
     let seat_state = SeatState::new(&globals, &qh);
     let output_state = OutputState::new(&globals, &qh);
     let activation = ActivationState::bind(&globals, &qh).ok();
+    let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let handle = event_loop.handle();
@@ -115,6 +117,7 @@ fn run() -> Result<()> {
         layer_shell,
         shm,
         activation,
+        viewporter,
         qh,
     );
     app.prepare_layers();
