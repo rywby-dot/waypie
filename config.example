@@ -1,13 +1,3 @@
-# This is config.example.
-# You don't need to change it!
-# Open GUI editor waypie-editor ant setup everything there
-# just copy in to ~/.config
-#   cp config.example ~/.config/waypie/config
-#   cp style.example.css ~/.config/waypie/style.css
-# and read README.md
-# https://github.com/rywby-dot/waypie
-# Colors are setup manually in style.css
-
 menu-radius = 120
 center-hitbox-size = 160
 minimum-edge-distance = 200
@@ -16,8 +6,8 @@ active-label-in-center = true
 close-submenu-on-center-click = false
 hover-mode = false
 turbo-mode = true
-preserve-proportions = true
-auto-alignment = false
+preserve-proportions = false
+auto-alignment = true
 configurator-show-icons = true
 
 [menu]
@@ -167,58 +157,102 @@ label = "Nwg Look"
 command = "nwg-look"
 icon-theme = "simple-icons"
 icon = "gtk.svg"
-angle = 276
+angle = 270
 
 [[menu.items.items]]
 label = "Kvantum Manager"
 command = "kvantummanager"
 icon-theme = "simple-icons"
 icon = "qt.svg"
-angle = 336
-
-[[menu.items.items]]
-label = "Audacious"
-command = "audacious -t"
-icon-theme = "tabler-icons"
-icon = "outline/file-music.svg"
-angle = 156
+angle = 330
 
 [[menu.items.items]]
 label = "Emoji"
 command = "flatpak run it.mijorus.smile"
 icon-theme = "simple-icons"
 icon = "smugmug.svg"
-angle = 96
+angle = 90
 
 [[menu.items.items]]
 label = "Screen Record"
 icon-theme = "tabler-icons"
 icon = "outline/screen-share.svg"
-angle = 214
+angle = 210
 
 [[menu.items.items.items]]
-label = "eDP-1"
+label = "eDP micro"
 command = "notify-send 'gpu-screen-recorder' 'eDP-1 audio+mic' && gpu-screen-recorder -w eDP-1 -k h264 -bm qp -q medium -a alsa_input.pci-0000_03_00.6.HiFi__Mic1__source -o ~/Videos/Screen-Record/eDP-1-$(date +%Y-%m-%d_%H-%M-%S).mp4"
-angle = 178
+angle = 184
 
 [[menu.items.items.items]]
-label = "HDMI- -A-1"
+label = "HDMI micro"
 command = "notify-send 'gpu-screen-recorder' 'HDMI-A-1 audio+mic' && gpu-screen-recorder -w HDMI-A-1 -k h264 -bm qp -q medium -a alsa_input.pci-0000_03_00.6.HiFi__Mic1__source -o ~/Videos/Screen-Record/HDMI-A-1-$(date +%Y-%m-%d_%H-%M-%S).mp4"
-angle = 322
+angle = 287
 
 [[menu.items.items.items]]
 label = "Stop Record"
 command = "pkill -f gpu-screen-recorder & notify-send 'gpu-screen-recorder' 'stop recording'"
 icon-theme = "tabler-icons"
 icon = "outline/hand-stop.svg"
-angle = 250
+angle = 236
 
 [[menu.items.items.items]]
 label = "Obs"
 command = "obs"
 icon-theme = "simple-icons"
 icon = "obsstudio.svg"
-angle = 106
+angle = 81
+
+[[menu.items.items.items]]
+label = "eDP system"
+command = "notify-send 'gpu-screen-recorder' 'eDP-1 audio+mic' && gpu-screen-recorder -w eDP-1 -k h264 -bm qp -q medium -a default_output -o ~/Videos/Screen-Record/eDP-1-$(date +%Y-%m-%d_%H-%M-%S).mp4"
+angle = 135
+
+[[menu.items.items.items]]
+label = "HDMI system"
+command = "notify-send 'gpu-screen-recorder' 'eDP-1 audio+mic' && gpu-screen-recorder -w HDMI-A-1 -k h264 -bm qp -q medium -a default_output -o ~/Videos/Screen-Record/HDMI-A-1-$(date +%Y-%m-%d_%H-%M-%S).mp4"
+angle = 340
+
+[[menu.items.items]]
+label = "Music"
+icon-theme = "tabler-icons"
+icon = "filled/file-music.svg"
+angle = 149
+
+[[menu.items.items.items]]
+label = "Audacious"
+command = "audacious"
+icon-theme = "tabler-icons"
+icon = "outline/music-check.svg"
+angle = 30
+
+[[menu.items.items.items]]
+label = "Next"
+command = "audacious -f"
+icon-theme = "tabler-icons"
+icon = "filled/player-track-next.svg"
+angle = 90
+
+[[menu.items.items.items]]
+label = "Play Pause"
+command = "audacious -t"
+icon-theme = "tabler-icons"
+icon = "filled/player-pause.svg"
+angle = 210
+
+[[menu.items.items.items]]
+label = "Prev"
+command = "audacious -f"
+icon-theme = "tabler-icons"
+icon = "filled/player-track-prev.svg"
+angle = 270
+
+[[menu.items.items.items]]
+label = "Stop"
+command = "audacious -s"
+icon-theme = "tabler-icons"
+icon = "filled/player-stop.svg"
+angle = 150
 
 [[menu.items]]
 label = "System"

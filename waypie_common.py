@@ -35,7 +35,6 @@ class Settings:
     center_hitbox_size: float | None
     minimum_edge_distance: float
     center_mode: bool
-    active_label_in_center: bool
     close_submenu_on_center_click: bool
     hover_mode: bool
     turbo_mode: bool
@@ -90,10 +89,6 @@ def load_config():
         "minimum-edge-distance",
     )
     center_mode = boolean(source.get("center-mode", False), "center-mode")
-    active_label_in_center = boolean(
-        source.get("active-label-in-center", False),
-        "active-label-in-center",
-    )
     close_submenu_on_center_click = boolean(
         source.get("close-submenu-on-center-click", False),
         "close-submenu-on-center-click",
@@ -119,7 +114,6 @@ def load_config():
         center_hitbox_size,
         minimum_edge_distance,
         center_mode,
-        active_label_in_center,
         close_submenu_on_center_click,
         hover_mode,
         turbo_mode,

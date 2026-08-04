@@ -13,7 +13,7 @@ dist/
 *.egg-info/
 
 # Rust build output
-waypie-rust/target/
+target/
 
 # Common editor and operating-system files
 *.swp
