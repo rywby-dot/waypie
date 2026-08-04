@@ -39,8 +39,8 @@ struct IndicatorFrame<'a> {
     submenu_style: &'a CircleStyle,
     styles: &'a StyleSheet,
     active: bool,
+    scale: f64,
     reveal: f64,
-    opacity: f64,
 }
 
 struct ItemFrame<'a> {
@@ -52,6 +52,7 @@ struct ItemFrame<'a> {
     active: bool,
     content: ItemContent<'a>,
     indicators: bool,
+    indicator_reveal: f64,
     geometry_size: f64,
     opacity: f64,
     icon_opacity: f64,
@@ -176,7 +177,13 @@ impl Renderer {
                     icon_root: scene.icon_root,
                     active: node.active,
                     content,
-                    indicators: node.role == NodeRole::Item,
+                    indicators: node.role == NodeRole::Item
+                        || (node.role == NodeRole::Center
+                            && !node.item_path.is_empty()
+                            && !node.is_removing()
+                            && node.connector_factor < 1.0),
+                    indicator_reveal: ((1.0 - node.connector_factor) * node.opacity)
+                        .clamp(0.0, 1.0),
                     geometry_size: node.size,
                     opacity: node.opacity,
                     icon_opacity: node.icon_opacity,
@@ -218,7 +225,7 @@ impl Renderer {
             let end_radius = end_node.size / 2.0;
             paint.set_color(to_skia(
                 style.color,
-                style.opacity * connector_factor * start_node.opacity.min(end_node.opacity),
+                style.opacity * connector_factor.sqrt() * start_node.opacity.min(end_node.opacity),
             ));
             let stroke = Stroke {
                 width: (width * connector_factor) as f32,
@@ -279,7 +286,7 @@ impl Renderer {
             if length > start_radius + end_radius && length > f64::EPSILON {
                 paint.set_color(to_skia(
                     style.color,
-                    style.opacity * connector_factor * center.opacity.min(action.opacity),
+                    style.opacity * connector_factor.sqrt() * center.opacity.min(action.opacity),
                 ));
                 let stroke = Stroke {
                     width: (width * connector_factor) as f32,
@@ -320,12 +327,12 @@ impl Renderer {
                     submenu_style: &visual_style,
                     styles: frame.styles,
                     active: frame.active,
-                    reveal: if base_size > 0.0 {
+                    scale: if base_size > 0.0 {
                         (size / base_size).max(0.0)
                     } else {
                         0.0
                     },
-                    opacity: frame.opacity,
+                    reveal: frame.indicator_reveal,
                 },
             );
         }
@@ -384,14 +391,14 @@ impl Renderer {
         let Ok(style) = frame.styles.circle(&selectors) else {
             return;
         };
-        let size = style.width.unwrap_or(0.0) * frame.reveal;
+        let size = style.width.unwrap_or(0.0) * frame.scale;
         if size <= 0.0 || style.protrusion <= 0.0 {
             return;
         }
         let protrusion = style.protrusion * frame.reveal;
         let radius = (circle_size / 2.0 - size / 2.0 + protrusion).max(0.0);
         let mut paint = Paint::default();
-        paint.set_color(to_skia(style.color, style.opacity * frame.opacity));
+        paint.set_color(to_skia(style.color, style.opacity * frame.reveal));
         let clip = if style.cut_indicators {
             let clip_size = (circle_size - INDICATOR_CLIP_OVERLAP * 2.0).max(0.0);
             let rect = Rect::from_xywh(
