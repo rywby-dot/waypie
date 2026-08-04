@@ -1,9 +1,6 @@
 use std::{
-    env, fs,
-    io::ErrorKind,
-    os::unix::{fs::MetadataExt, net::UnixDatagram},
-    path::Path,
-    process::Command,
+    env, fs, io::ErrorKind, os::unix::net::UnixDatagram, path::PathBuf, process::Command,
+    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
@@ -22,7 +19,7 @@ use smithay_client_toolkit::{
     shm::Shm,
 };
 use wayland_client::{Connection, globals::registry_queue_init};
-use waypie::app::{App, bind_control_socket, runtime_paths};
+use waypie::app::App;
 
 fn main() {
     if let Err(error) = run() {
@@ -50,34 +47,25 @@ fn run() -> Result<()> {
     let activation_token = env::var("XDG_ACTIVATION_TOKEN").ok();
     if activation_token.is_some() {
         // SAFETY: this runs before the event loop and before Waypie creates any
-        // threads. Commands launched by the daemon must not inherit and reuse
+        // threads. Commands launched by Waypie must not inherit and reuse
         // the compositor's one-shot startup token.
         unsafe { env::remove_var("XDG_ACTIVATION_TOKEN") };
     }
-    let command = if arguments == ["--kill"] {
-        b"quit".to_vec()
+    let command: &[u8] = if arguments == ["--kill"] {
+        b"quit"
     } else {
-        let mut command = b"show".to_vec();
-        if let Some(token) = activation_token.as_deref() {
-            command.push(0);
-            command.extend_from_slice(token.as_bytes());
-        }
-        command
+        b"show"
     };
-    let (socket_path, pid_path) = runtime_paths();
-    if !arguments.is_empty() && send_command(&socket_path, &command).is_ok() {
+    let socket_path = runtime_socket_path();
+    if send_command(&socket_path, command).is_ok() {
         return Ok(());
     }
     if arguments == ["--kill"] {
-        return kill_from_pid_file(&pid_path);
+        bail!("no running Waypie instance");
     }
-    if arguments.is_empty() && send_command(&socket_path, b"ping").is_ok() {
-        return Ok(());
-    }
-
-    // A datagram path can survive a crash. It is safe to remove only after a
-    // probe failed; bind_control_socket itself never replaces a live socket.
-    remove_stale_runtime_files(&socket_path, &pid_path)?;
+    // A datagram path can survive a crash. It is safe to remove only after the
+    // requested command failed; bind_control_socket never replaces a live socket.
+    remove_if_present(&socket_path)?;
 
     let conn = Connection::connect_to_env().context("cannot connect to Wayland")?;
     let (globals, event_queue) = registry_queue_init(&conn)?;
@@ -94,7 +82,7 @@ fn run() -> Result<()> {
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let handle = event_loop.handle();
     WaylandSource::new(conn, event_queue).insert(handle.clone())?;
-    let (socket, socket_path, pid_path) = bind_control_socket()?;
+    let (socket, socket_path) = bind_control_socket()?;
     handle.insert_source(
         Generic::new(socket, Interest::READ, Mode::Level),
         |_, socket, app| {
@@ -121,15 +109,16 @@ fn run() -> Result<()> {
         qh,
     );
     app.prepare_layers();
-    if arguments == ["--show"] {
+    if arguments.is_empty() || arguments == ["--show"] {
         app.show(activation_token)?;
     }
     while !app.exit {
-        event_loop.dispatch(None, &mut app)?;
+        let timeout = app.hover_enabled().then_some(Duration::from_millis(10));
+        event_loop.dispatch(timeout, &mut app)?;
+        app.tick_hover();
         app.flush_redraw();
     }
     let _ = fs::remove_file(socket_path);
-    let _ = fs::remove_file(pid_path);
     Ok(())
 }
 
@@ -139,64 +128,26 @@ fn send_command(path: &std::path::Path, command: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn remove_stale_runtime_files(socket_path: &Path, pid_path: &Path) -> Result<()> {
-    if let Ok(pid) = read_pid(pid_path)
-        && process_is_waypie(pid)?
-    {
-        bail!(
-            "Waypie process {pid} exists but its control socket is unavailable; use waypie --kill"
-        );
-    }
-    remove_if_present(socket_path)?;
-    remove_if_present(pid_path)?;
-    Ok(())
+fn runtime_socket_path() -> PathBuf {
+    let runtime = env::var_os("WAYPIE_RUNTIME_DIR")
+        .or_else(|| env::var_os("XDG_RUNTIME_DIR"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("waypie");
+    let display = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland".into());
+    runtime.join(format!("control-{display}.sock"))
 }
 
-fn kill_from_pid_file(pid_path: &Path) -> Result<()> {
-    let pid = read_pid(pid_path).context("no running Waypie instance")?;
-    if !process_is_waypie(pid)? {
-        remove_if_present(pid_path)?;
-        bail!("refusing to kill stale or unrelated PID {pid}");
-    }
-    // SAFETY: the PID was parsed, ownership-checked, and identified through
-    // /proc immediately before this call. SIGKILL is the emergency recovery
-    // path used only when the daemon's control socket cannot answer.
-    let result = unsafe { libc::kill(pid, libc::SIGKILL) };
-    if result != 0 {
-        return Err(std::io::Error::last_os_error()).context("cannot kill Waypie");
-    }
-    remove_if_present(pid_path)?;
-    Ok(())
+fn bind_control_socket() -> Result<(UnixDatagram, PathBuf)> {
+    let path = runtime_socket_path();
+    fs::create_dir_all(path.parent().expect("runtime socket has a parent"))?;
+    let socket =
+        UnixDatagram::bind(&path).with_context(|| format!("cannot bind {}", path.display()))?;
+    socket.set_nonblocking(true)?;
+    Ok((socket, path))
 }
 
-fn read_pid(path: &Path) -> Result<i32> {
-    fs::read_to_string(path)?
-        .trim()
-        .parse::<i32>()
-        .context("invalid Waypie PID file")
-}
-
-fn process_is_waypie(pid: i32) -> Result<bool> {
-    if pid <= 1 {
-        return Ok(false);
-    }
-    let process = Path::new("/proc").join(pid.to_string());
-    let metadata = match fs::metadata(&process) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    // SAFETY: geteuid has no preconditions and does not mutate memory.
-    if metadata.uid() != unsafe { libc::geteuid() } {
-        return Ok(false);
-    }
-    let command = fs::read(process.join("cmdline")).unwrap_or_default();
-    Ok(command
-        .split(|byte| *byte == 0)
-        .any(|part| String::from_utf8_lossy(part).contains("waypie")))
-}
-
-fn remove_if_present(path: &Path) -> Result<()> {
+fn remove_if_present(path: &std::path::Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),

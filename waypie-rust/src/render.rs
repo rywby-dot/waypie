@@ -150,7 +150,7 @@ impl Renderer {
                     } else {
                         ItemContent::Default
                     },
-                    indicators: true,
+                    indicators: false,
                 },
             );
         }
@@ -227,8 +227,22 @@ impl Renderer {
         for (depth, pair) in centers.windows(2).enumerate() {
             let start_item = item_at_path(&scene.config.menu, &path[..depth]);
             let end_item = item_at_path(&scene.config.menu, &path[..depth + 1]);
-            let start_style = item_style(scene.styles, start_item, Role::History, false);
-            let end_style = item_style(scene.styles, end_item, Role::Center, false);
+            let start_style = item_style(
+                scene.styles,
+                start_item,
+                Role::History,
+                scene.state.active() == Some(Target::Parent(depth)),
+            );
+            let end_depth = depth + 1;
+            let (end_role, end_active) = if end_depth + 1 == centers.len() {
+                (Role::Center, scene.state.active() == Some(Target::Center))
+            } else {
+                (
+                    Role::History,
+                    scene.state.active() == Some(Target::Parent(end_depth)),
+                )
+            };
+            let end_style = item_style(scene.styles, end_item, end_role, end_active);
             let start_radius = start_style.width.unwrap_or(0.0) * start_style.scale / 2.0;
             let end_radius = end_style.width.unwrap_or(0.0) * end_style.scale / 2.0;
             let delta = Point {

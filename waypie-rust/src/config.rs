@@ -14,6 +14,10 @@ pub struct Config {
     #[serde(default)]
     pub center_mode: bool,
     #[serde(default)]
+    pub hover_mode: bool,
+    #[serde(default)]
+    pub turbo_mode: bool,
+    #[serde(default)]
     pub close_submenu_on_center_click: bool,
     pub menu: Item,
 }
