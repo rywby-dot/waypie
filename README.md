@@ -51,6 +51,10 @@ By default this does four things:
 4. installs missing example files and bundled icons under
    `~/.config/waypie/` without replacing existing user files.
 
+For the configurator, `make install` automatically chooses the correct pipx
+operation: `pipx install .` on the first installation and
+`pipx upgrade waypie` when its environment already exists.
+
 Make sure `~/.local/bin` is in `PATH`. For a custom binary prefix:
 
 ```sh
@@ -74,6 +78,18 @@ make install
 ```
 
 Existing `config`, `style.css`, and icons are preserved.
+
+To deliberately replace both configuration files with the repository defaults:
+
+```sh
+make forceinstall
+```
+
+Before replacement, the current files are saved as `config.bak` and
+`style.css.bak`. A repeated `forceinstall` updates these backups to the files
+that are current immediately before that replacement. Existing icons are never
+deleted or overwritten; icon files newly added to the repository are copied
+into the user's `icons/` directory.
 
 ### Uninstalling
 
@@ -197,8 +213,10 @@ Shortcuts work while focus is outside text-entry fields:
 - `Ctrl+A` — center the current layout;
 - `Ctrl+Z` — undo the last edit.
 
-Press **Save** to write `~/.config/waypie/config`; the previous version is saved
-as `config.bak`. Because the Rust runtime starts fresh for every opening, the
+Press **Save** to write `~/.config/waypie/config`. If `config.bak` does not yet
+exist, the configurator creates it from the previous configuration. An existing
+backup — including one made by `make forceinstall` — is never overwritten by
+the configurator. Because the Rust runtime starts fresh for every opening, the
 next `waypie --show` automatically reads the new configuration. No daemon
 restart or hot-reload step is required.
 

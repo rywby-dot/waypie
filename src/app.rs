@@ -419,6 +419,7 @@ impl App {
                 NodeRole::History => "circle.history",
                 NodeRole::Item => "circle.item",
             });
+            let rest_style = styles.circle(&selectors).unwrap_or_default();
             if active {
                 selectors.push("circle.active");
                 selectors.push(match role {
@@ -433,8 +434,10 @@ impl App {
                 item_path,
                 role,
                 position: center,
+                rest_position: center,
                 origin: center,
                 size: style.width.unwrap_or(0.0) * style.scale,
+                rest_size: rest_style.width.unwrap_or(0.0) * rest_style.scale,
                 active,
                 icon_visible: role != NodeRole::Center
                     || !matches!(self.state.active(), Some(Target::Item(_))),
@@ -460,6 +463,7 @@ impl App {
             if item.is_submenu() {
                 selectors.push("circle.submenu");
             }
+            let rest_style = styles.circle(&selectors).unwrap_or_default();
             if active {
                 selectors.push("circle.active");
                 selectors.push(if item.is_submenu() {
@@ -492,6 +496,11 @@ impl App {
             let distance = (config.menu_radius + extra_distance).max(0.0);
             let position =
                 crate::geometry::radial_position(center, item.angle.unwrap_or(0.0), distance);
+            let rest_position = crate::geometry::radial_position(
+                center,
+                item.angle.unwrap_or(0.0),
+                config.menu_radius,
+            );
             let mut item_path = path.to_vec();
             item_path.push(index);
             let key = if item.is_submenu() {
@@ -504,8 +513,10 @@ impl App {
                 item_path,
                 role: NodeRole::Item,
                 position,
+                rest_position,
                 origin: center,
                 size: style.width.unwrap_or(0.0) * style.scale,
+                rest_size: rest_style.width.unwrap_or(0.0) * rest_style.scale,
                 active,
                 icon_visible: true,
             });
