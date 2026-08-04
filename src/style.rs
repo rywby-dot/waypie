@@ -99,17 +99,17 @@ pub enum Radius {
 
 #[derive(Clone, Copy, Debug)]
 pub struct AnimationStyle {
-    pub hover_duration: Duration,
     pub icon_duration: Duration,
-    pub menu_duration: Duration,
-    pub item_create_duration: Duration,
+    pub item_delete_duration: Duration,
     pub close_duration: Duration,
-    pub action_duration: Duration,
+    pub connector_duration: Duration,
     pub action_scale: f64,
     pub hover_spring: Spring,
+    pub follow_spring: Spring,
     pub menu_move_spring: Spring,
     pub item_create_spring: Spring,
     pub action_spring: Spring,
+    pub submenu_indicator_spring: Spring,
 }
 
 #[derive(Clone, Debug)]
@@ -197,17 +197,17 @@ impl StyleSheet {
             })
         };
         Ok(AnimationStyle {
-            hover_duration: duration("hover-duration", None)?,
             icon_duration: duration("icon-duration", None)?,
-            menu_duration: duration("menu-duration", None)?,
-            item_create_duration: duration("item-create-duration", Some("menu-duration"))?,
-            close_duration: duration("close-duration", Some("menu-duration"))?,
-            action_duration: duration("action-duration", Some("close-duration"))?,
+            item_delete_duration: duration("item-delete-duration", None)?,
+            close_duration: duration("close-duration", None)?,
+            connector_duration: duration("connector-duration", None)?,
             action_scale: number("action-scale", 1.3)?,
             hover_spring: spring("hover")?,
+            follow_spring: spring("follow")?,
             menu_move_spring: spring("menu-move")?,
             item_create_spring: spring("item-create")?,
             action_spring: spring("action")?,
+            submenu_indicator_spring: spring("submenu-indicator")?,
         })
     }
 
@@ -440,30 +440,37 @@ mod tests {
     }
 
     #[test]
-    fn animation_settings_include_durations_and_springs() {
+    fn animation_settings_separate_timed_effects_from_springs() {
         let sheet = StyleSheet::parse(
-            "animation { hover-duration: 120ms; menu-duration: 300ms; item-create-duration: 250ms; \
-             close-duration: 220ms; action-duration: 160ms; icon-duration: 180ms; \
+            "animation { icon-duration: 180ms; item-delete-duration: 250ms; \
+             close-duration: 220ms; connector-duration: 140ms; \
              action-scale: 1.4; menu-move-damping-ratio: 0.8; \
-             menu-move-stiffness: 700; menu-move-epsilon: 0.001; }",
+             menu-move-stiffness: 700; menu-move-epsilon: 0.001; \
+             submenu-indicator-damping-ratio: 0.7; \
+             submenu-indicator-stiffness: 600; submenu-indicator-epsilon: 0.002; }",
         );
         let animation = sheet.animation().unwrap();
-        assert_eq!(animation.hover_duration, Duration::from_millis(120));
-        assert_eq!(animation.menu_duration, Duration::from_millis(300));
-        assert_eq!(animation.item_create_duration, Duration::from_millis(250));
-        assert_eq!(animation.close_duration, Duration::from_millis(220));
-        assert_eq!(animation.action_duration, Duration::from_millis(160));
         assert_eq!(animation.icon_duration, Duration::from_millis(180));
+        assert_eq!(animation.item_delete_duration, Duration::from_millis(250));
+        assert_eq!(animation.close_duration, Duration::from_millis(220));
+        assert_eq!(animation.connector_duration, Duration::from_millis(140));
         assert_eq!(animation.action_scale, 1.4);
         assert_eq!(animation.menu_move_spring.damping_ratio, 0.8);
         assert_eq!(animation.menu_move_spring.stiffness, 700.0);
+        assert_eq!(animation.submenu_indicator_spring.damping_ratio, 0.7);
+        assert_eq!(animation.submenu_indicator_spring.stiffness, 600.0);
     }
 
     #[test]
-    fn new_animation_durations_fall_back_to_existing_settings() {
-        let sheet = StyleSheet::parse("animation { menu-duration: 300ms; close-duration: 220ms; }");
+    fn obsolete_spring_durations_do_not_control_physical_timing() {
+        let sheet = StyleSheet::parse(
+            "animation { hover-duration: 1ms; menu-duration: 2ms; \
+             item-create-duration: 3ms; action-duration: 4ms; }",
+        );
         let animation = sheet.animation().unwrap();
-        assert_eq!(animation.item_create_duration, Duration::from_millis(300));
-        assert_eq!(animation.action_duration, Duration::from_millis(220));
+        assert_eq!(animation.hover_spring, Spring::default());
+        assert_eq!(animation.menu_move_spring, Spring::default());
+        assert_eq!(animation.item_create_spring, Spring::default());
+        assert_eq!(animation.action_spring, Spring::default());
     }
 }

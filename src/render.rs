@@ -181,12 +181,10 @@ impl Renderer {
                         || (node.role == NodeRole::Center
                             && !node.item_path.is_empty()
                             && !node.is_removing()
-                            && node.connector_factor < 1.0),
-                    // Start exposing indicators immediately instead of keeping them hidden
-                    // under the circle through the slow beginning of the scene easing.
-                    indicator_reveal: (((1.0 - node.connector_factor) * node.opacity)
-                        .clamp(0.0, 1.0))
-                    .sqrt(),
+                            && node.indicator_factor > 0.0),
+                    indicator_reveal: (node.indicator_factor * node.opacity)
+                        .clamp(0.0, 1.0)
+                        .sqrt(),
                     geometry_size: node.size,
                     opacity: node.opacity,
                     icon_opacity: node.icon_opacity,

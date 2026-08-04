@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, Debug)]
+use std::time::Duration;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spring {
     pub damping_ratio: f64,
     pub stiffness: f64,
@@ -16,14 +18,19 @@ impl Default for Spring {
 }
 
 impl Spring {
+    pub fn duration(self) -> Duration {
+        Duration::from_secs_f64(
+            settling_window(self.damping_ratio, self.epsilon) / self.stiffness.sqrt(),
+        )
+    }
+
     pub fn sample(self, progress: f64) -> f64 {
         let progress = progress.clamp(0.0, 1.0);
         if progress == 0.0 || progress == 1.0 {
             return progress;
         }
         let damping = self.damping_ratio;
-        let frequency_ratio = (self.stiffness / 1000.0).sqrt();
-        let elapsed = progress * settling_window(damping, self.epsilon) * frequency_ratio;
+        let elapsed = progress * settling_window(damping, self.epsilon);
         let value = if damping < 1.0 {
             let root = (1.0 - damping * damping).sqrt();
             let damped = root;
@@ -103,5 +110,16 @@ mod tests {
         let spring = Spring::default();
         assert!(spring.sample(0.25) < 0.9);
         assert!(spring.sample(0.9) > 0.99);
+    }
+
+    #[test]
+    fn spring_duration_is_derived_from_its_physical_parameters() {
+        let normal = Spring::default();
+        let stiff = Spring {
+            stiffness: normal.stiffness * 4.0,
+            ..normal
+        };
+        let ratio = normal.duration().as_secs_f64() / stiff.duration().as_secs_f64();
+        assert!((ratio - 2.0).abs() < 0.001);
     }
 }

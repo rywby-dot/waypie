@@ -49,7 +49,7 @@ use crate::{
     model::{MenuState, Target},
     render::{Renderer, Scene},
     style::StyleSheet,
-    visual::{Animator, Motion, NodeKey, NodeRole, NodeTarget},
+    visual::{Animator, Motion, NodeKey, NodeRole, NodeTarget, TransitionEffects},
 };
 
 const LEFT_BUTTON: u32 = 0x110;
@@ -276,18 +276,28 @@ impl App {
         let close_duration = animation
             .as_ref()
             .map_or(Duration::ZERO, |animation| animation.close_duration);
-        let action_duration = animation
+        let action_duration = animation.as_ref().map_or(Duration::ZERO, |animation| {
+            animation.action_spring.duration()
+        });
+        let connector_duration = animation
             .as_ref()
-            .map_or(close_duration, |animation| animation.action_duration);
-        let total_duration = if action.is_some() {
-            close_duration.max(action_duration)
+            .map_or(Duration::ZERO, |animation| animation.connector_duration);
+        let indicator = animation
+            .as_ref()
+            .map_or(Motion::default(), |animation| Motion {
+                duration: animation.submenu_indicator_spring.duration(),
+                spring: animation.submenu_indicator_spring,
+            });
+        let mut total_duration = if action.is_some() {
+            close_duration
+                .max(action_duration)
+                .max(connector_duration)
+                .max(indicator.duration)
         } else {
             close_duration
+                .max(connector_duration)
+                .max(indicator.duration)
         };
-        if total_duration.is_zero() {
-            self.finish_hide();
-            return;
-        }
         let spring = animation
             .as_ref()
             .map(|animation| animation.action_spring)
@@ -295,14 +305,21 @@ impl App {
         let action_scale = animation
             .as_ref()
             .map_or(1.3, |animation| animation.action_scale);
-        self.animator.close(
+        self.animator.close_with_effects(
             action
                 .as_ref()
                 .map(|(key, point)| (key, *point, action_scale)),
             close_duration,
             action_duration,
+            connector_duration,
+            indicator,
             spring,
         );
+        total_duration = total_duration.max(self.animator.remaining_duration());
+        if total_duration.is_zero() {
+            self.finish_hide();
+            return;
+        }
         self.closing_until = Some(Instant::now() + total_duration);
         self.draw();
     }
@@ -531,12 +548,6 @@ impl App {
                 .styles
                 .as_ref()
                 .and_then(|styles| styles.animation().ok());
-            let move_duration = animation
-                .as_ref()
-                .map_or(Duration::ZERO, |animation| animation.menu_duration);
-            let create_duration = animation
-                .as_ref()
-                .map_or(move_duration, |animation| animation.item_create_duration);
             let move_spring = animation
                 .as_ref()
                 .map(|animation| animation.menu_move_spring)
@@ -545,10 +556,15 @@ impl App {
                 .as_ref()
                 .map(|animation| animation.item_create_spring)
                 .unwrap_or_default();
+            let move_duration = move_spring.duration();
+            let create_duration = create_spring.duration();
+            let deletion_duration = animation
+                .as_ref()
+                .map_or(Duration::ZERO, |animation| animation.item_delete_duration);
             let icon_duration = animation
                 .as_ref()
                 .map_or(Duration::ZERO, |animation| animation.icon_duration);
-            self.animator.reconcile(
+            self.animator.reconcile_with_effects(
                 targets,
                 Motion {
                     duration: move_duration,
@@ -558,15 +574,27 @@ impl App {
                     duration: create_duration,
                     spring: create_spring,
                 },
-                icon_duration,
+                TransitionEffects {
+                    deletion_duration,
+                    icon_duration,
+                    connector_duration: animation
+                        .as_ref()
+                        .map_or(Duration::ZERO, |animation| animation.connector_duration),
+                    indicator: animation
+                        .as_ref()
+                        .map_or(Motion::default(), |animation| Motion {
+                            duration: animation.submenu_indicator_spring.duration(),
+                            spring: animation.submenu_indicator_spring,
+                        }),
+                },
                 true,
             );
         } else if self.animator.is_empty() {
-            self.animator.reconcile(
+            self.animator.reconcile_with_effects(
                 targets,
                 Motion::default(),
                 Motion::default(),
-                Duration::ZERO,
+                TransitionEffects::default(),
                 false,
             );
         } else {
@@ -574,18 +602,29 @@ impl App {
                 .styles
                 .as_ref()
                 .and_then(|styles| styles.animation().ok());
-            let duration = animation
-                .as_ref()
-                .map_or(Duration::ZERO, |animation| animation.hover_duration);
             let spring = animation
                 .as_ref()
                 .map(|animation| animation.hover_spring)
                 .unwrap_or_default();
+            let follow_spring = animation
+                .as_ref()
+                .map(|animation| animation.follow_spring)
+                .unwrap_or_default();
             let icon_duration = animation
                 .as_ref()
                 .map_or(Duration::ZERO, |animation| animation.icon_duration);
-            self.animator
-                .hover(targets, duration, icon_duration, spring);
+            self.animator.hover_with_follow(
+                targets,
+                Motion {
+                    duration: spring.duration(),
+                    spring,
+                },
+                Motion {
+                    duration: follow_spring.duration(),
+                    spring: follow_spring,
+                },
+                icon_duration,
+            );
         }
     }
 

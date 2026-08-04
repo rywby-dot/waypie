@@ -3,32 +3,37 @@ overlay {
   background-color: transparent;
 }
 
-/* Animation durations, action growth, and spring physics for every animated transition. */
+/* Animation physics and durations. Spring animation time is derived from damping-ratio, stiffness, and epsilon. */
 animation {
-  hover-duration: 300ms;
   hover-damping-ratio: 1;
   hover-stiffness: 1000;
   hover-epsilon: 0.0001;
 
-  icon-duration: 180ms;
+  follow-damping-ratio: 1;
+  follow-stiffness: 1000;
+  follow-epsilon: 0.0001;
 
-  menu-duration: 300ms;
   menu-move-damping-ratio: 1;
   menu-move-stiffness: 1000;
   menu-move-epsilon: 0.0001;
 
-  item-create-duration: 300ms;
   item-create-damping-ratio: 1;
   item-create-stiffness: 1000;
   item-create-epsilon: 0.0001;
 
-  close-duration: 220ms;
-  
-  action-duration: 220ms;
-  action-scale: 1.3;
   action-damping-ratio: 1;
   action-stiffness: 1000;
   action-epsilon: 0.0001;
+
+  submenu-indicator-damping-ratio: 1;
+  submenu-indicator-stiffness: 1000;
+  submenu-indicator-epsilon: 0.0001;
+
+  icon-duration: 180ms;
+  connector-duration: 180ms;
+  item-delete-duration: 220ms;
+  close-duration: 220ms;
+  action-scale: 1.3;
 }
 
 /* Lines connecting the currently open menu to all previous menus. */
