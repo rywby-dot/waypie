@@ -140,6 +140,14 @@ fn node_depth(key: &NodeKey) -> usize {
     }
 }
 
+fn opacity_progress(progress: f64, fading_in: bool) -> f64 {
+    if fading_in {
+        progress.sqrt()
+    } else {
+        smoothstep(progress)
+    }
+}
+
 impl VisualNode {
     pub fn is_removing(&self) -> bool {
         self.removing
@@ -207,9 +215,12 @@ impl VisualNode {
         } else {
             smoothstep(progress)
         };
-        let fade = smoothstep(
-            ((progress - self.opacity_delay) / (1.0 - self.opacity_delay).max(f64::EPSILON))
-                .clamp(0.0, 1.0),
+        let normalized_opacity = ((progress - self.opacity_delay)
+            / (1.0 - self.opacity_delay).max(f64::EPSILON))
+        .clamp(0.0, 1.0);
+        let fade = opacity_progress(
+            normalized_opacity,
+            self.target_opacity > self.from_opacity && !self.removing,
         );
         self.base_position = self
             .from_position
@@ -957,6 +968,14 @@ impl Animator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearing_items_become_visible_at_the_start_of_the_transition() {
+        assert_eq!(opacity_progress(0.0, true), 0.0);
+        assert!(opacity_progress(0.05, true) > 0.2);
+        assert_eq!(opacity_progress(1.0, true), 1.0);
+        assert!(opacity_progress(0.05, true) > opacity_progress(0.05, false));
+    }
 
     fn target(key: NodeKey, role: NodeRole, position: Point) -> NodeTarget {
         NodeTarget {
