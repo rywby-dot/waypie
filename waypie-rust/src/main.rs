@@ -113,12 +113,16 @@ fn run() -> Result<()> {
         app.show(activation_token)?;
     }
     while !app.exit {
-        let timeout = app.hover_enabled().then_some(Duration::from_millis(10));
+        let timeout = app.needs_tick().then_some(Duration::from_millis(10));
         event_loop.dispatch(timeout, &mut app)?;
         app.tick_hover();
         app.flush_redraw();
     }
+    let reopen = app.reopen_requested;
     let _ = fs::remove_file(socket_path);
+    if reopen {
+        Command::new(env::current_exe()?).arg("--show").spawn()?;
+    }
     Ok(())
 }
 

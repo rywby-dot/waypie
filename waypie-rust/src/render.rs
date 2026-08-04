@@ -11,8 +11,8 @@ use cosmic_text::{
 };
 use image::ImageReader;
 use tiny_skia::{
-    Color as SkColor, FillRule, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke,
-    Transform,
+    Color as SkColor, FillRule, FilterQuality, Mask, Paint, PathBuilder, Pattern, Pixmap, Rect,
+    SpreadMode, Stroke, Transform,
 };
 
 use crate::{
@@ -20,12 +20,14 @@ use crate::{
     geometry::{Point, radial_position},
     model::{MenuState, Target},
     style::{CircleStyle, Color, StyleSheet},
+    visual::{NodeKey, NodeRole, VisualNode},
 };
 
 pub struct Scene<'a> {
     pub config: &'a Config,
     pub styles: &'a StyleSheet,
     pub state: &'a MenuState,
+    pub nodes: &'a [VisualNode],
     pub icon_root: &'a Path,
 }
 
@@ -34,6 +36,8 @@ struct IndicatorFrame<'a> {
     submenu_style: &'a CircleStyle,
     styles: &'a StyleSheet,
     active: bool,
+    reveal: f64,
+    opacity: f64,
 }
 
 struct ItemFrame<'a> {
@@ -45,6 +49,9 @@ struct ItemFrame<'a> {
     active: bool,
     content: ItemContent<'a>,
     indicators: bool,
+    geometry_size: f64,
+    opacity: f64,
+    icon_opacity: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -125,92 +132,64 @@ impl Renderer {
         let overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
         pixmap.fill(to_skia(overlay.background_color, overlay.opacity));
         let path = scene.state.path();
-        let centers = scene.state.centers();
         let current = scene.state.current(scene.config);
-        if centers.is_empty() {
+        if scene.nodes.is_empty() {
             return;
         }
         self.draw_connectors(pixmap, scene);
-
-        for depth in 0..path.len() {
-            let item = item_at_path(&scene.config.menu, &path[..depth]);
-            let active = scene.state.active() == Some(Target::Parent(depth));
-            let style = item_style(scene.styles, item, Role::History, active);
-            self.draw_item(
-                pixmap,
-                ItemFrame {
-                    center: centers[depth],
-                    item,
-                    style: &style,
-                    styles: scene.styles,
-                    icon_root: scene.icon_root,
-                    active,
-                    content: if active {
-                        ItemContent::IconOrBlank
-                    } else {
-                        ItemContent::Default
-                    },
-                    indicators: false,
+        let mut nodes = scene.nodes.iter().collect::<Vec<_>>();
+        nodes.sort_by_key(|node| match node.role {
+            NodeRole::History => 0,
+            NodeRole::Center => 1,
+            NodeRole::Item => 2,
+        });
+        for node in nodes {
+            let item = item_at_path(&scene.config.menu, &node.item_path);
+            let role = match node.role {
+                NodeRole::History => Role::History,
+                NodeRole::Center => Role::Center,
+                NodeRole::Item => Role::Item,
+            };
+            let style = item_style(scene.styles, item, role, node.active);
+            let content = match node.role {
+                NodeRole::Center if node.item_path == path => match scene.state.active() {
+                    Some(Target::Item(index)) => current
+                        .items
+                        .get(index)
+                        .map_or(ItemContent::Default, |item| ItemContent::Label(&item.label)),
+                    Some(Target::Parent(_)) => ItemContent::IconOrBlank,
+                    _ => ItemContent::Default,
                 },
-            );
-        }
-
-        let center = *centers.last().unwrap();
-        let center_active = scene.state.active() == Some(Target::Center);
-        let center_style = item_style(scene.styles, current, Role::Center, center_active);
-        let center_content = match scene.state.active() {
-            Some(Target::Item(index)) => current
-                .items
-                .get(index)
-                .map_or(ItemContent::Default, |item| ItemContent::Label(&item.label)),
-            Some(Target::Parent(_)) => ItemContent::IconOrBlank,
-            _ => ItemContent::Default,
-        };
-        self.draw_item(
-            pixmap,
-            ItemFrame {
-                center,
-                item: current,
-                style: &center_style,
-                styles: scene.styles,
-                icon_root: scene.icon_root,
-                active: center_active,
-                content: center_content,
-                indicators: false,
-            },
-        );
-
-        for (index, item) in current.items.iter().enumerate() {
-            let active = scene.state.active() == Some(Target::Item(index));
-            let style = item_style(scene.styles, item, Role::Item, active);
-            let distance = (scene.config.menu_radius
-                + if active {
-                    style.distance.unwrap_or(0.0)
-                } else {
-                    0.0
-                })
-            .max(0.0);
-            let position = radial_position(center, item.angle.unwrap_or(0.0), distance);
+                NodeRole::History if node.active => ItemContent::IconOrBlank,
+                _ => ItemContent::Default,
+            };
             self.draw_item(
                 pixmap,
                 ItemFrame {
-                    center: position,
+                    center: node.position,
                     item,
                     style: &style,
                     styles: scene.styles,
                     icon_root: scene.icon_root,
-                    active,
-                    content: ItemContent::Default,
-                    indicators: true,
+                    active: node.active,
+                    content,
+                    indicators: node.role == NodeRole::Item,
+                    geometry_size: node.size,
+                    opacity: node.opacity,
+                    icon_opacity: node.icon_opacity,
                 },
             );
         }
     }
 
     fn draw_connectors(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
-        let centers = scene.state.centers();
         let path = scene.state.path();
-        if centers.len() < 2 {
+        if path.is_empty()
+            && !scene
+                .nodes
+                .iter()
+                .any(|node| node.selected_action || node.return_connector)
+        {
             return;
         }
         let style = scene.styles.circle(&["connector"]).unwrap_or_default();
@@ -219,32 +198,26 @@ impl Renderer {
             return;
         }
         let mut paint = Paint::default();
-        paint.set_color(to_skia(style.color, style.opacity));
         let stroke = Stroke {
             width: width as f32,
             ..Stroke::default()
         };
-        for (depth, pair) in centers.windows(2).enumerate() {
-            let start_item = item_at_path(&scene.config.menu, &path[..depth]);
-            let end_item = item_at_path(&scene.config.menu, &path[..depth + 1]);
-            let start_style = item_style(
-                scene.styles,
-                start_item,
-                Role::History,
-                scene.state.active() == Some(Target::Parent(depth)),
-            );
-            let end_depth = depth + 1;
-            let (end_role, end_active) = if end_depth + 1 == centers.len() {
-                (Role::Center, scene.state.active() == Some(Target::Center))
-            } else {
-                (
-                    Role::History,
-                    scene.state.active() == Some(Target::Parent(end_depth)),
-                )
+        for depth in 0..path.len() {
+            let start_key = NodeKey::Menu(path[..depth].to_vec());
+            let end_key = NodeKey::Menu(path[..=depth].to_vec());
+            let Some(start_node) = scene.nodes.iter().find(|node| node.key == start_key) else {
+                continue;
             };
-            let end_style = item_style(scene.styles, end_item, end_role, end_active);
-            let start_radius = start_style.width.unwrap_or(0.0) * start_style.scale / 2.0;
-            let end_radius = end_style.width.unwrap_or(0.0) * end_style.scale / 2.0;
+            let Some(end_node) = scene.nodes.iter().find(|node| node.key == end_key) else {
+                continue;
+            };
+            let start_radius = start_node.size / 2.0;
+            let end_radius = end_node.size / 2.0;
+            paint.set_color(to_skia(
+                style.color,
+                style.opacity * start_node.opacity.min(end_node.opacity),
+            ));
+            let pair = [start_node.position, end_node.position];
             let delta = Point {
                 x: pair[1].x - pair[0].x,
                 y: pair[1].y - pair[0].y,
@@ -268,43 +241,100 @@ impl Renderer {
                 pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
             }
         }
+        let temporary_links = scene.nodes.iter().filter_map(|node| {
+            let parent_path = match &node.key {
+                NodeKey::Action(path, _) if node.selected_action => Some(path.as_slice()),
+                NodeKey::Menu(path) if node.return_connector && !path.is_empty() => {
+                    Some(&path[..path.len() - 1])
+                }
+                _ => None,
+            }?;
+            let parent = scene
+                .nodes
+                .iter()
+                .find(|candidate| candidate.key == NodeKey::Menu(parent_path.to_vec()))?;
+            Some((parent, node))
+        });
+        for (center, action) in temporary_links {
+            let center_position = center.position;
+            let action_position = action.position;
+            let delta = Point {
+                x: action_position.x - center_position.x,
+                y: action_position.y - center_position.y,
+            };
+            let length = delta.x.hypot(delta.y);
+            let start_radius = center.size / 2.0;
+            let end_radius = action.size / 2.0;
+            if length > start_radius + end_radius && length > f64::EPSILON {
+                paint.set_color(to_skia(
+                    style.color,
+                    style.opacity * center.opacity.min(action.opacity),
+                ));
+                let mut path = PathBuilder::new();
+                path.move_to(
+                    (center_position.x + delta.x / length * start_radius) as f32,
+                    (center_position.y + delta.y / length * start_radius) as f32,
+                );
+                path.line_to(
+                    (action_position.x - delta.x / length * end_radius) as f32,
+                    (action_position.y - delta.y / length * end_radius) as f32,
+                );
+                if let Some(path) = path.finish() {
+                    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                }
+            }
+        }
     }
 
     fn draw_item(&mut self, pixmap: &mut Pixmap, frame: ItemFrame<'_>) {
-        let size = frame.style.width.unwrap_or(0.0) * frame.style.scale;
+        let size = frame.geometry_size;
         if size <= 0.0 {
             return;
         }
+        let mut visual_style = frame.style.clone();
+        visual_style.text_opacity = Some(frame.style.content_opacity() * frame.opacity);
+        visual_style.opacity *= frame.opacity;
         if frame.indicators && frame.item.is_submenu() {
+            let base_size = frame.style.width.unwrap_or(0.0) * frame.style.scale;
             self.draw_indicators(
                 pixmap,
                 frame.center,
                 size,
                 IndicatorFrame {
                     item: frame.item,
-                    submenu_style: frame.style,
+                    submenu_style: &visual_style,
                     styles: frame.styles,
                     active: frame.active,
+                    reveal: if base_size > 0.0 {
+                        (size / base_size).max(0.0)
+                    } else {
+                        0.0
+                    },
+                    opacity: frame.opacity,
                 },
             );
         }
-        draw_rounded_box(pixmap, frame.center, size, frame.style);
+        draw_rounded_box(pixmap, frame.center, size, &visual_style);
 
-        let show_icon = frame.item.icon.is_some()
+        let icon_is_content = frame.item.icon.is_some()
             && matches!(
                 frame.content,
                 ItemContent::Default | ItemContent::IconOrBlank
             );
-        let icon_drawn = show_icon
+        let draw_icon =
+            frame.item.icon.is_some() && (icon_is_content || frame.icon_opacity > f64::EPSILON);
+        let mut icon_style = visual_style.clone();
+        icon_style.text_opacity = Some(visual_style.content_opacity() * frame.icon_opacity);
+        let icon_drawn = draw_icon
             && self.draw_icon(
                 pixmap,
                 frame.center,
                 size,
                 frame.item,
-                frame.style,
+                &icon_style,
                 frame.icon_root,
             );
-        if icon_drawn {
+        if icon_drawn && !matches!(frame.content, ItemContent::Label(_)) {
             return;
         }
         if matches!(frame.content, ItemContent::IconOrBlank) {
@@ -316,7 +346,11 @@ impl Renderer {
             ItemContent::IconOrBlank => unreachable!(),
         };
         if !label.is_empty() {
-            self.draw_text(pixmap, frame.center, size, label, frame.style);
+            let base_scale = frame
+                .styles
+                .circle(&["circle"])
+                .map_or(1.0, |style| style.scale);
+            self.draw_text(pixmap, frame.center, size, label, &visual_style, base_scale);
         }
     }
 
@@ -335,14 +369,14 @@ impl Renderer {
         let Ok(style) = frame.styles.circle(&selectors) else {
             return;
         };
-        let size = style.width.unwrap_or(0.0);
+        let size = style.width.unwrap_or(0.0) * frame.reveal;
         if size <= 0.0 || style.protrusion <= 0.0 {
             return;
         }
-        let protrusion = style.protrusion;
+        let protrusion = style.protrusion * frame.reveal;
         let radius = (circle_size / 2.0 - size / 2.0 + protrusion).max(0.0);
         let mut paint = Paint::default();
-        paint.set_color(to_skia(style.color, style.opacity));
+        paint.set_color(to_skia(style.color, style.opacity * frame.opacity));
         let clip = if style.cut_indicators {
             let rect = Rect::from_xywh(
                 (center.x - circle_size / 2.0) as f32,
@@ -387,10 +421,22 @@ impl Renderer {
         size: f64,
         text: &str,
         style: &CircleStyle,
+        base_scale: f64,
     ) {
-        let available = ((size - style.border_width * 2.0) * style.text_fill).max(1.0) as f32;
-        let font_size = style.font_size as f32;
-        let line_height = (style.font_size * 1.15) as f32;
+        let layout_size = style.width.unwrap_or(size) * base_scale;
+        if layout_size <= 0.0 {
+            return;
+        }
+        let visual_scale = (size / layout_size).clamp(0.0, 1.0);
+        if visual_scale <= 0.0 {
+            return;
+        }
+        let available =
+            ((layout_size - style.border_width * 2.0) * style.text_fill).max(1.0) as f32;
+        let supersample = 2.0_f32;
+        let source_extent = (available * supersample).ceil().max(2.0) as u32;
+        let font_size = style.font_size as f32 * supersample;
+        let line_height = (style.font_size * 1.15) as f32 * supersample;
         let family = self
             .resolved_families
             .get(&style.font_family)
@@ -399,7 +445,7 @@ impl Renderer {
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(font_size, line_height));
         {
             let mut buffer = buffer.borrow_with(&mut self.fonts);
-            buffer.set_size(Some(available), Some(available));
+            buffer.set_size(Some(available * supersample), Some(available * supersample));
             buffer.set_wrap(Wrap::WordOrGlyph);
             let attrs = Attrs::new().family(Family::Name(&family));
             buffer.set_text(text, &attrs, Shaping::Advanced, Some(Align::Center));
@@ -413,31 +459,53 @@ impl Renderer {
             (color.blue * 255.0).round() as u8,
             (alpha * 255.0).round() as u8,
         );
-        let origin_x = (center.x - available as f64 / 2.0).round() as i32;
         let content_height = buffer
             .layout_runs()
             .map(|run| run.line_top + run.line_height)
             .fold(0.0_f32, f32::max)
-            .min(available);
-        let origin_y = (center.y - content_height as f64 / 2.0).round() as i32;
+            .min(available * supersample);
+        let origin_y = (source_extent as f32 - content_height) / 2.0;
+        let Some(mut text_pixmap) = Pixmap::new(source_extent, source_extent) else {
+            return;
+        };
         let mut borrowed = buffer.borrow_with(&mut self.fonts);
         borrowed.draw(
             &mut self.glyphs,
             text_color,
             |x, y, width, height, color| {
-                let Some(rect) = Rect::from_xywh(
-                    (origin_x + x) as f32,
-                    (origin_y + y) as f32,
-                    width as f32,
-                    height as f32,
-                ) else {
+                let Some(rect) =
+                    Rect::from_xywh(x as f32, origin_y + y as f32, width as f32, height as f32)
+                else {
                     return;
                 };
                 let mut paint = Paint::default();
                 paint.set_color_rgba8(color.r(), color.g(), color.b(), color.a());
-                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                text_pixmap.fill_rect(rect, &paint, Transform::identity(), None);
             },
         );
+        let destination_extent = available as f64 * visual_scale;
+        let left = center.x - destination_extent / 2.0;
+        let top = center.y - destination_extent / 2.0;
+        let Some(rect) = Rect::from_xywh(
+            left as f32,
+            top as f32,
+            destination_extent as f32,
+            destination_extent as f32,
+        ) else {
+            return;
+        };
+        let scale = destination_extent as f32 / source_extent as f32;
+        let paint = Paint {
+            shader: Pattern::new(
+                text_pixmap.as_ref(),
+                SpreadMode::Pad,
+                FilterQuality::Bilinear,
+                1.0,
+                Transform::from_row(scale, 0.0, 0.0, scale, left as f32, top as f32),
+            ),
+            ..Paint::default()
+        };
+        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
     }
 
     fn draw_icon(
@@ -456,27 +524,35 @@ impl Renderer {
         if !path.is_file() {
             return false;
         }
-        let size = style.icon_fill.map_or_else(
-            || {
-                style.icon_size.map_or(circle_size * 0.55, |icon_size| {
-                    icon_size * circle_size / style.width.unwrap_or(circle_size)
-                })
-            },
-            |fill| (circle_size - style.border_width * 2.0).max(0.0) * fill,
-        );
-        let size = size.round().max(1.0) as u32;
+        let scaled_size = |circle_size: f64| {
+            style.icon_fill.map_or_else(
+                || {
+                    style.icon_size.map_or(circle_size * 0.55, |icon_size| {
+                        icon_size * circle_size / style.width.unwrap_or(circle_size)
+                    })
+                },
+                |fill| (circle_size - style.border_width * 2.0).max(0.0) * fill,
+            )
+        };
+        let size = scaled_size(circle_size);
+        let size = size.max(1.0);
+        // tiny-skia forces nearest-neighbour sampling for translation-only
+        // pixmaps. Keep a 2x source so the final transform also contains a
+        // scale and can use bilinear filtering at fractional positions.
+        let final_circle_size = style.width.unwrap_or(circle_size) * style.scale;
+        let source_size = (scaled_size(final_circle_size).ceil() * 2.0).max(2.0) as u32;
         let rgba = [
             (style.color.red * 255.0) as u8,
             (style.color.green * 255.0) as u8,
             (style.color.blue * 255.0) as u8,
             255,
         ];
-        let key = (path.clone(), size, rgba);
+        let key = (path.clone(), source_size, rgba);
         if !self.icons.contains_key(&key) {
             let loaded = if path.extension().is_some_and(|extension| extension == "svg") {
-                load_svg(&path, size, rgba)
+                load_svg(&path, source_size, rgba)
             } else {
-                load_raster(&path, size)
+                load_raster(&path, source_size)
             };
             let Some(icon) = loaded else {
                 return false;
@@ -484,19 +560,24 @@ impl Renderer {
             self.icons.insert(key.clone(), icon);
         }
         let icon = &self.icons[&key];
-        let x = (center.x - icon.width() as f64 / 2.0) as i32;
-        let y = (center.y - icon.height() as f64 / 2.0) as i32;
-        pixmap.draw_pixmap(
-            x,
-            y,
-            icon.as_ref(),
-            &PixmapPaint {
-                opacity: style.content_opacity() as f32,
-                ..PixmapPaint::default()
-            },
-            Transform::identity(),
-            None,
-        );
+        let left = center.x - size / 2.0;
+        let top = center.y - size / 2.0;
+        let Some(rect) = Rect::from_xywh(left as f32, top as f32, size as f32, size as f32) else {
+            return false;
+        };
+        let scale_x = size as f32 / icon.width() as f32;
+        let scale_y = size as f32 / icon.height() as f32;
+        let paint = Paint {
+            shader: Pattern::new(
+                icon.as_ref(),
+                SpreadMode::Pad,
+                FilterQuality::Bilinear,
+                style.content_opacity() as f32,
+                Transform::from_row(scale_x, 0.0, 0.0, scale_y, left as f32, top as f32),
+            ),
+            ..Paint::default()
+        };
+        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
         true
     }
 }

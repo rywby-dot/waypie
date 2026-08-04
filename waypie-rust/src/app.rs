@@ -1,4 +1,8 @@
-use std::{path::PathBuf, process::Command, time::Instant};
+use std::{
+    path::PathBuf,
+    process::Command,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Result, bail};
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::{
@@ -40,11 +44,12 @@ use wayland_client::{
 
 use crate::{
     config::Config,
-    geometry::Point,
+    geometry::{Point, angular_distance, direction_angle},
     hover::HoverDetector,
     model::{MenuState, Target},
     render::{Renderer, Scene},
     style::StyleSheet,
+    visual::{Animator, Motion, NodeKey, NodeRole, NodeTarget},
 };
 
 const LEFT_BUTTON: u32 = 0x110;
@@ -101,6 +106,7 @@ pub struct App {
     pub viewporter: Option<WpViewporter>,
     pub qh: QueueHandle<Self>,
     pub exit: bool,
+    pub reopen_requested: bool,
 
     layers: Vec<OutputLayer>,
     active_layer: Option<usize>,
@@ -118,6 +124,8 @@ pub struct App {
     hover_detector: HoverDetector,
     pointer_position: Option<Point>,
     turbo_active: bool,
+    animator: Animator,
+    closing_until: Option<Instant>,
 }
 
 impl App {
@@ -147,6 +155,7 @@ impl App {
             viewporter,
             qh,
             exit: false,
+            reopen_requested: false,
             layers: vec![],
             active_layer: None,
             visible: false,
@@ -163,11 +172,17 @@ impl App {
             hover_detector: HoverDetector::default(),
             pointer_position: None,
             turbo_active: false,
+            animator: Animator::default(),
+            closing_until: None,
         }
     }
 
     pub fn handle_control(&mut self, command: &[u8]) {
         match command {
+            b"show" if self.closing_until.is_some() => {
+                self.reopen_requested = true;
+                self.closing_until = Some(Instant::now());
+            }
             b"show" | b"quit" => self.hide(),
             _ => {}
         }
@@ -213,6 +228,7 @@ impl App {
         }
         let config = Config::load(&self.config_dir.join("config"))?;
         let styles = StyleSheet::load(&self.config_dir.join("style.css"))?;
+        styles.animation()?;
         self.renderer.configure_fonts(styles.font_families());
         self.prepare_layers();
         if self.layers.is_empty() {
@@ -225,6 +241,8 @@ impl App {
         self.pending_activation = activation_token;
         self.pointer_position = None;
         self.turbo_active = false;
+        self.animator.clear();
+        self.closing_until = None;
         self.active_layer = None;
         self.visible = true;
         for index in 0..self.layers.len() {
@@ -237,7 +255,11 @@ impl App {
     }
 
     pub fn hide(&mut self) {
-        if self.exit {
+        self.begin_hide(None);
+    }
+
+    fn begin_hide(&mut self, action: Option<(NodeKey, Point)>) {
+        if self.exit || self.closing_until.is_some() {
             return;
         }
         self.visible = false;
@@ -247,6 +269,46 @@ impl App {
             self.set_click_through(surface, true);
             surface.commit();
         }
+        let animation = self
+            .styles
+            .as_ref()
+            .and_then(|styles| styles.animation().ok());
+        let close_duration = animation
+            .as_ref()
+            .map_or(Duration::ZERO, |animation| animation.close_duration);
+        let action_duration = animation
+            .as_ref()
+            .map_or(close_duration, |animation| animation.action_duration);
+        let total_duration = if action.is_some() {
+            close_duration.max(action_duration)
+        } else {
+            close_duration
+        };
+        if total_duration.is_zero() {
+            self.finish_hide();
+            return;
+        }
+        let spring = animation
+            .as_ref()
+            .map(|animation| animation.action_spring)
+            .unwrap_or_default();
+        let action_scale = animation
+            .as_ref()
+            .map_or(1.3, |animation| animation.action_scale);
+        self.animator.close(
+            action
+                .as_ref()
+                .map(|(key, point)| (key, *point, action_scale)),
+            close_duration,
+            action_duration,
+            spring,
+        );
+        self.closing_until = Some(Instant::now() + total_duration);
+        self.draw();
+    }
+
+    fn finish_hide(&mut self) {
+        self.redraw_pending = false;
         self.layers.clear();
         self.exit = true;
     }
@@ -259,6 +321,10 @@ impl App {
         self.config
             .as_ref()
             .is_some_and(|config| config.hover_mode || self.turbo_active)
+    }
+
+    pub fn needs_tick(&self) -> bool {
+        self.hover_enabled() || self.closing_until.is_some() || self.animator.is_animating()
     }
 
     fn set_click_through(&self, surface: &LayerSurface, enabled: bool) {
@@ -311,6 +377,7 @@ impl App {
         let hitbox = self.center_hitbox();
         self.state.update_pointer(pointer, config, hitbox);
         self.hover_detector.reset(Some(center));
+        self.sync_visual(false);
         self.draw();
     }
 
@@ -325,6 +392,190 @@ impl App {
                 .and_then(|style| style.width.map(|width| width * style.scale))
                 .unwrap_or(0.0)
         })
+    }
+
+    fn visual_targets(&self) -> Vec<NodeTarget> {
+        let (Some(config), Some(styles)) = (self.config.as_ref(), self.styles.as_ref()) else {
+            return vec![];
+        };
+        let path = self.state.path();
+        let centers = self.state.centers();
+        let mut targets = vec![];
+        for (depth, center) in centers.iter().copied().enumerate() {
+            let item_path = path[..depth].to_vec();
+            let role = if depth + 1 == centers.len() {
+                NodeRole::Center
+            } else {
+                NodeRole::History
+            };
+            let active = match role {
+                NodeRole::Center => self.state.active() == Some(Target::Center),
+                NodeRole::History => self.state.active() == Some(Target::Parent(depth)),
+                NodeRole::Item => false,
+            };
+            let mut selectors = vec!["circle"];
+            selectors.push(match role {
+                NodeRole::Center => "circle.center",
+                NodeRole::History => "circle.history",
+                NodeRole::Item => "circle.item",
+            });
+            if active {
+                selectors.push("circle.active");
+                selectors.push(match role {
+                    NodeRole::Center => "circle.center.active",
+                    NodeRole::History => "circle.history.active",
+                    NodeRole::Item => "circle.item.active",
+                });
+            }
+            let style = styles.circle(&selectors).unwrap_or_default();
+            targets.push(NodeTarget {
+                key: NodeKey::Menu(item_path.clone()),
+                item_path,
+                role,
+                position: center,
+                origin: center,
+                size: style.width.unwrap_or(0.0) * style.scale,
+                active,
+                icon_visible: role != NodeRole::Center
+                    || !matches!(self.state.active(), Some(Target::Item(_))),
+            });
+        }
+        let Some(center) = centers.last().copied() else {
+            return targets;
+        };
+        let current = self.state.current(config);
+        let pointer_angle = self
+            .state
+            .pointer()
+            .filter(|_| matches!(self.state.active(), Some(Target::Item(_))))
+            .map(|pointer| {
+                direction_angle(Point {
+                    x: pointer.x - center.x,
+                    y: pointer.y - center.y,
+                })
+            });
+        for (index, item) in current.items.iter().enumerate() {
+            let active = self.state.active() == Some(Target::Item(index));
+            let mut selectors = vec!["circle", "circle.item"];
+            if item.is_submenu() {
+                selectors.push("circle.submenu");
+            }
+            if active {
+                selectors.push("circle.active");
+                selectors.push(if item.is_submenu() {
+                    "circle.submenu.active"
+                } else {
+                    "circle.item.active"
+                });
+            }
+            let style = styles.circle(&selectors).unwrap_or_default();
+            let extra_distance = if active {
+                style.distance.unwrap_or(0.0)
+            } else if let Some(pointer_angle) = pointer_angle {
+                let mut active_selectors = vec!["circle", "circle.item"];
+                if item.is_submenu() {
+                    active_selectors.push("circle.submenu");
+                }
+                active_selectors.push("circle.active");
+                active_selectors.push(if item.is_submenu() {
+                    "circle.submenu.active"
+                } else {
+                    "circle.item.active"
+                });
+                let active_style = styles.circle(&active_selectors).unwrap_or_default();
+                let angle_difference = angular_distance(pointer_angle, item.angle.unwrap_or(0.0));
+                let angular_factor = (1.0 + angle_difference.to_radians().cos()) / 2.0;
+                active_style.distance.unwrap_or(0.0) * active_style.follow_distance * angular_factor
+            } else {
+                0.0
+            };
+            let distance = (config.menu_radius + extra_distance).max(0.0);
+            let position =
+                crate::geometry::radial_position(center, item.angle.unwrap_or(0.0), distance);
+            let mut item_path = path.to_vec();
+            item_path.push(index);
+            let key = if item.is_submenu() {
+                NodeKey::Menu(item_path.clone())
+            } else {
+                NodeKey::Action(path.to_vec(), index)
+            };
+            targets.push(NodeTarget {
+                key,
+                item_path,
+                role: NodeRole::Item,
+                position,
+                origin: center,
+                size: style.width.unwrap_or(0.0) * style.scale,
+                active,
+                icon_visible: true,
+            });
+        }
+        targets
+    }
+
+    fn sync_visual(&mut self, animate: bool) {
+        let targets = self.visual_targets();
+        if animate {
+            let animation = self
+                .styles
+                .as_ref()
+                .and_then(|styles| styles.animation().ok());
+            let move_duration = animation
+                .as_ref()
+                .map_or(Duration::ZERO, |animation| animation.menu_duration);
+            let create_duration = animation
+                .as_ref()
+                .map_or(move_duration, |animation| animation.item_create_duration);
+            let move_spring = animation
+                .as_ref()
+                .map(|animation| animation.menu_move_spring)
+                .unwrap_or_default();
+            let create_spring = animation
+                .as_ref()
+                .map(|animation| animation.item_create_spring)
+                .unwrap_or_default();
+            let icon_duration = animation
+                .as_ref()
+                .map_or(Duration::ZERO, |animation| animation.icon_duration);
+            self.animator.reconcile(
+                targets,
+                Motion {
+                    duration: move_duration,
+                    spring: move_spring,
+                },
+                Motion {
+                    duration: create_duration,
+                    spring: create_spring,
+                },
+                icon_duration,
+                true,
+            );
+        } else if self.animator.is_empty() {
+            self.animator.reconcile(
+                targets,
+                Motion::default(),
+                Motion::default(),
+                Duration::ZERO,
+                false,
+            );
+        } else {
+            let animation = self
+                .styles
+                .as_ref()
+                .and_then(|styles| styles.animation().ok());
+            let duration = animation
+                .as_ref()
+                .map_or(Duration::ZERO, |animation| animation.hover_duration);
+            let spring = animation
+                .as_ref()
+                .map(|animation| animation.hover_spring)
+                .unwrap_or_default();
+            let icon_duration = animation
+                .as_ref()
+                .map_or(Duration::ZERO, |animation| animation.icon_duration);
+            self.animator
+                .hover(targets, duration, icon_duration, spring);
+        }
     }
 
     fn update_pointer(&mut self, position: Point) {
@@ -354,7 +605,9 @@ impl App {
         let selection = (config.hover_mode || self.turbo_active)
             .then(|| self.hover_detector.on_motion(position, Instant::now()))
             .flatten();
-        if changed {
+        let following = matches!(self.state.active(), Some(Target::Item(_)));
+        if changed || following {
+            self.sync_visual(false);
             self.draw();
         }
         if let Some(selection) = selection {
@@ -395,6 +648,7 @@ impl App {
                     );
                     self.hover_detector
                         .reset(self.state.centers().last().copied());
+                    self.sync_visual(true);
                     self.draw();
                 } else {
                     self.hide();
@@ -411,6 +665,7 @@ impl App {
                 );
                 self.hover_detector
                     .reset(self.state.centers().last().copied());
+                self.sync_visual(true);
                 self.draw();
             }
             Target::Item(item_index) => {
@@ -427,10 +682,12 @@ impl App {
                     );
                     self.hover_detector
                         .reset(self.state.centers().last().copied());
+                    self.sync_visual(true);
                     self.draw();
                 } else if !submenu_only && let Some(command) = item.command {
                     launch(&command);
-                    self.hide();
+                    let key = NodeKey::Action(self.state.path().to_vec(), item_index);
+                    self.begin_hide(Some((key, position)));
                 }
             }
         }
@@ -441,6 +698,15 @@ impl App {
             && let Some(position) = self.hover_detector.on_timeout(Instant::now())
         {
             self.activate_at(position, true, self.turbo_active);
+        }
+        if self.animator.tick() {
+            self.draw();
+        }
+        if self
+            .closing_until
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.finish_hide();
         }
     }
 
@@ -490,12 +756,14 @@ impl App {
         let Some(mut pixmap) = Pixmap::new(width, height) else {
             return;
         };
+        let nodes = self.animator.nodes();
         self.renderer.render(
             &mut pixmap,
             &Scene {
                 config,
                 styles,
                 state: &self.state,
+                nodes: &nodes,
                 icon_root: &self.config_dir.join("icons"),
             },
         );
