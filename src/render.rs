@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
+    hash::Hash,
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -20,10 +21,11 @@ const ICON_SOURCE_PADDING: u32 = 2;
 const INDICATOR_CLIP_OVERLAP: f64 = 1.0;
 
 use crate::{
+    appearance::node_style,
     config::{Config, Item, item_at_path},
     geometry::{Point, radial_position},
     model::{MenuState, Target},
-    style::{CircleStyle, Color, StyleSheet},
+    style::{AnimationStyle, CircleStyle, Color, StyleSheet},
     visual::{NodeKey, NodeRole, VisualNode},
 };
 
@@ -76,6 +78,23 @@ fn connector_is_active(role: NodeRole, active: bool) -> bool {
     role == NodeRole::History && active
 }
 
+fn temporary_connector_parent(node: &VisualNode) -> Option<&[usize]> {
+    match &node.key {
+        NodeKey::Action(path, _) if node.selected_action || node.travel_connector => {
+            Some(path.as_slice())
+        }
+        NodeKey::Menu(path) if node.return_connector && !path.is_empty() => {
+            Some(&path[..path.len() - 1])
+        }
+        NodeKey::Menu(path)
+            if node.travel_connector && node.role == NodeRole::Item && !path.is_empty() =>
+        {
+            Some(&path[..path.len() - 1])
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ColorAnimationKey {
     Overlay,
@@ -96,16 +115,16 @@ enum OpacityAnimationKey {
 }
 
 #[derive(Clone, Copy)]
-struct ColorAnimation {
-    current: Color,
-    from: Color,
-    target: Color,
+struct TimedTransition<T> {
+    current: T,
+    from: T,
+    target: T,
     started: Instant,
     duration: Duration,
 }
 
-impl ColorAnimation {
-    fn sample(&mut self, now: Instant) -> Color {
+impl<T: Copy + PartialEq> TimedTransition<T> {
+    fn sample(&mut self, now: Instant, interpolate: impl FnOnce(T, T, f64) -> T) -> T {
         let progress = if self.duration.is_zero() {
             1.0
         } else {
@@ -115,7 +134,7 @@ impl ColorAnimation {
         self.current = if progress >= 1.0 {
             self.target
         } else {
-            lerp_color(self.from, self.target, progress as f32)
+            interpolate(self.from, self.target, progress)
         };
         self.current
     }
@@ -123,36 +142,43 @@ impl ColorAnimation {
     fn finished(&self, now: Instant) -> bool {
         self.duration.is_zero() || now - self.started >= self.duration
     }
+
+    fn remaining(&self, now: Instant) -> Duration {
+        self.duration
+            .saturating_sub(now.duration_since(self.started))
+    }
 }
 
-#[derive(Clone, Copy)]
-struct OpacityAnimation {
-    current: f64,
-    from: f64,
-    target: f64,
-    started: Instant,
+type ColorAnimation = TimedTransition<Color>;
+type OpacityAnimation = TimedTransition<f64>;
+
+fn animate_transition<K, T>(
+    animations: &mut HashMap<K, TimedTransition<T>>,
+    key: K,
+    target: T,
     duration: Duration,
-}
-
-impl OpacityAnimation {
-    fn sample(&mut self, now: Instant) -> f64 {
-        let progress = if self.duration.is_zero() {
-            1.0
-        } else {
-            ((now - self.started).as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0)
-        };
-        let progress = progress * progress * (3.0 - 2.0 * progress);
-        self.current = if progress >= 1.0 {
-            self.target
-        } else {
-            self.from + (self.target - self.from) * progress
-        };
-        self.current
+    interpolate: impl Fn(T, T, f64) -> T + Copy,
+) -> T
+where
+    K: Eq + Hash,
+    T: Copy + PartialEq,
+{
+    let now = Instant::now();
+    let animation = animations.entry(key).or_insert(TimedTransition {
+        current: target,
+        from: target,
+        target,
+        started: now,
+        duration: Duration::ZERO,
+    });
+    animation.sample(now, interpolate);
+    if animation.target != target {
+        animation.from = animation.current;
+        animation.target = target;
+        animation.started = now;
+        animation.duration = duration;
     }
-
-    fn finished(&self, now: Instant) -> bool {
-        self.duration.is_zero() || now - self.started >= self.duration
-    }
+    animation.sample(now, interpolate)
 }
 
 pub struct Renderer {
@@ -230,6 +256,11 @@ impl Renderer {
         self.resolved_families = resolved;
     }
 
+    pub fn configure_animations(&mut self, animation: AnimationStyle) {
+        self.color_duration = animation.color_duration;
+        self.opacity_duration = animation.opacity_duration;
+    }
+
     pub fn is_animating(&self) -> bool {
         let now = Instant::now();
         self.color_animations
@@ -246,76 +277,39 @@ impl Renderer {
         let color = self
             .color_animations
             .values()
-            .map(|animation| {
-                animation
-                    .duration
-                    .saturating_sub(now.duration_since(animation.started))
-            })
+            .map(|animation| animation.remaining(now))
             .max()
             .unwrap_or(Duration::ZERO);
         let opacity = self
             .opacity_animations
             .values()
-            .map(|animation| {
-                animation
-                    .duration
-                    .saturating_sub(now.duration_since(animation.started))
-            })
+            .map(|animation| animation.remaining(now))
             .max()
             .unwrap_or(Duration::ZERO);
         color.max(opacity)
     }
 
     fn animated_color(&mut self, key: ColorAnimationKey, target: Color) -> Color {
-        let now = Instant::now();
-        let animation = self.color_animations.entry(key).or_insert(ColorAnimation {
-            current: target,
-            from: target,
+        animate_transition(
+            &mut self.color_animations,
+            key,
             target,
-            started: now,
-            duration: Duration::ZERO,
-        });
-        animation.sample(now);
-        if animation.target != target {
-            animation.from = animation.current;
-            animation.target = target;
-            animation.started = now;
-            animation.duration = self.color_duration;
-        }
-        animation.sample(now)
+            self.color_duration,
+            |from, target, progress| lerp_color(from, target, progress as f32),
+        )
     }
 
     fn animated_opacity(&mut self, key: OpacityAnimationKey, target: f64) -> f64 {
-        let now = Instant::now();
-        let animation = self
-            .opacity_animations
-            .entry(key)
-            .or_insert(OpacityAnimation {
-                current: target,
-                from: target,
-                target,
-                started: now,
-                duration: Duration::ZERO,
-            });
-        animation.sample(now);
-        if animation.target != target {
-            animation.from = animation.current;
-            animation.target = target;
-            animation.started = now;
-            animation.duration = self.opacity_duration;
-        }
-        animation.sample(now)
+        animate_transition(
+            &mut self.opacity_animations,
+            key,
+            target,
+            self.opacity_duration,
+            |from, target, progress| from + (target - from) * progress,
+        )
     }
 
     pub fn render(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
-        self.color_duration = scene
-            .styles
-            .animation()
-            .map_or(Duration::ZERO, |animation| animation.color_duration);
-        self.opacity_duration = scene
-            .styles
-            .animation()
-            .map_or(Duration::ZERO, |animation| animation.opacity_duration);
         let mut overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
         overlay.background_color =
             self.animated_color(ColorAnimationKey::Overlay, overlay.background_color);
@@ -335,12 +329,7 @@ impl Renderer {
         });
         for node in nodes {
             let item = item_at_path(&scene.config.menu, &node.item_path);
-            let role = match node.role {
-                NodeRole::History => Role::History,
-                NodeRole::Center => Role::Center,
-                NodeRole::Item => Role::Item,
-            };
-            let mut style = item_style(scene.styles, item, role, node.active);
+            let mut style = node_style(scene.styles, item, node.role, node.active);
             let content_opacity = style.content_opacity();
             style.opacity =
                 self.animated_opacity(OpacityAnimationKey::Node(node.key.clone()), style.opacity);
@@ -387,19 +376,19 @@ impl Renderer {
                         || (node.role == NodeRole::Center
                             && !node.item_path.is_empty()
                             && !node.is_removing()
-                            && node.indicator_factor > 0.0),
+                            && node.indicator_factor() > 0.0),
                     indicators_return: node.role == NodeRole::History,
                     indicator_skip_index: if node.role == NodeRole::History {
                         path.get(node.item_path.len()).copied()
                     } else {
                         None
                     },
-                    indicator_reveal: (node.indicator_factor * node.opacity)
+                    indicator_reveal: (node.indicator_factor() * node.opacity)
                         .clamp(0.0, 1.0)
                         .sqrt(),
                     geometry_size: node.size,
                     opacity: node.opacity,
-                    icon_opacity: node.icon_opacity,
+                    icon_opacity: node.icon_opacity(),
                 },
             );
         }
@@ -425,7 +414,7 @@ impl Renderer {
             let Some(end_node) = scene.nodes.iter().find(|node| node.key == end_key) else {
                 continue;
             };
-            let connector_factor = end_node.connector_factor.clamp(0.0, 1.0);
+            let connector_factor = end_node.connector_factor().clamp(0.0, 1.0);
             if connector_factor <= f64::EPSILON {
                 continue;
             }
@@ -443,59 +432,17 @@ impl Renderer {
                 OpacityAnimationKey::Connector(end_node.key.clone()),
                 style.opacity,
             );
-            let width = style.width.unwrap_or(0.0);
-            if width <= 0.0 {
-                continue;
-            }
-            let start_radius = start_node.size / 2.0;
-            let end_radius = end_node.size / 2.0;
-            paint.set_color(to_skia(
-                style.color,
-                style.opacity * connector_factor.sqrt() * start_node.opacity.min(end_node.opacity),
-            ));
-            let stroke = Stroke {
-                width: (width * connector_factor) as f32,
-                ..Stroke::default()
-            };
-            let pair = [start_node.position, end_node.position];
-            let delta = Point {
-                x: pair[1].x - pair[0].x,
-                y: pair[1].y - pair[0].y,
-            };
-            let length = delta.x.hypot(delta.y);
-            if length <= start_radius + end_radius || length <= f64::EPSILON {
-                continue;
-            }
-            let start = Point {
-                x: pair[0].x + delta.x / length * start_radius,
-                y: pair[0].y + delta.y / length * start_radius,
-            };
-            let end = Point {
-                x: pair[1].x - delta.x / length * end_radius,
-                y: pair[1].y - delta.y / length * end_radius,
-            };
-            let mut path = PathBuilder::new();
-            path.move_to(start.x as f32, start.y as f32);
-            path.line_to(end.x as f32, end.y as f32);
-            if let Some(path) = path.finish() {
-                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-            }
+            draw_connector_segment(
+                pixmap,
+                &mut paint,
+                start_node,
+                end_node,
+                &style,
+                connector_factor,
+            );
         }
         let temporary_links = scene.nodes.iter().filter_map(|node| {
-            let parent_path = match &node.key {
-                NodeKey::Action(path, _) if node.selected_action || node.travel_connector => {
-                    Some(path.as_slice())
-                }
-                NodeKey::Menu(path) if node.return_connector && !path.is_empty() => {
-                    Some(&path[..path.len() - 1])
-                }
-                NodeKey::Menu(path)
-                    if node.travel_connector && node.role == NodeRole::Item && !path.is_empty() =>
-                {
-                    Some(&path[..path.len() - 1])
-                }
-                _ => None,
-            }?;
+            let parent_path = temporary_connector_parent(node)?;
             let parent = scene
                 .nodes
                 .iter()
@@ -503,7 +450,7 @@ impl Renderer {
             Some((parent, node))
         });
         for (center, action) in temporary_links {
-            let connector_factor = action.connector_factor.clamp(0.0, 1.0);
+            let connector_factor = action.connector_factor().clamp(0.0, 1.0);
             if connector_factor <= f64::EPSILON {
                 continue;
             }
@@ -521,41 +468,7 @@ impl Renderer {
                 OpacityAnimationKey::Connector(action.key.clone()),
                 style.opacity,
             );
-            let width = style.width.unwrap_or(0.0);
-            if width <= 0.0 {
-                continue;
-            }
-            let center_position = center.position;
-            let action_position = action.position;
-            let delta = Point {
-                x: action_position.x - center_position.x,
-                y: action_position.y - center_position.y,
-            };
-            let length = delta.x.hypot(delta.y);
-            let start_radius = center.size / 2.0;
-            let end_radius = action.size / 2.0;
-            if length > start_radius + end_radius && length > f64::EPSILON {
-                paint.set_color(to_skia(
-                    style.color,
-                    style.opacity * connector_factor.sqrt() * center.opacity.min(action.opacity),
-                ));
-                let stroke = Stroke {
-                    width: (width * connector_factor) as f32,
-                    ..Stroke::default()
-                };
-                let mut path = PathBuilder::new();
-                path.move_to(
-                    (center_position.x + delta.x / length * start_radius) as f32,
-                    (center_position.y + delta.y / length * start_radius) as f32,
-                );
-                path.line_to(
-                    (action_position.x - delta.x / length * end_radius) as f32,
-                    (action_position.y - delta.y / length * end_radius) as f32,
-                );
-                if let Some(path) = path.finish() {
-                    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-                }
-            }
+            draw_connector_segment(pixmap, &mut paint, center, action, &style, connector_factor);
         }
     }
 
@@ -897,37 +810,6 @@ impl Renderer {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Role {
-    Item,
-    Center,
-    History,
-}
-
-fn item_style(styles: &StyleSheet, item: &Item, role: Role, active: bool) -> CircleStyle {
-    let mut selectors = vec!["circle"];
-    match role {
-        Role::Item => {
-            selectors.push("circle.item");
-            if item.is_submenu() {
-                selectors.push("circle.submenu");
-            }
-        }
-        Role::Center => selectors.push("circle.center"),
-        Role::History => selectors.push("circle.history"),
-    }
-    if active {
-        selectors.push("circle.active");
-        match role {
-            Role::Item if item.is_submenu() => selectors.push("circle.submenu.active"),
-            Role::Item => selectors.push("circle.item.active"),
-            Role::Center => selectors.push("circle.center.active"),
-            Role::History => selectors.push("circle.history.active"),
-        }
-    }
-    styles.circle(&selectors).unwrap_or_default()
-}
-
 fn draw_rounded_box(pixmap: &mut Pixmap, center: Point, size: f64, style: &CircleStyle) {
     let Some(rect) = Rect::from_xywh(
         (center.x - size / 2.0) as f32,
@@ -955,6 +837,61 @@ fn draw_rounded_box(pixmap: &mut Pixmap, center: Point, size: f64, style: &Circl
             &border,
             &Stroke {
                 width: style.border_width as f32,
+                ..Stroke::default()
+            },
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+fn draw_connector_segment(
+    pixmap: &mut Pixmap,
+    paint: &mut Paint<'_>,
+    start_node: &VisualNode,
+    end_node: &VisualNode,
+    style: &CircleStyle,
+    factor: f64,
+) {
+    let width = style.width.unwrap_or(0.0);
+    if width <= 0.0 || factor <= f64::EPSILON {
+        return;
+    }
+    let delta = Point {
+        x: end_node.position.x - start_node.position.x,
+        y: end_node.position.y - start_node.position.y,
+    };
+    let length = delta.x.hypot(delta.y);
+    let start_radius = start_node.size / 2.0;
+    let end_radius = end_node.size / 2.0;
+    if length <= start_radius + end_radius || length <= f64::EPSILON {
+        return;
+    }
+    let direction = Point {
+        x: delta.x / length,
+        y: delta.y / length,
+    };
+    let start = Point {
+        x: start_node.position.x + direction.x * start_radius,
+        y: start_node.position.y + direction.y * start_radius,
+    };
+    let end = Point {
+        x: end_node.position.x - direction.x * end_radius,
+        y: end_node.position.y - direction.y * end_radius,
+    };
+    paint.set_color(to_skia(
+        style.color,
+        style.opacity * factor.sqrt() * start_node.opacity.min(end_node.opacity),
+    ));
+    let mut path = PathBuilder::new();
+    path.move_to(start.x as f32, start.y as f32);
+    path.line_to(end.x as f32, end.y as f32);
+    if let Some(path) = path.finish() {
+        pixmap.stroke_path(
+            &path,
+            paint,
+            &Stroke {
+                width: (width * factor) as f32,
                 ..Stroke::default()
             },
             Transform::identity(),

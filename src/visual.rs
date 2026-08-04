@@ -58,13 +58,10 @@ pub struct VisualNode {
     pub position: Point,
     pub size: f64,
     pub opacity: f64,
-    pub icon_opacity: f64,
     pub active: bool,
     pub selected_action: bool,
     pub return_connector: bool,
     pub travel_connector: bool,
-    pub connector_factor: f64,
-    pub indicator_factor: f64,
     base_position: Point,
     base_size: f64,
     hover_offset: Point,
@@ -76,26 +73,17 @@ pub struct VisualNode {
     hover_started: Instant,
     hover_duration: Duration,
     hover_spring: Spring,
-    connector_from: f64,
-    connector_target: f64,
-    connector_started: Instant,
-    connector_duration: Duration,
-    indicator_from: f64,
-    indicator_target: f64,
-    indicator_started: Instant,
-    indicator_duration: Duration,
+    icon: ScalarTransition,
+    connector: ScalarTransition,
+    indicator: ScalarTransition,
     indicator_spring: Spring,
     collapse_to: Point,
     from_position: Point,
     target_position: Point,
-    from_scale: f64,
-    target_scale: f64,
+    from_size: f64,
+    target_size: f64,
     from_opacity: f64,
     target_opacity: f64,
-    icon_from: f64,
-    icon_target: f64,
-    icon_started: Instant,
-    icon_duration: Duration,
     started: Instant,
     duration: Duration,
     spring: Spring,
@@ -124,6 +112,68 @@ struct TransitionTarget {
     removing: bool,
     position_end: f64,
     opacity_delay: f64,
+}
+
+#[derive(Clone, Debug)]
+struct ScalarTransition {
+    value: f64,
+    from: f64,
+    target: f64,
+    started: Instant,
+    duration: Duration,
+}
+
+impl ScalarTransition {
+    fn new(value: f64, target: f64, duration: Duration, now: Instant) -> Self {
+        Self {
+            value,
+            from: value,
+            target,
+            started: now,
+            duration,
+        }
+    }
+
+    fn set_target(&mut self, target: f64, duration: Duration, now: Instant) {
+        if (self.target - target).abs() < f64::EPSILON {
+            return;
+        }
+        self.from = self.value;
+        self.target = target;
+        self.started = now;
+        self.duration = duration;
+        if duration.is_zero() {
+            self.value = target;
+            self.from = target;
+        }
+    }
+
+    fn reset(&mut self, value: f64, now: Instant) {
+        *self = Self::new(value, value, Duration::ZERO, now);
+    }
+
+    fn sample(&mut self, now: Instant, easing: impl FnOnce(f64) -> f64) -> f64 {
+        let progress = self.progress(now);
+        self.value = self.from + (self.target - self.from) * easing(progress);
+        self.value
+    }
+
+    fn progress(&self, now: Instant) -> f64 {
+        if self.duration.is_zero() {
+            1.0
+        } else {
+            ((now - self.started).as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0)
+        }
+    }
+
+    fn finished(&self, now: Instant) -> bool {
+        self.duration.is_zero() || now - self.started >= self.duration
+    }
+
+    fn remaining(&self, now: Instant) -> Duration {
+        self.duration
+            .saturating_sub(now.duration_since(self.started))
+    }
 }
 
 fn parent_key(key: &NodeKey) -> Option<NodeKey> {
@@ -156,48 +206,33 @@ impl VisualNode {
         self.removing
     }
 
+    pub fn icon_opacity(&self) -> f64 {
+        self.icon.value
+    }
+
+    pub fn connector_factor(&self) -> f64 {
+        self.connector.value
+    }
+
+    pub fn indicator_factor(&self) -> f64 {
+        self.indicator.value
+    }
+
     fn set_connector_target(&mut self, target: f64, duration: Duration, now: Instant) {
-        if (self.connector_target - target).abs() < f64::EPSILON {
-            return;
-        }
-        self.connector_from = self.connector_factor;
-        self.connector_target = target;
-        self.connector_started = now;
-        self.connector_duration = duration;
-        if duration.is_zero() {
-            self.connector_factor = target;
-            self.connector_from = target;
-        }
+        self.connector.set_target(target, duration, now);
     }
 
     fn set_indicator_target(&mut self, target: f64, motion: Motion, now: Instant) {
-        if (self.indicator_target - target).abs() < f64::EPSILON {
+        if (self.indicator.target - target).abs() < f64::EPSILON {
             return;
         }
-        self.indicator_from = self.indicator_factor;
-        self.indicator_target = target;
-        self.indicator_started = now;
-        self.indicator_duration = motion.duration;
+        self.indicator.set_target(target, motion.duration, now);
         self.indicator_spring = motion.spring;
-        if motion.duration.is_zero() {
-            self.indicator_factor = target;
-            self.indicator_from = target;
-        }
     }
 
     fn set_icon_visible(&mut self, visible: bool, duration: Duration, now: Instant) {
         let target = f64::from(visible);
-        if (self.icon_target - target).abs() < f64::EPSILON {
-            return;
-        }
-        self.icon_from = self.icon_opacity;
-        self.icon_target = target;
-        self.icon_started = now;
-        self.icon_duration = duration;
-        if duration.is_zero() {
-            self.icon_opacity = target;
-            self.icon_from = target;
-        }
+        self.icon.set_target(target, duration, now);
     }
 
     fn sample(&mut self, now: Instant) {
@@ -228,7 +263,7 @@ impl VisualNode {
         self.base_position = self
             .from_position
             .lerp(self.target_position, position_movement);
-        self.base_size = self.from_scale + (self.target_scale - self.from_scale) * size_movement;
+        self.base_size = self.from_size + (self.target_size - self.from_size) * size_movement;
         self.opacity = self.from_opacity + (self.target_opacity - self.from_opacity) * fade;
         let hover_progress = if self.hover_duration.is_zero() {
             1.0
@@ -247,36 +282,16 @@ impl VisualNode {
             y: self.base_position.y + self.hover_offset.y,
         };
         self.size = self.base_size * self.hover_scale;
-        let icon_progress = if self.icon_duration.is_zero() {
-            1.0
-        } else {
-            ((now - self.icon_started).as_secs_f64() / self.icon_duration.as_secs_f64())
-                .clamp(0.0, 1.0)
-        };
-        self.icon_opacity =
-            self.icon_from + (self.icon_target - self.icon_from) * smoothstep(icon_progress);
-        let connector_progress = if self.connector_duration.is_zero() {
-            1.0
-        } else {
-            ((now - self.connector_started).as_secs_f64() / self.connector_duration.as_secs_f64())
-                .clamp(0.0, 1.0)
-        };
-        self.connector_factor = self.connector_from
-            + (self.connector_target - self.connector_from) * smoothstep(connector_progress);
-        if connector_progress >= 1.0 && self.connector_target <= f64::EPSILON {
+        self.icon.sample(now, smoothstep);
+        let connector_progress = self.connector.progress(now);
+        self.connector.sample(now, smoothstep);
+        if connector_progress >= 1.0 && self.connector.target <= f64::EPSILON {
             self.travel_connector = false;
         }
-        let indicator_progress = if self.indicator_duration.is_zero() {
-            1.0
-        } else {
-            ((now - self.indicator_started).as_secs_f64() / self.indicator_duration.as_secs_f64())
-                .clamp(0.0, 1.0)
-        };
-        self.indicator_factor = self.indicator_from
-            + (self.indicator_target - self.indicator_from)
-                * self.indicator_spring.sample(indicator_progress);
+        self.indicator
+            .sample(now, |progress| self.indicator_spring.sample(progress));
         if progress >= 1.0 {
-            self.base_size = self.target_scale;
+            self.base_size = self.target_size;
             self.opacity = self.target_opacity;
         }
         if self.movement_finished(now) {
@@ -292,7 +307,7 @@ impl VisualNode {
 
     fn retarget(&mut self, target: TransitionTarget, now: Instant) {
         if self.target_position == target.position
-            && (self.target_scale - target.size).abs() < f64::EPSILON
+            && (self.target_size - target.size).abs() < f64::EPSILON
             && (self.target_opacity - target.opacity).abs() < f64::EPSILON
             && self.removing == target.removing
             && (self.position_end - target.position_end).abs() < f64::EPSILON
@@ -302,8 +317,8 @@ impl VisualNode {
         }
         self.from_position = self.position;
         self.target_position = target.position;
-        self.from_scale = self.size;
-        self.target_scale = target.size;
+        self.from_size = self.size;
+        self.target_size = target.size;
         self.from_opacity = self.opacity;
         self.target_opacity = target.opacity;
         self.started = now;
@@ -335,11 +350,9 @@ impl VisualNode {
     fn finished(&self, now: Instant) -> bool {
         self.movement_finished(now)
             && (self.hover_duration.is_zero() || now - self.hover_started >= self.hover_duration)
-            && (self.connector_duration.is_zero()
-                || now - self.connector_started >= self.connector_duration)
-            && (self.indicator_duration.is_zero()
-                || now - self.indicator_started >= self.indicator_duration)
-            && (self.icon_duration.is_zero() || now - self.icon_started >= self.icon_duration)
+            && self.connector.finished(now)
+            && self.indicator.finished(now)
+            && self.icon.finished(now)
     }
 }
 
@@ -585,19 +598,17 @@ impl Animator {
                     node.opacity = 1.0;
                     node.from_position = target.rest_position;
                     node.target_position = target.rest_position;
-                    node.from_scale = target.rest_size;
-                    node.target_scale = target.rest_size;
+                    node.from_size = target.rest_size;
+                    node.target_size = target.rest_size;
                     node.from_opacity = 1.0;
                     node.target_opacity = 1.0;
                     node.removing = false;
                     node.return_connector = false;
-                    node.indicator_factor = f64::from(
+                    let indicator_value = f64::from(
                         matches!(target.role, NodeRole::Item | NodeRole::History)
                             && matches!(&key, NodeKey::Menu(_)),
                     );
-                    node.indicator_from = node.indicator_factor;
-                    node.indicator_target = node.indicator_factor;
-                    node.indicator_duration = Duration::ZERO;
+                    node.indicator.reset(indicator_value, now);
                     node.position_anchor = match (parent, parent_target) {
                         (Some(parent), Some(parent_target)) => Some(PositionAnchor {
                             parent,
@@ -620,6 +631,13 @@ impl Animator {
                     target.role == NodeRole::Center && !target.item_path.is_empty();
                 let creates_indicator = matches!(target.role, NodeRole::Item | NodeRole::History)
                     && matches!(&key, NodeKey::Menu(_));
+                let icon_target = f64::from(target.icon_visible);
+                let icon_initial =
+                    if target.icon_visible && create_animated && !icon_duration.is_zero() {
+                        0.0
+                    } else {
+                        icon_target
+                    };
                 let parent = parent_key(&key);
                 let parent_position = parent
                     .as_ref()
@@ -643,21 +661,10 @@ impl Animator {
                         position: creation_origin,
                         size: target.rest_size * initial,
                         opacity: initial,
-                        icon_opacity: if target.icon_visible
-                            && create_animated
-                            && !icon_duration.is_zero()
-                        {
-                            0.0
-                        } else if target.icon_visible {
-                            1.0
-                        } else {
-                            0.0
-                        },
                         active: target.active,
                         selected_action: false,
                         return_connector: false,
                         travel_connector: false,
-                        connector_factor: 0.0,
                         base_position: creation_origin,
                         base_size: target.rest_size * initial,
                         hover_offset: Point::default(),
@@ -669,44 +676,35 @@ impl Animator {
                         hover_started: now,
                         hover_duration: Duration::ZERO,
                         hover_spring: Spring::default(),
-                        connector_from: 0.0,
-                        connector_target: if creates_connector { 1.0 } else { 0.0 },
-                        connector_started: now,
-                        connector_duration: if creates_connector {
-                            connector_duration
-                        } else {
-                            Duration::ZERO
-                        },
-                        indicator_factor: 0.0,
-                        indicator_from: 0.0,
-                        indicator_target: if creates_indicator { 1.0 } else { 0.0 },
-                        indicator_started: now,
-                        indicator_duration: if creates_indicator {
-                            indicator.duration
-                        } else {
-                            Duration::ZERO
-                        },
+                        icon: ScalarTransition::new(icon_initial, icon_target, icon_duration, now),
+                        connector: ScalarTransition::new(
+                            0.0,
+                            f64::from(creates_connector),
+                            if creates_connector {
+                                connector_duration
+                            } else {
+                                Duration::ZERO
+                            },
+                            now,
+                        ),
+                        indicator: ScalarTransition::new(
+                            0.0,
+                            f64::from(creates_indicator),
+                            if creates_indicator {
+                                indicator.duration
+                            } else {
+                                Duration::ZERO
+                            },
+                            now,
+                        ),
                         indicator_spring: indicator.spring,
                         collapse_to: target.origin,
                         from_position: creation_origin,
                         target_position: target.rest_position,
-                        from_scale: target.rest_size * initial,
-                        target_scale: target.rest_size,
+                        from_size: target.rest_size * initial,
+                        target_size: target.rest_size,
                         from_opacity: initial,
                         target_opacity: 1.0,
-                        icon_from: if target.icon_visible
-                            && create_animated
-                            && !icon_duration.is_zero()
-                        {
-                            0.0
-                        } else if target.icon_visible {
-                            1.0
-                        } else {
-                            0.0
-                        },
-                        icon_target: f64::from(target.icon_visible),
-                        icon_started: now,
-                        icon_duration,
                         started: now,
                         duration: create_duration,
                         spring: create_spring,
@@ -888,11 +886,8 @@ impl Animator {
                 .map(|(_, point, scale)| (*point, *scale));
             node.selected_action = selected_target.is_some();
             if selected_target.is_some() {
-                node.connector_factor = 1.0;
-                node.connector_from = 1.0;
-                node.connector_target = 0.0;
-                node.connector_started = now;
-                node.connector_duration = connector_duration;
+                node.connector.reset(1.0, now);
+                node.connector.set_target(0.0, connector_duration, now);
             } else if matches!(&node.key, NodeKey::Menu(_)) {
                 let connector_target = if node.role == NodeRole::Item {
                     1.0
@@ -993,14 +988,15 @@ impl Animator {
             .values()
             .flat_map(|node| {
                 [
-                    (node.started, node.duration),
-                    (node.hover_started, node.hover_duration),
-                    (node.connector_started, node.connector_duration),
-                    (node.indicator_started, node.indicator_duration),
-                    (node.icon_started, node.icon_duration),
+                    node.duration
+                        .saturating_sub(now.duration_since(node.started)),
+                    node.hover_duration
+                        .saturating_sub(now.duration_since(node.hover_started)),
+                    node.connector.remaining(now),
+                    node.indicator.remaining(now),
+                    node.icon.remaining(now),
                 ]
             })
-            .map(|(started, duration)| duration.saturating_sub(now.duration_since(started)))
             .max()
             .unwrap_or(Duration::ZERO)
     }
@@ -1009,6 +1005,19 @@ impl Animator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interrupted_scalar_transition_continues_from_its_visible_value() {
+        let now = Instant::now();
+        let mut transition = ScalarTransition::new(0.0, 1.0, Duration::from_secs(1), now);
+        transition.started = now - Duration::from_millis(500);
+        let visible = transition.sample(now, smoothstep);
+        transition.set_target(0.0, Duration::from_secs(1), now);
+
+        assert!((visible - 0.5).abs() < 0.001);
+        assert!((transition.from - visible).abs() < 0.001);
+        assert!((transition.value - visible).abs() < 0.001);
+    }
 
     #[test]
     fn appearing_items_become_visible_at_the_start_of_the_transition() {
@@ -1100,8 +1109,8 @@ mod tests {
 
         let node = &animator.nodes[&key];
         assert_eq!(node.role, NodeRole::History);
-        assert_eq!(node.indicator_target, 1.0);
-        assert_eq!(node.indicator_duration, indicator.duration);
+        assert_eq!(node.indicator.target, 1.0);
+        assert_eq!(node.indicator.duration, indicator.duration);
     }
 
     #[test]
@@ -1450,6 +1459,6 @@ mod tests {
         let node = &animator.nodes[&key];
         assert_eq!(node.position, Point { x: 240.0, y: 160.0 });
         assert!(node.travel_connector);
-        assert_eq!(node.connector_factor, 1.0);
+        assert_eq!(node.connector_factor(), 1.0);
     }
 }

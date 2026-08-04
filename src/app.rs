@@ -43,17 +43,96 @@ use wayland_client::{
 };
 
 use crate::{
-    config::Config,
+    animation::Spring,
+    appearance::{node_size, node_style},
+    config::{Config, item_at_path},
     geometry::{Point, angular_distance, direction_angle},
     hover::HoverDetector,
     model::{MenuState, Target},
     render::{Renderer, Scene},
-    style::StyleSheet,
+    style::{AnimationStyle, StyleSheet},
     visual::{Animator, Motion, NodeKey, NodeRole, NodeTarget, TransitionEffects},
 };
 
 const LEFT_BUTTON: u32 = 0x110;
 const RIGHT_BUTTON: u32 = 0x111;
+
+#[derive(Clone, Copy)]
+struct AnimationProfile {
+    menu_move: Motion,
+    item_create: Motion,
+    hover: Motion,
+    follow: Motion,
+    effects: TransitionEffects,
+    close_duration: Duration,
+    action: Motion,
+    action_scale: f64,
+}
+
+impl Default for AnimationProfile {
+    fn default() -> Self {
+        Self {
+            menu_move: Motion::default(),
+            item_create: Motion::default(),
+            hover: Motion::default(),
+            follow: Motion::default(),
+            effects: TransitionEffects::default(),
+            close_duration: Duration::ZERO,
+            action: Motion::default(),
+            action_scale: 1.3,
+        }
+    }
+}
+
+impl From<AnimationStyle> for AnimationProfile {
+    fn from(animation: AnimationStyle) -> Self {
+        let motion = |spring: Spring| Motion {
+            duration: spring.duration(),
+            spring,
+        };
+        Self {
+            menu_move: motion(animation.menu_move_spring),
+            item_create: motion(animation.item_create_spring),
+            hover: motion(animation.hover_spring),
+            follow: motion(animation.follow_spring),
+            effects: TransitionEffects {
+                deletion_duration: animation.item_delete_duration,
+                icon_duration: animation.icon_duration,
+                connector_duration: animation.connector_duration,
+                indicator: motion(animation.submenu_indicator_spring),
+            },
+            close_duration: animation.close_duration,
+            action: motion(animation.action_spring),
+            action_scale: animation.action_scale,
+        }
+    }
+}
+
+#[cfg(test)]
+mod animation_profile_tests {
+    use super::*;
+
+    #[test]
+    fn style_animation_is_mapped_once_without_losing_effect_timings() {
+        let styles = StyleSheet::parse(
+            "animation { icon-duration: 120ms; connector-duration: 140ms; \
+             item-delete-duration: 160ms; close-duration: 180ms; action-scale: 1.4; }",
+        );
+        let profile = AnimationProfile::from(styles.animation().unwrap());
+
+        assert_eq!(profile.effects.icon_duration, Duration::from_millis(120));
+        assert_eq!(
+            profile.effects.connector_duration,
+            Duration::from_millis(140)
+        );
+        assert_eq!(
+            profile.effects.deletion_duration,
+            Duration::from_millis(160)
+        );
+        assert_eq!(profile.close_duration, Duration::from_millis(180));
+        assert_eq!(profile.action_scale, 1.4);
+    }
+}
 
 struct OutputLayer {
     output: wl_output::WlOutput,
@@ -116,6 +195,7 @@ pub struct App {
     renderer: Renderer,
     config: Option<Config>,
     styles: Option<StyleSheet>,
+    animation: AnimationProfile,
     pointer: Option<ThemedPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     state: MenuState,
@@ -164,6 +244,7 @@ impl App {
             renderer: Renderer::new(),
             config: None,
             styles: None,
+            animation: AnimationProfile::default(),
             pointer: None,
             keyboard: None,
             state: MenuState::default(),
@@ -228,14 +309,17 @@ impl App {
         }
         let config = Config::load(&self.config_dir.join("config"))?;
         let styles = StyleSheet::load(&self.config_dir.join("style.css"))?;
-        styles.animation()?;
+        let animation_style = styles.animation()?;
+        let animation = AnimationProfile::from(animation_style);
         self.renderer.configure_fonts(styles.font_families());
+        self.renderer.configure_animations(animation_style);
         self.prepare_layers();
         if self.layers.is_empty() {
             bail!("no Wayland outputs are available");
         }
         self.config = Some(config);
         self.styles = Some(styles);
+        self.animation = animation;
         self.state.reset();
         self.hover_detector.reset(None);
         self.pending_activation = activation_token;
@@ -258,6 +342,10 @@ impl App {
         self.begin_hide(None);
     }
 
+    fn animation_profile(&self) -> AnimationProfile {
+        self.animation
+    }
+
     fn begin_hide(&mut self, action: Option<(NodeKey, Point)>) {
         if self.exit || self.closing_until.is_some() {
             return;
@@ -269,51 +357,28 @@ impl App {
             self.set_click_through(surface, true);
             surface.commit();
         }
-        let animation = self
-            .styles
-            .as_ref()
-            .and_then(|styles| styles.animation().ok());
-        let close_duration = animation
-            .as_ref()
-            .map_or(Duration::ZERO, |animation| animation.close_duration);
-        let action_duration = animation.as_ref().map_or(Duration::ZERO, |animation| {
-            animation.action_spring.duration()
-        });
-        let connector_duration = animation
-            .as_ref()
-            .map_or(Duration::ZERO, |animation| animation.connector_duration);
-        let indicator = animation
-            .as_ref()
-            .map_or(Motion::default(), |animation| Motion {
-                duration: animation.submenu_indicator_spring.duration(),
-                spring: animation.submenu_indicator_spring,
-            });
+        let animation = self.animation_profile();
         let mut total_duration = if action.is_some() {
-            close_duration
-                .max(action_duration)
-                .max(connector_duration)
-                .max(indicator.duration)
+            animation
+                .close_duration
+                .max(animation.action.duration)
+                .max(animation.effects.connector_duration)
+                .max(animation.effects.indicator.duration)
         } else {
-            close_duration
-                .max(connector_duration)
-                .max(indicator.duration)
+            animation
+                .close_duration
+                .max(animation.effects.connector_duration)
+                .max(animation.effects.indicator.duration)
         };
-        let spring = animation
-            .as_ref()
-            .map(|animation| animation.action_spring)
-            .unwrap_or_default();
-        let action_scale = animation
-            .as_ref()
-            .map_or(1.3, |animation| animation.action_scale);
         self.animator.close_with_effects(
             action
                 .as_ref()
-                .map(|(key, point)| (key, *point, action_scale)),
-            close_duration,
-            action_duration,
-            connector_duration,
-            indicator,
-            spring,
+                .map(|(key, point)| (key, *point, animation.action_scale)),
+            animation.close_duration,
+            animation.action.duration,
+            animation.effects.connector_duration,
+            animation.effects.indicator,
+            animation.action.spring,
         );
         total_duration = total_duration.max(self.animator.remaining_duration());
         total_duration = total_duration.max(self.renderer.remaining_duration());
@@ -380,7 +445,9 @@ impl App {
         {
             activation.activate::<Self>(self.layers[index].surface.wl_surface(), token);
         }
-        let config = self.config.as_ref().expect("visible menu has config");
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
         let center = if config.center_mode {
             Point {
                 x: self.layers[index].width as f64 / 2.0,
@@ -436,22 +503,9 @@ impl App {
                 NodeRole::History => self.state.active() == Some(Target::Parent(depth)),
                 NodeRole::Item => false,
             };
-            let mut selectors = vec!["circle"];
-            selectors.push(match role {
-                NodeRole::Center => "circle.center",
-                NodeRole::History => "circle.history",
-                NodeRole::Item => "circle.item",
-            });
-            let rest_style = styles.circle(&selectors).unwrap_or_default();
-            if active {
-                selectors.push("circle.active");
-                selectors.push(match role {
-                    NodeRole::Center => "circle.center.active",
-                    NodeRole::History => "circle.history.active",
-                    NodeRole::Item => "circle.item.active",
-                });
-            }
-            let style = styles.circle(&selectors).unwrap_or_default();
+            let item = item_at_path(&config.menu, &item_path);
+            let rest_style = node_style(styles, item, role, false);
+            let style = node_style(styles, item, role, active);
             targets.push(NodeTarget {
                 key: NodeKey::Menu(item_path.clone()),
                 item_path,
@@ -459,8 +513,8 @@ impl App {
                 position: center,
                 rest_position: center,
                 origin: center,
-                size: style.width.unwrap_or(0.0) * style.scale,
-                rest_size: rest_style.width.unwrap_or(0.0) * rest_style.scale,
+                size: node_size(&style),
+                rest_size: node_size(&rest_style),
                 active,
                 traveling: false,
                 icon_visible: role != NodeRole::Center
@@ -484,34 +538,12 @@ impl App {
         for (index, item) in current.items.iter().enumerate() {
             let active = self.state.active() == Some(Target::Item(index));
             let traveling = travel_enabled && active;
-            let mut selectors = vec!["circle", "circle.item"];
-            if item.is_submenu() {
-                selectors.push("circle.submenu");
-            }
-            let rest_style = styles.circle(&selectors).unwrap_or_default();
-            if active {
-                selectors.push("circle.active");
-                selectors.push(if item.is_submenu() {
-                    "circle.submenu.active"
-                } else {
-                    "circle.item.active"
-                });
-            }
-            let style = styles.circle(&selectors).unwrap_or_default();
+            let rest_style = node_style(styles, item, NodeRole::Item, false);
+            let style = node_style(styles, item, NodeRole::Item, active);
             let extra_distance = if active {
                 style.distance.unwrap_or(0.0)
             } else if let Some(pointer_angle) = pointer_angle {
-                let mut active_selectors = vec!["circle", "circle.item"];
-                if item.is_submenu() {
-                    active_selectors.push("circle.submenu");
-                }
-                active_selectors.push("circle.active");
-                active_selectors.push(if item.is_submenu() {
-                    "circle.submenu.active"
-                } else {
-                    "circle.item.active"
-                });
-                let active_style = styles.circle(&active_selectors).unwrap_or_default();
+                let active_style = node_style(styles, item, NodeRole::Item, true);
                 let angle_difference = angular_distance(pointer_angle, item.angle.unwrap_or(0.0));
                 let angular_factor = (1.0 + angle_difference.to_radians().cos()) / 2.0;
                 active_style.distance.unwrap_or(0.0) * active_style.follow_distance * angular_factor
@@ -545,8 +577,8 @@ impl App {
                 position,
                 rest_position,
                 origin: center,
-                size: style.width.unwrap_or(0.0) * style.scale,
-                rest_size: rest_style.width.unwrap_or(0.0) * rest_style.scale,
+                size: node_size(&style),
+                rest_size: node_size(&rest_style),
                 active,
                 traveling,
                 icon_visible: true,
@@ -557,50 +589,13 @@ impl App {
 
     fn sync_visual(&mut self, animate: bool) {
         let targets = self.visual_targets();
+        let animation = self.animation_profile();
         if animate {
-            let animation = self
-                .styles
-                .as_ref()
-                .and_then(|styles| styles.animation().ok());
-            let move_spring = animation
-                .as_ref()
-                .map(|animation| animation.menu_move_spring)
-                .unwrap_or_default();
-            let create_spring = animation
-                .as_ref()
-                .map(|animation| animation.item_create_spring)
-                .unwrap_or_default();
-            let move_duration = move_spring.duration();
-            let create_duration = create_spring.duration();
-            let deletion_duration = animation
-                .as_ref()
-                .map_or(Duration::ZERO, |animation| animation.item_delete_duration);
-            let icon_duration = animation
-                .as_ref()
-                .map_or(Duration::ZERO, |animation| animation.icon_duration);
             self.animator.reconcile_with_effects(
                 targets,
-                Motion {
-                    duration: move_duration,
-                    spring: move_spring,
-                },
-                Motion {
-                    duration: create_duration,
-                    spring: create_spring,
-                },
-                TransitionEffects {
-                    deletion_duration,
-                    icon_duration,
-                    connector_duration: animation
-                        .as_ref()
-                        .map_or(Duration::ZERO, |animation| animation.connector_duration),
-                    indicator: animation
-                        .as_ref()
-                        .map_or(Motion::default(), |animation| Motion {
-                            duration: animation.submenu_indicator_spring.duration(),
-                            spring: animation.submenu_indicator_spring,
-                        }),
-                },
+                animation.menu_move,
+                animation.item_create,
+                animation.effects,
                 true,
             );
         } else if self.animator.is_empty() {
@@ -612,36 +607,12 @@ impl App {
                 false,
             );
         } else {
-            let animation = self
-                .styles
-                .as_ref()
-                .and_then(|styles| styles.animation().ok());
-            let spring = animation
-                .as_ref()
-                .map(|animation| animation.hover_spring)
-                .unwrap_or_default();
-            let follow_spring = animation
-                .as_ref()
-                .map(|animation| animation.follow_spring)
-                .unwrap_or_default();
-            let icon_duration = animation
-                .as_ref()
-                .map_or(Duration::ZERO, |animation| animation.icon_duration);
-            let connector_duration = animation
-                .as_ref()
-                .map_or(Duration::ZERO, |animation| animation.connector_duration);
             self.animator.hover_with_follow(
                 targets,
-                Motion {
-                    duration: spring.duration(),
-                    spring,
-                },
-                Motion {
-                    duration: follow_spring.duration(),
-                    spring: follow_spring,
-                },
-                icon_duration,
-                connector_duration,
+                animation.hover,
+                animation.follow,
+                animation.effects.icon_duration,
+                animation.effects.connector_duration,
             );
         }
     }
@@ -687,6 +658,33 @@ impl App {
         self.activate_at(position, false, false);
     }
 
+    fn complete_navigation(&mut self) {
+        self.hover_detector
+            .reset(self.state.centers().last().copied());
+        self.sync_visual(true);
+        self.draw();
+    }
+
+    fn return_to(&mut self, depth: usize, position: Point, layer_index: usize) {
+        let (Some(config), Some(layer)) = (self.config.as_ref(), self.layers.get(layer_index))
+        else {
+            return;
+        };
+        self.state
+            .return_to(depth, position, config, layer.width, layer.height);
+        self.complete_navigation();
+    }
+
+    fn open_submenu(&mut self, item_index: usize, position: Point, layer_index: usize) {
+        let (Some(config), Some(layer)) = (self.config.as_ref(), self.layers.get(layer_index))
+        else {
+            return;
+        };
+        self.state
+            .open_submenu(item_index, position, config, layer.width, layer.height);
+        self.complete_navigation();
+    }
+
     fn activate_at(&mut self, position: Point, hover: bool, submenu_only: bool) {
         let Some(index) = self.active_layer else {
             return;
@@ -704,54 +702,20 @@ impl App {
         }
         match target {
             Target::Center => {
-                let config = self.config.as_ref().unwrap();
                 if !self.state.path().is_empty() && !config.close_submenu_on_center_click {
                     let depth = self.state.path().len() - 1;
-                    self.state.return_to(
-                        depth,
-                        position,
-                        config,
-                        self.layers[index].width,
-                        self.layers[index].height,
-                    );
-                    self.hover_detector
-                        .reset(self.state.centers().last().copied());
-                    self.sync_visual(true);
-                    self.draw();
+                    self.return_to(depth, position, index);
                 } else {
                     self.hide();
                 }
             }
             Target::Parent(depth) => {
-                let config = self.config.as_ref().unwrap();
-                self.state.return_to(
-                    depth,
-                    position,
-                    config,
-                    self.layers[index].width,
-                    self.layers[index].height,
-                );
-                self.hover_detector
-                    .reset(self.state.centers().last().copied());
-                self.sync_visual(true);
-                self.draw();
+                self.return_to(depth, position, index);
             }
             Target::Item(item_index) => {
-                let item =
-                    self.state.current(self.config.as_ref().unwrap()).items[item_index].clone();
+                let item = self.state.current(config).items[item_index].clone();
                 if item.is_submenu() {
-                    let config = self.config.as_ref().unwrap();
-                    self.state.open_submenu(
-                        item_index,
-                        position,
-                        config,
-                        self.layers[index].width,
-                        self.layers[index].height,
-                    );
-                    self.hover_detector
-                        .reset(self.state.centers().last().copied());
-                    self.sync_visual(true);
-                    self.draw();
+                    self.open_submenu(item_index, position, index);
                 } else if !submenu_only && let Some(command) = item.command {
                     launch(&command);
                     let key = NodeKey::Action(self.state.path().to_vec(), item_index);

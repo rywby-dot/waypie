@@ -3,6 +3,8 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::geometry::angular_distance;
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
@@ -165,10 +167,6 @@ pub fn largest_gap_angle(angles: &[f64], preferred: Option<f64>) -> f64 {
         .unwrap_or(candidates[0])
         .round()
         .rem_euclid(360.0)
-}
-
-fn angular_distance(a: f64, b: f64) -> f64 {
-    ((a - b + 180.0).rem_euclid(360.0) - 180.0).abs()
 }
 
 #[cfg(test)]

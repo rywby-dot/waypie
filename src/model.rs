@@ -113,7 +113,9 @@ impl MenuState {
         if !item.is_submenu() {
             return false;
         }
-        let parent = *self.centers.last().expect("root must be placed");
+        let Some(parent) = self.centers.last().copied() else {
+            return false;
+        };
         let child = clamp_center(at, width, height, config.minimum_edge_distance);
         self.link_lengths
             .push(parent.distance(child).max(config.menu_radius));
@@ -139,8 +141,10 @@ impl MenuState {
         self.path.truncate(depth);
         self.centers.truncate(depth + 1);
         self.link_lengths.truncate(depth);
-        *self.centers.last_mut().expect("root must be placed") =
-            clamp_center(at, width, height, config.minimum_edge_distance);
+        let Some(center) = self.centers.last_mut() else {
+            return false;
+        };
+        *center = clamp_center(at, width, height, config.minimum_edge_distance);
         self.align_history(config);
         self.pointer = Some(at);
         self.active = None;
@@ -231,5 +235,14 @@ mod tests {
         assert!(state.open_submenu(0, pointer, &config, 300, 300));
         assert_eq!(state.active(), None);
         assert_eq!(state.path(), &[0]);
+    }
+
+    #[test]
+    fn submenu_cannot_open_before_the_root_is_placed() {
+        let mut config = config();
+        config.menu.items[0].command = None;
+        let mut state = MenuState::default();
+
+        assert!(!state.open_submenu(0, Point { x: 100.0, y: 100.0 }, &config, 300, 300,));
     }
 }
