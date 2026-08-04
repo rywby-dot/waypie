@@ -255,7 +255,7 @@ impl App {
         self.state.reset();
         self.config = None;
         self.styles = None;
-        self.renderer.clear_icons();
+        self.renderer = Renderer::new();
         self.buffers = None;
         self.redraw_pending = false;
         self.pending_activation = None;
@@ -268,6 +268,7 @@ impl App {
         for index in 0..self.layers.len() {
             self.attach_transparent(index);
         }
+        trim_allocator();
     }
 
     pub fn visible(&self) -> bool {
@@ -550,6 +551,19 @@ fn copy_pixmap_to_argb(pixmap: &Pixmap, canvas: &mut [u8]) {
 fn launch(command: &str) {
     let _ = Command::new("sh").arg("-c").arg(command).spawn();
 }
+
+#[cfg(target_env = "gnu")]
+fn trim_allocator() {
+    // SAFETY: malloc_trim is a process-wide glibc allocator operation with no
+    // pointer arguments. Calling it after all per-menu objects were dropped is
+    // safe; concurrent allocations are synchronized internally by glibc.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(target_env = "gnu"))]
+fn trim_allocator() {}
 
 impl CompositorHandler for App {
     fn scale_factor_changed(

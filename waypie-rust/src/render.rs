@@ -121,10 +121,6 @@ impl Renderer {
         self.resolved_families = resolved;
     }
 
-    pub fn clear_icons(&mut self) {
-        self.icons.clear();
-    }
-
     pub fn render(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
         let overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
         pixmap.fill(to_skia(overlay.background_color, overlay.opacity));
