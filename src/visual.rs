@@ -53,6 +53,7 @@ pub struct VisualNode {
     pub active: bool,
     pub selected_action: bool,
     pub return_connector: bool,
+    pub connector_factor: f64,
     base_position: Point,
     base_size: f64,
     hover_offset: Point,
@@ -64,6 +65,10 @@ pub struct VisualNode {
     hover_started: Instant,
     hover_duration: Duration,
     hover_spring: Spring,
+    connector_from: f64,
+    connector_target: f64,
+    connector_started: Instant,
+    connector_duration: Duration,
     collapse_to: Point,
     from_position: Point,
     target_position: Point,
@@ -104,6 +109,20 @@ struct TransitionTarget {
 }
 
 impl VisualNode {
+    fn set_connector_target(&mut self, target: f64, duration: Duration, now: Instant) {
+        if (self.connector_target - target).abs() < f64::EPSILON {
+            return;
+        }
+        self.connector_from = self.connector_factor;
+        self.connector_target = target;
+        self.connector_started = now;
+        self.connector_duration = duration;
+        if duration.is_zero() {
+            self.connector_factor = target;
+            self.connector_from = target;
+        }
+    }
+
     fn set_icon_visible(&mut self, visible: bool, duration: Duration, now: Instant) {
         let target = f64::from(visible);
         if (self.icon_target - target).abs() < f64::EPSILON {
@@ -176,6 +195,14 @@ impl VisualNode {
         };
         self.icon_opacity =
             self.icon_from + (self.icon_target - self.icon_from) * smoothstep(icon_progress);
+        let connector_progress = if self.connector_duration.is_zero() {
+            1.0
+        } else {
+            ((now - self.connector_started).as_secs_f64() / self.connector_duration.as_secs_f64())
+                .clamp(0.0, 1.0)
+        };
+        self.connector_factor = self.connector_from
+            + (self.connector_target - self.connector_from) * smoothstep(connector_progress);
         if progress >= 1.0 {
             self.base_size = self.target_scale;
             self.opacity = self.target_opacity;
@@ -241,6 +268,8 @@ impl VisualNode {
     fn finished(&self, now: Instant) -> bool {
         self.movement_finished(now)
             && (self.hover_duration.is_zero() || now - self.hover_started >= self.hover_duration)
+            && (self.connector_duration.is_zero()
+                || now - self.connector_started >= self.connector_duration)
             && (self.icon_duration.is_zero() || now - self.icon_started >= self.icon_duration)
     }
 }
@@ -310,8 +339,16 @@ impl Animator {
         }
         for (key, target) in targets {
             if let Some(node) = self.nodes.get_mut(&key) {
+                let opening_connector = node.role == NodeRole::Item
+                    && target.role == NodeRole::Center
+                    && !target.item_path.is_empty();
                 let returning =
                     animate && node.role == NodeRole::Center && target.role == NodeRole::Item;
+                if opening_connector {
+                    node.set_connector_target(1.0, move_duration, now);
+                } else if returning {
+                    node.set_connector_target(0.0, move_duration, now);
+                }
                 node.item_path = target.item_path;
                 node.role = target.role;
                 node.active = target.active;
@@ -351,6 +388,8 @@ impl Animator {
             } else {
                 let create_animated = animate && !create_duration.is_zero();
                 let initial = if create_animated { 0.0 } else { 1.0 };
+                let creates_connector =
+                    target.role == NodeRole::Center && !target.item_path.is_empty();
                 let parent_key = match &key {
                     NodeKey::Action(path, _) => Some(NodeKey::Menu(path.clone())),
                     NodeKey::Menu(path) if !path.is_empty() => {
@@ -391,6 +430,7 @@ impl Animator {
                         active: target.active,
                         selected_action: false,
                         return_connector: false,
+                        connector_factor: 0.0,
                         base_position: creation_origin,
                         base_size: target.rest_size * initial,
                         hover_offset: Point::default(),
@@ -402,6 +442,14 @@ impl Animator {
                         hover_started: now,
                         hover_duration: Duration::ZERO,
                         hover_spring: Spring::default(),
+                        connector_from: 0.0,
+                        connector_target: if creates_connector { 1.0 } else { 0.0 },
+                        connector_started: now,
+                        connector_duration: if creates_connector {
+                            move_duration
+                        } else {
+                            Duration::ZERO
+                        },
                         collapse_to: target.origin,
                         from_position: creation_origin,
                         target_position: target.rest_position,
@@ -536,6 +584,15 @@ impl Animator {
                 .filter(|(key, _, _)| *key == &node.key)
                 .map(|(_, point, scale)| (*point, *scale));
             node.selected_action = selected_target.is_some();
+            if selected_target.is_some() {
+                node.connector_factor = 1.0;
+                node.connector_from = 1.0;
+                node.connector_target = 0.0;
+                node.connector_started = now;
+                node.connector_duration = action_duration;
+            } else if matches!(&node.key, NodeKey::Menu(path) if !path.is_empty()) {
+                node.set_connector_target(0.0, close_duration, now);
+            }
             let (position, scale) = selected_target.unwrap_or((node.collapse_to, 0.0));
             let size = if selected_target.is_some() {
                 node.size * scale

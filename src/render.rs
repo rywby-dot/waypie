@@ -201,10 +201,6 @@ impl Renderer {
             return;
         }
         let mut paint = Paint::default();
-        let stroke = Stroke {
-            width: width as f32,
-            ..Stroke::default()
-        };
         for depth in 0..path.len() {
             let start_key = NodeKey::Menu(path[..depth].to_vec());
             let end_key = NodeKey::Menu(path[..=depth].to_vec());
@@ -214,12 +210,20 @@ impl Renderer {
             let Some(end_node) = scene.nodes.iter().find(|node| node.key == end_key) else {
                 continue;
             };
+            let connector_factor = end_node.connector_factor.clamp(0.0, 1.0);
+            if connector_factor <= f64::EPSILON {
+                continue;
+            }
             let start_radius = start_node.size / 2.0;
             let end_radius = end_node.size / 2.0;
             paint.set_color(to_skia(
                 style.color,
-                style.opacity * start_node.opacity.min(end_node.opacity),
+                style.opacity * connector_factor * start_node.opacity.min(end_node.opacity),
             ));
+            let stroke = Stroke {
+                width: (width * connector_factor) as f32,
+                ..Stroke::default()
+            };
             let pair = [start_node.position, end_node.position];
             let delta = Point {
                 x: pair[1].x - pair[0].x,
@@ -259,6 +263,10 @@ impl Renderer {
             Some((parent, node))
         });
         for (center, action) in temporary_links {
+            let connector_factor = action.connector_factor.clamp(0.0, 1.0);
+            if connector_factor <= f64::EPSILON {
+                continue;
+            }
             let center_position = center.position;
             let action_position = action.position;
             let delta = Point {
@@ -271,8 +279,12 @@ impl Renderer {
             if length > start_radius + end_radius && length > f64::EPSILON {
                 paint.set_color(to_skia(
                     style.color,
-                    style.opacity * center.opacity.min(action.opacity),
+                    style.opacity * connector_factor * center.opacity.min(action.opacity),
                 ));
+                let stroke = Stroke {
+                    width: (width * connector_factor) as f32,
+                    ..Stroke::default()
+                };
                 let mut path = PathBuilder::new();
                 path.move_to(
                     (center_position.x + delta.x / length * start_radius) as f32,
