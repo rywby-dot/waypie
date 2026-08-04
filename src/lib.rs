@@ -1,5 +1,6 @@
 pub mod animation;
 pub mod app;
+mod appearance;
 pub mod config;
 pub mod geometry;
 pub mod hover;
