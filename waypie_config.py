@@ -705,14 +705,15 @@ class Configurator(Gtk.Application):
             return
         progress = min(1.0, (now - animation["started"]) / duration)
         eased = spring_value(self.styles, animation["spring"], progress)
-        animation["current"] = tuple(
-            start + (target - start) * eased
-            for start, target in zip(
-                animation["start"],
-                animation["target"],
-                strict=True,
+        values = []
+        for index, (start, target) in enumerate(
+            zip(animation["start"], animation["target"], strict=True)
+        ):
+            value_easing = (
+                math.sqrt(progress) if index == 3 and target > start else eased
             )
-        )
+            values.append(start + (target - start) * value_easing)
+        animation["current"] = tuple(values)
 
     def ensure_preview_tick(self):
         if self.preview_tick is None:
