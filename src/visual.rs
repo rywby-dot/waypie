@@ -109,6 +109,10 @@ struct TransitionTarget {
 }
 
 impl VisualNode {
+    pub fn is_removing(&self) -> bool {
+        self.removing
+    }
+
     fn set_connector_target(&mut self, target: f64, duration: Duration, now: Instant) {
         if (self.connector_target - target).abs() < f64::EPSILON {
             return;
