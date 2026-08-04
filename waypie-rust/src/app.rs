@@ -1,17 +1,11 @@
-use std::{
-    collections::HashMap,
-    env, fs,
-    os::unix::net::UnixDatagram,
-    path::PathBuf,
-    process::Command,
-    time::{Duration, Instant},
-};
+use std::{env, fs, os::unix::net::UnixDatagram, path::PathBuf, process::Command};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use smithay_client_toolkit::{
+    activation::{ActivationHandler, ActivationState, RequestData},
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
-    delegate_registry, delegate_seat, delegate_shm,
+    delegate_activation, delegate_compositor, delegate_keyboard, delegate_layer, delegate_output,
+    delegate_pointer, delegate_registry, delegate_seat, delegate_shm,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -29,7 +23,10 @@ use smithay_client_toolkit::{
             LayerSurfaceConfigure,
         },
     },
-    shm::{Shm, ShmHandler, slot::SlotPool},
+    shm::{
+        Shm, ShmHandler,
+        slot::{Slot, SlotPool},
+    },
 };
 use tiny_skia::Pixmap;
 use wayland_client::{
@@ -38,37 +35,45 @@ use wayland_client::{
 };
 
 use crate::{
-    animation::{Spring, smoothstep},
-    config::{Config, Item, item_at_path},
-    geometry::{Point, angular_distance, clamp_center, direction_angle, radial_position},
-    hover::HoverDetector,
-    render::{ActionFrame, Renderer, Scene, Target},
+    config::Config,
+    geometry::Point,
+    model::{MenuState, Target},
+    render::{Renderer, Scene},
     style::StyleSheet,
 };
 
 const LEFT_BUTTON: u32 = 0x110;
 const RIGHT_BUTTON: u32 = 0x111;
 
-struct NavigationState {
-    started: Instant,
-    duration: Duration,
-    from: Vec<Point>,
-}
-
-struct CloseState {
-    started: Instant,
-    duration: Duration,
-    action: Option<(usize, Point, Point)>,
-    spring: Spring,
-    action_scale: f64,
-}
-
 struct OutputLayer {
     output: wl_output::WlOutput,
-    layer: LayerSurface,
+    surface: LayerSurface,
     width: u32,
     height: u32,
-    configured: bool,
+}
+
+struct RenderBuffers {
+    pool: SlotPool,
+    slots: [Slot; 2],
+    width: u32,
+    height: u32,
+    next: usize,
+}
+
+impl RenderBuffers {
+    fn new(width: u32, height: u32, shm: &Shm) -> Option<Self> {
+        let frame_size = width as usize * height as usize * 4;
+        let mut pool = SlotPool::new(frame_size * 2, shm).ok()?;
+        let first = pool.new_slot(frame_size).ok()?;
+        let second = pool.new_slot(frame_size).ok()?;
+        Some(Self {
+            pool,
+            slots: [first, second],
+            width,
+            height,
+            next: 0,
+        })
+    }
 }
 
 pub struct App {
@@ -78,36 +83,23 @@ pub struct App {
     pub compositor: CompositorState,
     pub layer_shell: LayerShell,
     pub shm: Shm,
+    pub activation: Option<ActivationState>,
     pub qh: QueueHandle<Self>,
     pub exit: bool,
 
     layers: Vec<OutputLayer>,
     active_layer: Option<usize>,
-    active: bool,
-    pool: Option<SlotPool>,
-    renderer: Option<Renderer>,
+    visible: bool,
+    buffers: Option<RenderBuffers>,
+    redraw_pending: bool,
+    renderer: Renderer,
     config: Option<Config>,
     styles: Option<StyleSheet>,
-    width: u32,
-    height: u32,
-    configured: bool,
     pointer: Option<ThemedPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
-    pointer_position: Option<Point>,
-    modifiers: Modifiers,
-    turbo_active: bool,
-    hover_detector: HoverDetector,
-    path: Vec<usize>,
-    centers: Vec<Point>,
-    display_centers: Vec<Point>,
-    link_lengths: Vec<f64>,
-    hovered: Option<Target>,
-    hover_origins: HashMap<Target, f64>,
-    hover_started: Option<Instant>,
+    state: MenuState,
     config_dir: PathBuf,
-    navigation: Option<NavigationState>,
-    item_reveal: f64,
-    closing: Option<CloseState>,
+    pending_activation: Option<String>,
 }
 
 impl App {
@@ -119,6 +111,7 @@ impl App {
         compositor: CompositorState,
         layer_shell: LayerShell,
         shm: Shm,
+        activation: Option<ActivationState>,
         qh: QueueHandle<Self>,
     ) -> Self {
         let config_dir = dirs::config_dir()
@@ -131,52 +124,48 @@ impl App {
             compositor,
             layer_shell,
             shm,
+            activation,
             qh,
             exit: false,
             layers: vec![],
             active_layer: None,
-            active: false,
-            pool: None,
-            renderer: Some(Renderer::new()),
+            visible: false,
+            buffers: None,
+            redraw_pending: false,
+            renderer: Renderer::new(),
             config: None,
             styles: None,
-            width: 0,
-            height: 0,
-            configured: false,
             pointer: None,
             keyboard: None,
-            pointer_position: None,
-            modifiers: Modifiers::default(),
-            turbo_active: false,
-            hover_detector: HoverDetector::default(),
-            path: vec![],
-            centers: vec![],
-            display_centers: vec![],
-            link_lengths: vec![],
-            hovered: None,
-            hover_origins: HashMap::new(),
-            hover_started: None,
+            state: MenuState::default(),
             config_dir,
-            navigation: None,
-            item_reveal: 1.0,
-            closing: None,
+            pending_activation: None,
         }
     }
 
     pub fn handle_control(&mut self, command: &[u8]) {
-        match command {
+        let (name, token) = if let Some(separator) = command.iter().position(|byte| *byte == 0) {
+            let (name, token) = command.split_at(separator);
+            (
+                name,
+                std::str::from_utf8(&token[1..]).ok().map(str::to_owned),
+            )
+        } else {
+            (command, None)
+        };
+        match name {
+            b"show" if self.visible => self.hide(),
             b"show" => {
-                if self.active {
-                    self.begin_hide(None);
-                } else if let Err(error) = self.show() {
+                if let Err(error) = self.show(token) {
                     eprintln!("waypie: {error:#}");
                 }
             }
             b"quit" => {
-                self.finish_hide();
+                self.hide();
                 self.layers.clear();
                 self.exit = true;
             }
+            b"ping" => {}
             _ => {}
         }
     }
@@ -187,557 +176,315 @@ impl App {
             if self.layers.iter().any(|layer| layer.output == output) {
                 continue;
             }
-            let surface = self.compositor.create_surface(&self.qh);
-            let layer = self.layer_shell.create_layer_surface(
+            let wl_surface = self.compositor.create_surface(&self.qh);
+            let surface = self.layer_shell.create_layer_surface(
                 &self.qh,
-                surface,
+                wl_surface,
                 Layer::Overlay,
                 Some("waypie"),
                 Some(&output),
             );
-            layer.set_anchor(Anchor::TOP | Anchor::RIGHT | Anchor::BOTTOM | Anchor::LEFT);
-            layer.set_size(0, 0);
-            layer.set_exclusive_zone(-1);
-            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-            let region = self.compositor.wl_compositor().create_region(&self.qh, ());
-            layer.set_input_region(Some(&region));
-            region.destroy();
-            layer.commit();
+            surface.set_anchor(Anchor::TOP | Anchor::RIGHT | Anchor::BOTTOM | Anchor::LEFT);
+            surface.set_size(0, 0);
+            surface.set_exclusive_zone(-1);
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+            self.set_click_through(&surface, true);
+            surface.commit();
             self.layers.push(OutputLayer {
                 output,
-                layer,
+                surface,
                 width: 0,
                 height: 0,
-                configured: false,
             });
         }
     }
 
-    pub fn show(&mut self) -> Result<()> {
-        if self.active {
+    pub fn show(&mut self, activation_token: Option<String>) -> Result<()> {
+        if self.visible {
             return Ok(());
         }
         let config = Config::load(&self.config_dir.join("config"))?;
         let styles = StyleSheet::load(&self.config_dir.join("style.css"))?;
-        styles.animation()?;
-
         self.prepare_layers();
         if self.layers.is_empty() {
-            anyhow::bail!("no Wayland outputs are available");
+            bail!("no Wayland outputs are available");
         }
-        for output in &self.layers {
-            output
-                .layer
-                .set_keyboard_interactivity(KeyboardInteractivity::None);
-            output.layer.set_input_region(None);
-            output.layer.commit();
-        }
-
         self.config = Some(config);
         self.styles = Some(styles);
-        self.active = true;
+        self.state.reset();
+        self.pending_activation = activation_token;
         self.active_layer = None;
-        if self.renderer.is_none() {
-            self.renderer = Some(Renderer::new());
+        self.visible = true;
+        for index in 0..self.layers.len() {
+            let surface = &self.layers[index].surface;
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+            surface.set_input_region(None);
+            surface.commit();
         }
-        self.pool = None;
-        self.pointer_position = None;
-        self.path.clear();
-        self.centers.clear();
-        self.display_centers.clear();
-        self.link_lengths.clear();
-        self.hovered = None;
-        self.hover_origins.clear();
-        self.hover_started = None;
-        self.turbo_active = false;
-        self.hover_detector.reset(None);
-        self.navigation = None;
-        self.item_reveal = 0.0;
-        self.closing = None;
         Ok(())
     }
 
-    pub fn finish_hide(&mut self) {
-        self.active = false;
-        for output in &self.layers {
-            output
-                .layer
-                .set_keyboard_interactivity(KeyboardInteractivity::None);
-            let region = self.compositor.wl_compositor().create_region(&self.qh, ());
-            output.layer.set_input_region(Some(&region));
-            region.destroy();
-            output.layer.commit();
+    pub fn hide(&mut self) {
+        if !self.visible && self.config.is_none() {
+            return;
         }
-        self.pool = None;
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.clear_icons();
-        }
+        self.visible = false;
+        self.active_layer = None;
+        self.state.reset();
         self.config = None;
         self.styles = None;
-        self.path.clear();
-        self.centers.clear();
-        self.display_centers.clear();
-        self.link_lengths.clear();
-        self.pointer_position = None;
-        self.hovered = None;
-        self.hover_origins.clear();
-        self.hover_started = None;
-        self.turbo_active = false;
-        self.hover_detector.reset(None);
-        self.navigation = None;
-        self.item_reveal = 1.0;
-        self.closing = None;
-        self.active_layer = None;
+        self.renderer.clear_icons();
+        self.buffers = None;
+        self.redraw_pending = false;
+        self.pending_activation = None;
         for index in 0..self.layers.len() {
-            self.attach_bootstrap_buffer(index);
+            let surface = &self.layers[index].surface;
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+            self.set_click_through(surface, true);
+            surface.commit();
         }
-    }
-
-    pub fn begin_hide(&mut self, action: Option<(usize, Point, Point)>) {
-        if !self.active || self.closing.is_some() {
-            return;
+        for index in 0..self.layers.len() {
+            self.attach_transparent(index);
         }
-        let animation = self
-            .styles
-            .as_ref()
-            .and_then(|styles| styles.animation().ok());
-        let duration = animation
-            .as_ref()
-            .map_or(Duration::ZERO, |animation| animation.close_duration);
-        if duration.is_zero() {
-            self.finish_hide();
-            return;
-        }
-        for output in &self.layers {
-            output
-                .layer
-                .set_keyboard_interactivity(KeyboardInteractivity::None);
-            let region = self.compositor.wl_compositor().create_region(&self.qh, ());
-            output.layer.set_input_region(Some(&region));
-            region.destroy();
-            output.layer.commit();
-        }
-        self.set_hover(None);
-        self.closing = Some(CloseState {
-            started: Instant::now(),
-            duration,
-            action,
-            spring: animation
-                .as_ref()
-                .map_or(Spring::default(), |value| value.action_spring),
-            action_scale: animation.as_ref().map_or(1.3, |value| value.action_scale),
-        });
-        self.draw();
     }
 
     pub fn visible(&self) -> bool {
-        self.active
+        self.visible
     }
 
-    fn select_layer(&mut self, index: usize, position: Point) {
+    fn set_click_through(&self, surface: &LayerSurface, enabled: bool) {
+        if enabled {
+            let region = self.compositor.wl_compositor().create_region(&self.qh, ());
+            surface.set_input_region(Some(&region));
+            region.destroy();
+        } else {
+            surface.set_input_region(None);
+        }
+    }
+
+    fn select_output(&mut self, index: usize, pointer: Point) {
         if self.active_layer.is_some() || index >= self.layers.len() {
             return;
         }
-        for (candidate, output) in self.layers.iter().enumerate() {
+        for candidate in 0..self.layers.len() {
+            let surface = &self.layers[candidate].surface;
             if candidate == index {
-                output
-                    .layer
-                    .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-                output.layer.set_input_region(None);
+                surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+                self.set_click_through(surface, false);
             } else {
-                output
-                    .layer
-                    .set_keyboard_interactivity(KeyboardInteractivity::None);
-                let region = self.compositor.wl_compositor().create_region(&self.qh, ());
-                output.layer.set_input_region(Some(&region));
-                region.destroy();
+                surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+                self.set_click_through(surface, true);
             }
-            output.layer.commit();
+            surface.commit();
         }
         self.active_layer = Some(index);
-        self.width = self.layers[index].width;
-        self.height = self.layers[index].height;
-        self.configured = self.layers[index].configured;
-        self.pointer_position = Some(position);
-        self.initialize_center(Some(position));
+        self.buffers = None;
+        if let (Some(activation), Some(token)) =
+            (self.activation.as_ref(), self.pending_activation.take())
+        {
+            activation.activate::<Self>(self.layers[index].surface.wl_surface(), token);
+        }
+        let config = self.config.as_ref().expect("visible menu has config");
+        let center = if config.center_mode {
+            Point {
+                x: self.layers[index].width as f64 / 2.0,
+                y: self.layers[index].height as f64 / 2.0,
+            }
+        } else {
+            pointer
+        };
+        self.state.place_root(
+            center,
+            config,
+            self.layers[index].width,
+            self.layers[index].height,
+        );
+        let hitbox = self.center_hitbox();
+        self.state.update_pointer(pointer, config, hitbox);
         self.draw();
     }
 
-    pub fn tick(&mut self) {
-        if !self.visible() {
-            return;
-        }
-        let now = Instant::now();
-        let mut redraw = false;
-        if let Some(navigation) = &self.navigation {
-            let raw = (now - navigation.started).as_secs_f64()
-                / navigation.duration.as_secs_f64().max(f64::EPSILON);
-            let progress = raw.clamp(0.0, 1.0);
-            let animation = self.styles.as_ref().unwrap().animation().unwrap();
-            let move_progress = animation
-                .menu_move_spring
-                .sample(progress, navigation.duration.as_secs_f64());
-            self.display_centers = navigation
-                .from
-                .iter()
-                .copied()
-                .zip(self.centers.iter().copied())
-                .map(|(from, target)| from.lerp(target, move_progress))
-                .collect();
-            self.item_reveal = animation
-                .item_create_spring
-                .sample(progress, navigation.duration.as_secs_f64());
-            redraw = true;
-            if progress >= 1.0 {
-                self.display_centers = self.centers.clone();
-                self.item_reveal = 1.0;
-                self.navigation = None;
-            }
-        }
-        if let Some(closing) = &self.closing {
-            if now - closing.started >= closing.duration {
-                self.finish_hide();
-                return;
-            }
-            redraw = true;
-        }
-        if self.hover_started.is_some() && self.hover_progress(now) < 1.0 {
-            redraw = true;
-        }
-        let hover_enabled = self
-            .config
-            .as_ref()
-            .is_some_and(|config| config.hover_mode || self.turbo_active);
-        if hover_enabled && let Some(position) = self.hover_detector.on_timeout(now) {
-            self.activate_mode(position, true, self.turbo_active);
-        }
-        if redraw {
-            self.draw();
-        }
-    }
-
-    fn initialize_center(&mut self, pointer: Option<Point>) {
-        if !self.centers.is_empty() || self.width == 0 || self.height == 0 {
-            return;
-        }
-        let config = self.config.as_ref().unwrap();
-        let center = if config.center_mode {
-            Point {
-                x: self.width as f64 / 2.0,
-                y: self.height as f64 / 2.0,
-            }
-        } else if let Some(pointer) = pointer {
-            pointer
-        } else {
-            return;
+    fn center_hitbox(&self) -> f64 {
+        let Some(config) = self.config.as_ref() else {
+            return 0.0;
         };
-        self.centers.push(clamp_center(
-            center,
-            self.width,
-            self.height,
-            config.minimum_edge_distance,
-        ));
-        self.display_centers = self.centers.clone();
-        self.start_navigation(self.display_centers.clone());
-    }
-
-    fn current(&self) -> &Item {
-        item_at_path(&self.config.as_ref().unwrap().menu, &self.path)
-    }
-
-    fn target_at(&self, position: Point) -> Option<Target> {
-        let center = *self.centers.last()?;
-        let config = self.config.as_ref()?;
-        let current = self.current();
-        let center_size = config.center_hitbox_size.unwrap_or_else(|| {
+        config.center_hitbox_size.unwrap_or_else(|| {
             self.styles
                 .as_ref()
                 .and_then(|styles| styles.circle(&["circle", "circle.center"]).ok())
                 .and_then(|style| style.width.map(|width| width * style.scale))
                 .unwrap_or(0.0)
-        });
-        if center_size > 0.0 && center.distance(position) <= center_size / 2.0 {
-            return Some(Target::Center);
+        })
+    }
+
+    fn update_pointer(&mut self, position: Point) {
+        let (Some(config), Some(index)) = (self.config.as_ref(), self.active_layer) else {
+            return;
+        };
+        if self.state.centers().is_empty() {
+            let center = if config.center_mode {
+                Point {
+                    x: self.layers[index].width as f64 / 2.0,
+                    y: self.layers[index].height as f64 / 2.0,
+                }
+            } else {
+                position
+            };
+            self.state.place_root(
+                center,
+                config,
+                self.layers[index].width,
+                self.layers[index].height,
+            );
         }
-        let angle = direction_angle(Point {
-            x: position.x - center.x,
-            y: position.y - center.y,
-        });
-        let mut candidates = current
-            .items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| (Target::Item(index), item.angle.unwrap_or(0.0)))
-            .collect::<Vec<_>>();
-        if !self.path.is_empty() {
-            candidates.push((
-                Target::Parent(self.path.len() - 1),
-                current.return_angle.unwrap_or(180.0),
-            ));
+        if self
+            .state
+            .update_pointer(position, config, self.center_hitbox())
+        {
+            self.draw();
         }
-        candidates
-            .into_iter()
-            .min_by(|left, right| {
-                angular_distance(angle, left.1).total_cmp(&angular_distance(angle, right.1))
-            })
-            .map(|candidate| candidate.0)
     }
 
     fn activate(&mut self, position: Point) {
-        self.activate_mode(position, false, false);
-    }
-
-    fn activate_mode(&mut self, position: Point, hover: bool, submenu_only: bool) {
-        let Some(target) = self.target_at(position) else {
+        let Some(index) = self.active_layer else {
             return;
         };
-        if hover && target == Target::Center {
+        self.update_pointer(position);
+        let Some(target) = self.state.active() else {
             return;
-        }
+        };
         match target {
             Target::Center => {
-                if !self.path.is_empty()
-                    && !self.config.as_ref().unwrap().close_submenu_on_center_click
-                {
-                    self.return_to_parent(self.path.len() - 1, position);
+                let config = self.config.as_ref().unwrap();
+                if !self.state.path().is_empty() && !config.close_submenu_on_center_click {
+                    let depth = self.state.path().len() - 1;
+                    self.state.return_to(
+                        depth,
+                        position,
+                        config,
+                        self.layers[index].width,
+                        self.layers[index].height,
+                    );
+                    self.draw();
                 } else {
-                    self.begin_hide(None);
+                    self.hide();
                 }
             }
-            Target::Parent(depth) => self.return_to_parent(depth, position),
-            Target::Item(index) => {
-                let item = self.current().items[index].clone();
+            Target::Parent(depth) => {
+                let config = self.config.as_ref().unwrap();
+                self.state.return_to(
+                    depth,
+                    position,
+                    config,
+                    self.layers[index].width,
+                    self.layers[index].height,
+                );
+                self.draw();
+            }
+            Target::Item(item_index) => {
+                let item =
+                    self.state.current(self.config.as_ref().unwrap()).items[item_index].clone();
                 if item.is_submenu() {
                     let config = self.config.as_ref().unwrap();
-                    let parent = *self.centers.last().unwrap();
-                    let child = clamp_center(
+                    self.state.open_submenu(
+                        item_index,
                         position,
-                        self.width,
-                        self.height,
-                        config.minimum_edge_distance,
+                        config,
+                        self.layers[index].width,
+                        self.layers[index].height,
                     );
-                    self.link_lengths
-                        .push(parent.distance(child).max(config.menu_radius));
-                    self.path.push(index);
-                    self.centers.push(child);
-                    let mut from = self.display_centers.clone();
-                    from.push(position);
-                    self.display_centers = from.clone();
-                    self.align_chain();
-                    self.start_navigation(from);
-                    self.reset_hover_visual();
-                    self.hover_detector.reset(Some(child));
                     self.draw();
-                } else if !submenu_only && let Some(command) = item.command {
+                } else if let Some(command) = item.command {
                     launch(&command);
-                    let center = *self.display_centers.last().unwrap_or(&position);
-                    let style = self
-                        .styles
-                        .as_ref()
-                        .and_then(|styles| styles.circle(&["circle", "circle.item"]).ok());
-                    let distance = self.config.as_ref().unwrap().menu_radius
-                        + style.and_then(|style| style.distance).unwrap_or(0.0);
-                    let start = radial_position(center, item.angle.unwrap_or(0.0), distance);
-                    self.begin_hide(Some((index, start, position)));
+                    self.hide();
                 }
             }
         }
-    }
-
-    fn return_to_parent(&mut self, depth: usize, position: Point) {
-        self.path.truncate(depth);
-        self.centers.truncate(depth + 1);
-        let mut from = self.display_centers[..self.display_centers.len().min(depth + 1)].to_vec();
-        self.link_lengths.truncate(depth);
-        let config = self.config.as_ref().unwrap();
-        if let Some(center) = self.centers.last_mut() {
-            *center = clamp_center(
-                position,
-                self.width,
-                self.height,
-                config.minimum_edge_distance,
-            );
-        }
-        self.align_chain();
-        while from.len() < self.centers.len() {
-            from.push(*self.centers.last().unwrap());
-        }
-        self.display_centers = from.clone();
-        self.start_navigation(from);
-        self.reset_hover_visual();
-        self.hover_detector.reset(self.centers.last().copied());
-        self.draw();
-    }
-
-    fn align_chain(&mut self) {
-        let config = self.config.as_ref().unwrap();
-        for depth in (1..=self.path.len()).rev() {
-            let child = item_at_path(&config.menu, &self.path[..depth]);
-            self.centers[depth - 1] = radial_position(
-                self.centers[depth],
-                child.return_angle.unwrap_or(180.0),
-                self.link_lengths[depth - 1],
-            );
-        }
-    }
-
-    fn start_navigation(&mut self, from: Vec<Point>) {
-        let duration = self
-            .styles
-            .as_ref()
-            .and_then(|styles| styles.animation().ok())
-            .map_or(Duration::ZERO, |animation| animation.menu_duration);
-        if duration.is_zero() {
-            self.display_centers = self.centers.clone();
-            self.item_reveal = 1.0;
-            self.navigation = None;
-        } else {
-            self.item_reveal = 0.0;
-            self.navigation = Some(NavigationState {
-                started: Instant::now(),
-                duration,
-                from,
-            });
-        }
-    }
-
-    fn set_hover(&mut self, target: Option<Target>) {
-        if target == self.hovered {
-            return;
-        }
-        let now = Instant::now();
-        let progress = self.hover_progress(now);
-        let mut targets = self.hover_origins.keys().copied().collect::<Vec<_>>();
-        targets.extend(self.hovered);
-        targets.extend(target);
-        targets.sort_by_key(|target| match target {
-            Target::Center => (0, 0),
-            Target::Parent(index) => (1, *index),
-            Target::Item(index) => (2, *index),
-        });
-        targets.dedup();
-        self.hover_origins = targets
-            .into_iter()
-            .map(|candidate| {
-                let origin = self.hover_origins.get(&candidate).copied().unwrap_or(0.0);
-                let destination = f64::from(self.hovered == Some(candidate));
-                (candidate, origin + (destination - origin) * progress)
-            })
-            .collect();
-        self.hovered = target;
-        self.hover_started = Some(now);
-    }
-
-    fn reset_hover_visual(&mut self) {
-        self.hovered = None;
-        self.hover_origins.clear();
-        self.hover_started = None;
-    }
-
-    fn hover_progress(&self, now: Instant) -> f64 {
-        let Some(started) = self.hover_started else {
-            return 1.0;
-        };
-        let Some(animation) = self
-            .styles
-            .as_ref()
-            .and_then(|styles| styles.animation().ok())
-        else {
-            return 1.0;
-        };
-        if animation.hover_duration.is_zero() {
-            return 1.0;
-        }
-        let progress = ((now - started).as_secs_f64() / animation.hover_duration.as_secs_f64())
-            .clamp(0.0, 1.0);
-        animation
-            .hover_spring
-            .sample(progress, animation.hover_duration.as_secs_f64())
     }
 
     fn draw(&mut self) {
-        let (Some(layer_index), Some(config), Some(styles)) = (
+        self.redraw_pending = true;
+        let (Some(index), Some(config), Some(styles)) = (
             self.active_layer,
             self.config.as_ref(),
             self.styles.as_ref(),
         ) else {
             return;
         };
-        let layer = &self.layers[layer_index].layer;
-        if !self.configured || self.centers.is_empty() || self.width == 0 || self.height == 0 {
+        let width = self.layers[index].width;
+        let height = self.layers[index].height;
+        if width == 0 || height == 0 || self.state.centers().is_empty() {
             return;
         }
-        let needed = self.width as usize * self.height as usize * 4;
-        let (close_scale, close_opacity) = self.close_frame();
-        let action = self.action_frame();
-        let hover_progress = self.hover_progress(Instant::now());
-        if self.pool.is_none() {
-            self.pool = SlotPool::new(needed, &self.shm).ok();
+        let size_changed = self
+            .buffers
+            .as_ref()
+            .is_none_or(|buffers| buffers.width != width || buffers.height != height);
+        if size_changed {
+            self.buffers = RenderBuffers::new(width, height, &self.shm);
         }
-        let Some(pool) = self.pool.as_mut() else {
+        let Some(buffers) = self.buffers.as_mut() else {
             return;
         };
-        let Ok((buffer, canvas)) = pool.create_buffer(
-            self.width as i32,
-            self.height as i32,
-            self.width as i32 * 4,
+        let slot_index = (0..buffers.slots.len())
+            .map(|offset| (buffers.next + offset) % buffers.slots.len())
+            .find(|index| buffers.pool.canvas(&buffers.slots[*index]).is_some());
+        let Some(slot_index) = slot_index else {
+            return;
+        };
+        let slot = buffers.slots[slot_index].clone();
+        let Ok(buffer) = buffers.pool.create_buffer_in(
+            &slot,
+            width as i32,
+            height as i32,
+            width as i32 * 4,
             wl_shm::Format::Argb8888,
         ) else {
             return;
         };
-        let Some(mut pixmap) = Pixmap::new(self.width, self.height) else {
+        let Some(canvas) = buffers.pool.canvas(&slot) else {
             return;
         };
-        let scene = Scene {
-            config,
-            styles,
-            path: &self.path,
-            centers: &self.display_centers,
-            pointer: self.pointer_position,
-            hovered: self.hovered,
-            hover_origins: &self.hover_origins,
-            hover_progress,
-            icon_root: &self.config_dir.join("icons"),
-            item_reveal: self.item_reveal,
-            close_scale,
-            close_opacity,
-            action,
+        let Some(mut pixmap) = Pixmap::new(width, height) else {
+            return;
         };
-        self.renderer.as_mut().unwrap().render(&mut pixmap, &scene);
-        for (source, target) in pixmap
-            .data()
-            .chunks_exact(4)
-            .zip(canvas.chunks_exact_mut(4))
-        {
-            target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
-        }
-        layer
+        self.renderer.render(
+            &mut pixmap,
+            &Scene {
+                config,
+                styles,
+                state: &self.state,
+                icon_root: &self.config_dir.join("icons"),
+            },
+        );
+        copy_pixmap_to_argb(&pixmap, canvas);
+        let surface = &self.layers[index].surface;
+        surface
             .wl_surface()
-            .damage_buffer(0, 0, self.width as i32, self.height as i32);
-        if buffer.attach_to(layer.wl_surface()).is_ok() {
-            layer.commit();
+            .damage_buffer(0, 0, width as i32, height as i32);
+        if buffer.attach_to(surface.wl_surface()).is_ok() {
+            surface.commit();
+            buffers.next = (slot_index + 1) % buffers.slots.len();
+            self.redraw_pending = false;
         }
     }
 
-    /// Map the fullscreen layer before the compositor has reported the pointer
-    /// position. A transparent buffer breaks the Wayland bootstrap cycle:
-    /// pointer enter requires a mapped surface, while cursor-centered drawing
-    /// requires the coordinates supplied by pointer enter.
-    fn attach_bootstrap_buffer(&mut self, layer_index: usize) {
-        let Some(output) = self.layers.get(layer_index) else {
+    pub fn flush_redraw(&mut self) {
+        if self.redraw_pending {
+            self.draw();
+        }
+    }
+
+    fn attach_transparent(&mut self, index: usize) {
+        let Some(layer) = self.layers.get(index) else {
             return;
         };
-        let layer = &output.layer;
-        let width = output.width;
-        let height = output.height;
+        let (width, height) = (layer.width, layer.height);
         if width == 0 || height == 0 {
             return;
         }
         let needed = width as usize * height as usize * 4;
-        if self.pool.is_none() {
-            self.pool = SlotPool::new(needed, &self.shm).ok();
-        }
-        let Some(pool) = self.pool.as_mut() else {
+        let Ok(mut pool) = SlotPool::new(needed, &self.shm) else {
             return;
         };
         let Ok((buffer, canvas)) = pool.create_buffer(
@@ -749,49 +496,23 @@ impl App {
             return;
         };
         canvas.fill(0);
-        layer
+        let surface = &self.layers[index].surface;
+        surface
             .wl_surface()
             .damage_buffer(0, 0, width as i32, height as i32);
-        if buffer.attach_to(layer.wl_surface()).is_ok() {
-            layer.commit();
+        if buffer.attach_to(surface.wl_surface()).is_ok() {
+            surface.commit();
         }
     }
+}
 
-    fn close_frame(&self) -> (f64, f64) {
-        let Some(closing) = &self.closing else {
-            return (1.0, 1.0);
-        };
-        let progress = ((Instant::now() - closing.started).as_secs_f64()
-            / closing.duration.as_secs_f64())
-        .clamp(0.0, 1.0);
-        (
-            1.0 - smoothstep(progress),
-            1.0 - smoothstep((progress / 0.8).min(1.0)),
-        )
-    }
-
-    fn action_frame(&self) -> Option<ActionFrame> {
-        let closing = self.closing.as_ref()?;
-        let (index, start, target) = closing.action?;
-        let progress = ((Instant::now() - closing.started).as_secs_f64()
-            / closing.duration.as_secs_f64())
-        .clamp(0.0, 1.0);
-        let flight_end = 2.0 / 3.0;
-        let flight = (progress / flight_end).min(1.0);
-        let fade = ((progress - flight_end) / (1.0 - flight_end)).clamp(0.0, 1.0);
-        Some(ActionFrame {
-            index,
-            start,
-            target,
-            position_progress: closing
-                .spring
-                .sample(flight, closing.duration.as_secs_f64() * flight_end),
-            growth_progress: closing
-                .spring
-                .sample(progress, closing.duration.as_secs_f64()),
-            opacity: 1.0 - smoothstep(fade),
-            final_scale: closing.action_scale,
-        })
+fn copy_pixmap_to_argb(pixmap: &Pixmap, canvas: &mut [u8]) {
+    for (source, target) in pixmap
+        .data()
+        .chunks_exact(4)
+        .zip(canvas.chunks_exact_mut(4))
+    {
+        target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
     }
 }
 
@@ -836,9 +557,13 @@ impl CompositorHandler for App {
 }
 
 impl LayerShellHandler for App {
-    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if let Some(index) = self.layers.iter().position(|output| &output.layer == layer) {
-            let was_active = self.active_layer == Some(index);
+    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &LayerSurface) {
+        if let Some(index) = self
+            .layers
+            .iter()
+            .position(|layer| &layer.surface == surface)
+        {
+            let selected = self.active_layer == Some(index);
             self.layers.remove(index);
             self.active_layer = self.active_layer.and_then(|active| {
                 if active == index {
@@ -847,8 +572,8 @@ impl LayerShellHandler for App {
                     Some(active - usize::from(active > index))
                 }
             });
-            if was_active {
-                self.finish_hide();
+            if selected {
+                self.hide();
             }
         }
     }
@@ -857,29 +582,23 @@ impl LayerShellHandler for App {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        layer: &LayerSurface,
+        surface: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        let Some(index) = self.layers.iter().position(|output| &output.layer == layer) else {
+        let Some(index) = self
+            .layers
+            .iter()
+            .position(|layer| &layer.surface == surface)
+        else {
             return;
         };
-        let output = &mut self.layers[index];
-        output.width = configure.new_size.0;
-        output.height = configure.new_size.1;
-        output.configured = output.width > 0 && output.height > 0;
+        self.layers[index].width = configure.new_size.0;
+        self.layers[index].height = configure.new_size.1;
         if self.active_layer == Some(index) {
-            self.width = output.width;
-            self.height = output.height;
-            self.configured = output.configured;
-            self.initialize_center(self.pointer_position);
-            if self.centers.is_empty() {
-                self.attach_bootstrap_buffer(index);
-            } else {
-                self.draw();
-            }
+            self.draw();
         } else {
-            self.attach_bootstrap_buffer(index);
+            self.attach_transparent(index);
         }
     }
 }
@@ -939,13 +658,13 @@ impl PointerHandler for App {
         events: &[PointerEvent],
     ) {
         for event in events {
-            if !self.active {
+            if !self.visible {
                 continue;
             }
-            let Some(layer_index) = self
+            let Some(index) = self
                 .layers
                 .iter()
-                .position(|output| &event.surface == output.layer.wl_surface())
+                .position(|layer| &event.surface == layer.surface.wl_surface())
             else {
                 continue;
             };
@@ -957,37 +676,19 @@ impl PointerHandler for App {
                 if let Some(pointer) = self.pointer.as_ref() {
                     let _ = pointer.set_cursor(conn, CursorIcon::Default);
                 }
-                self.select_layer(layer_index, position);
+                self.select_output(index, position);
             }
-            if self.active_layer != Some(layer_index) {
+            if self.active_layer != Some(index) {
                 continue;
             }
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                    self.pointer_position = Some(position);
-                    self.initialize_center(Some(position));
-                    let target = self.target_at(position);
-                    if target != self.hovered {
-                        self.set_hover(target);
-                        self.draw();
-                    }
-                    let hover_enabled = self
-                        .config
-                        .as_ref()
-                        .is_some_and(|config| config.hover_mode || self.turbo_active);
-                    if hover_enabled
-                        && let Some(selection) =
-                            self.hover_detector.on_motion(position, Instant::now())
-                    {
-                        self.activate_mode(selection, true, self.turbo_active);
-                    }
+                    self.update_pointer(position)
                 }
                 PointerEventKind::Press { button, .. } if button == LEFT_BUTTON => {
-                    self.activate(position);
+                    self.activate(position)
                 }
-                PointerEventKind::Press { button, .. } if button == RIGHT_BUTTON => {
-                    self.begin_hide(None)
-                }
+                PointerEventKind::Press { button, .. } if button == RIGHT_BUTTON => self.hide(),
                 _ => {}
             }
         }
@@ -1024,7 +725,7 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         if event.keysym == Keysym::Escape {
-            self.begin_hide(None);
+            self.hide();
         }
     }
     fn release_key(
@@ -1042,22 +743,9 @@ impl KeyboardHandler for App {
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
         _: u32,
-        modifiers: Modifiers,
+        _: Modifiers,
         _: u32,
     ) {
-        let was_active = self.turbo_active;
-        self.modifiers = modifiers;
-        let held = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.logo;
-        let turbo_enabled = self.config.as_ref().is_some_and(|config| config.turbo_mode);
-        self.turbo_active = turbo_enabled && held;
-        if !was_active && self.turbo_active {
-            self.hover_detector.reset(self.centers.last().copied());
-        } else if was_active
-            && !self.turbo_active
-            && let Some(position) = self.pointer_position
-        {
-            self.activate_mode(position, true, false);
-        }
     }
 }
 
@@ -1078,10 +766,11 @@ impl OutputHandler for App {
         output: wl_output::WlOutput,
     ) {
         if let Some(index) = self.layers.iter().position(|layer| layer.output == output) {
+            let selected = self.active_layer == Some(index);
             self.layers.remove(index);
-            if self.active_layer == Some(index) {
+            if selected {
                 self.active_layer = None;
-                self.finish_hide();
+                self.hide();
             } else if let Some(active) = self.active_layer
                 && active > index
             {
@@ -1097,6 +786,13 @@ impl ShmHandler for App {
     }
 }
 
+impl ActivationHandler for App {
+    type RequestData = RequestData;
+
+    fn new_token(&mut self, _: String, _: &Self::RequestData) {}
+}
+
+delegate_activation!(App);
 delegate_compositor!(App);
 delegate_output!(App);
 delegate_shm!(App);

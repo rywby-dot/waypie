@@ -4,11 +4,11 @@ use std::{
     os::unix::{fs::MetadataExt, net::UnixDatagram},
     path::Path,
     process::Command,
-    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
 use smithay_client_toolkit::{
+    activation::ActivationState,
     compositor::CompositorState,
     output::OutputState,
     reexports::{
@@ -46,13 +46,25 @@ fn run() -> Result<()> {
         }
         return Ok(());
     }
+    let activation_token = env::var("XDG_ACTIVATION_TOKEN").ok();
+    if activation_token.is_some() {
+        // SAFETY: this runs before the event loop and before Waypie creates any
+        // threads. Commands launched by the daemon must not inherit and reuse
+        // the compositor's one-shot startup token.
+        unsafe { env::remove_var("XDG_ACTIVATION_TOKEN") };
+    }
     let command = if arguments == ["--kill"] {
-        b"quit".as_slice()
+        b"quit".to_vec()
     } else {
-        b"show".as_slice()
+        let mut command = b"show".to_vec();
+        if let Some(token) = activation_token.as_deref() {
+            command.push(0);
+            command.extend_from_slice(token.as_bytes());
+        }
+        command
     };
     let (socket_path, pid_path) = runtime_paths();
-    if !arguments.is_empty() && send_command(&socket_path, command).is_ok() {
+    if !arguments.is_empty() && send_command(&socket_path, &command).is_ok() {
         return Ok(());
     }
     if arguments == ["--kill"] {
@@ -75,6 +87,7 @@ fn run() -> Result<()> {
     let registry_state = RegistryState::new(&globals);
     let seat_state = SeatState::new(&globals, &qh);
     let output_state = OutputState::new(&globals, &qh);
+    let activation = ActivationState::bind(&globals, &qh).ok();
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let handle = event_loop.handle();
@@ -83,7 +96,7 @@ fn run() -> Result<()> {
     handle.insert_source(
         Generic::new(socket, Interest::READ, Mode::Level),
         |_, socket, app| {
-            let mut buffer = [0_u8; 64];
+            let mut buffer = [0_u8; 4096];
             loop {
                 match socket.recv(&mut buffer) {
                     Ok(length) => app.handle_control(&buffer[..length]),
@@ -101,16 +114,16 @@ fn run() -> Result<()> {
         compositor,
         layer_shell,
         shm,
+        activation,
         qh,
     );
     app.prepare_layers();
     if arguments == ["--show"] {
-        app.show()?;
+        app.show(activation_token)?;
     }
     while !app.exit {
-        let timeout = app.visible().then_some(Duration::from_millis(16));
-        event_loop.dispatch(timeout, &mut app)?;
-        app.tick();
+        event_loop.dispatch(None, &mut app)?;
+        app.flush_redraw();
     }
     let _ = fs::remove_file(socket_path);
     let _ = fs::remove_file(pid_path);
