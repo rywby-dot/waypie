@@ -158,6 +158,11 @@ sufficiently long pointer stroke, the current direction is selected when the
 pointer pauses or turns sharply. Hover Mode can open submenus, return through
 the menu chain, and execute commands.
 
+With **Travel item animation** enabled, the selected item and an active
+connector move to the pointer in Hover and Turbo modes. After the initial
+transition the item follows the pointer exactly. Disable it to retain the
+normal stationary active-item behavior.
+
 The gesture constants are grouped near the top of
 `src/hover.rs` for developers who want to tune them.
 
@@ -201,8 +206,8 @@ The main configurator options are:
 - **Show icons** changes only the configurator preview.
 - **Center layout** performs one equal-spacing operation independently of the
   two alignment checkboxes.
-- **Center mode**, **Hover mode**, **Turbo mode**, and **Close on click** control
-  the corresponding runtime behavior.
+- **Center mode**, **Hover mode**, **Turbo mode**, **Travel item animation**, and
+  **Close on click** control the corresponding runtime behavior.
 
 Shortcuts work while focus is outside text-entry fields:
 
@@ -237,7 +242,7 @@ The GUI manages these settings:
 - `center-hitbox-size` — diameter of the central hitbox; `0` disables it;
 - `minimum-edge-distance` — minimum safe distance for a newly opened menu
   center from an output edge;
-- `center-mode`, `hover-mode`, `turbo-mode`, and
+- `center-mode`, `hover-mode`, `turbo-mode`, `travel-item-animation`, and
   `close-submenu-on-center-click` — runtime switches;
 - `preserve-proportions`, `auto-alignment`, and `configurator-show-icons` —
   configurator-only persistent preferences.

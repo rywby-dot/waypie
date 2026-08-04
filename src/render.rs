@@ -411,7 +411,7 @@ impl Renderer {
             && !scene
                 .nodes
                 .iter()
-                .any(|node| node.selected_action || node.return_connector)
+                .any(|node| node.selected_action || node.return_connector || node.travel_connector)
         {
             return;
         }
@@ -483,8 +483,15 @@ impl Renderer {
         }
         let temporary_links = scene.nodes.iter().filter_map(|node| {
             let parent_path = match &node.key {
-                NodeKey::Action(path, _) if node.selected_action => Some(path.as_slice()),
+                NodeKey::Action(path, _) if node.selected_action || node.travel_connector => {
+                    Some(path.as_slice())
+                }
                 NodeKey::Menu(path) if node.return_connector && !path.is_empty() => {
+                    Some(&path[..path.len() - 1])
+                }
+                NodeKey::Menu(path)
+                    if node.travel_connector && node.role == NodeRole::Item && !path.is_empty() =>
+                {
                     Some(&path[..path.len() - 1])
                 }
                 _ => None,
@@ -500,7 +507,12 @@ impl Renderer {
             if connector_factor <= f64::EPSILON {
                 continue;
             }
-            let mut style = scene.styles.circle(&["connector"]).unwrap_or_default();
+            let selectors = if action.travel_connector && action.active {
+                ["connector", "connector.active"].as_slice()
+            } else {
+                ["connector"].as_slice()
+            };
+            let mut style = scene.styles.circle(selectors).unwrap_or_default();
             style.color = self.animated_color(
                 ColorAnimationKey::Connector(action.key.clone()),
                 style.color,

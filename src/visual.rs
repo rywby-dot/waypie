@@ -32,6 +32,7 @@ pub struct NodeTarget {
     pub size: f64,
     pub rest_size: f64,
     pub active: bool,
+    pub traveling: bool,
     pub icon_visible: bool,
 }
 
@@ -61,6 +62,7 @@ pub struct VisualNode {
     pub active: bool,
     pub selected_action: bool,
     pub return_connector: bool,
+    pub travel_connector: bool,
     pub connector_factor: f64,
     pub indicator_factor: f64,
     base_position: Point,
@@ -99,6 +101,7 @@ pub struct VisualNode {
     spring: Spring,
     use_spring: bool,
     removing: bool,
+    traveling: bool,
     position_end: f64,
     opacity_delay: f64,
     position_anchor: Option<PositionAnchor>,
@@ -260,6 +263,9 @@ impl VisualNode {
         };
         self.connector_factor = self.connector_from
             + (self.connector_target - self.connector_from) * smoothstep(connector_progress);
+        if connector_progress >= 1.0 && self.connector_target <= f64::EPSILON {
+            self.travel_connector = false;
+        }
         let indicator_progress = if self.indicator_duration.is_zero() {
             1.0
         } else {
@@ -533,6 +539,10 @@ impl Animator {
                 node.item_path = target.item_path;
                 node.role = target.role;
                 node.active = target.active;
+                node.traveling = target.traveling;
+                if target.role != NodeRole::Item {
+                    node.travel_connector = false;
+                }
                 node.selected_action = false;
                 node.collapse_to = target.origin;
                 node.set_icon_visible(target.icon_visible, icon_duration, now);
@@ -646,6 +656,7 @@ impl Animator {
                         active: target.active,
                         selected_action: false,
                         return_connector: false,
+                        travel_connector: false,
                         connector_factor: 0.0,
                         base_position: creation_origin,
                         base_size: target.rest_size * initial,
@@ -701,6 +712,7 @@ impl Animator {
                         spring: create_spring,
                         use_spring: true,
                         removing: false,
+                        traveling: target.traveling,
                         position_end: 1.0,
                         opacity_delay: 0.0,
                         position_anchor,
@@ -721,7 +733,7 @@ impl Animator {
         spring: Spring,
     ) {
         let motion = Motion { duration, spring };
-        self.hover_with_follow(targets, motion, motion, icon_duration);
+        self.hover_with_follow(targets, motion, motion, icon_duration, Duration::ZERO);
     }
 
     pub fn hover_with_follow(
@@ -730,6 +742,7 @@ impl Animator {
         hover: Motion,
         follow: Motion,
         icon_duration: Duration,
+        connector_duration: Duration,
     ) {
         let now = Instant::now();
         self.sample_all(now);
@@ -741,6 +754,7 @@ impl Animator {
                 continue;
             }
             let active_changed = node.active != target.active;
+            let was_traveling = node.traveling;
             let motion = if node.active || target.active {
                 hover
             } else {
@@ -753,6 +767,12 @@ impl Animator {
             node.selected_action = false;
             node.collapse_to = target.origin;
             node.set_icon_visible(target.icon_visible, icon_duration, now);
+            if target.traveling {
+                node.set_connector_target(1.0, connector_duration, now);
+                node.travel_connector = true;
+            } else if was_traveling || node.travel_connector {
+                node.set_connector_target(0.0, connector_duration, now);
+            }
             let target_offset = Point {
                 x: target.position.x - target.rest_position.x,
                 y: target.position.y - target.rest_position.y,
@@ -770,6 +790,19 @@ impl Animator {
                     || (node.hover_target_scale - 1.0).abs() >= f64::EPSILON);
             let target_changed = target_offset != node.hover_target_offset
                 || (target_scale - node.hover_target_scale).abs() >= f64::EPSILON;
+            if target.traveling && was_traveling && hover_finished {
+                node.hover_offset = target_offset;
+                node.hover_from_offset = target_offset;
+                node.hover_target_offset = target_offset;
+                node.hover_scale = target_scale;
+                node.hover_from_scale = target_scale;
+                node.hover_target_scale = target_scale;
+                node.position = target.position;
+                node.size = node.base_size * target_scale;
+                node.active = target.active;
+                node.traveling = true;
+                continue;
+            }
             let mut restart_hover = hover_finished || active_changed || returning_to_rest;
             if !restart_hover && target_changed {
                 let progress = ((now - node.hover_started).as_secs_f64()
@@ -798,6 +831,7 @@ impl Animator {
             node.hover_target_offset = target_offset;
             node.hover_target_scale = target_scale;
             node.active = target.active;
+            node.traveling = target.traveling;
             if duration.is_zero() {
                 node.hover_offset = target_offset;
                 node.hover_from_offset = target_offset;
@@ -997,6 +1031,7 @@ mod tests {
             size: 100.0,
             rest_size: 100.0,
             active: false,
+            traveling: false,
             icon_visible: true,
         }
     }
@@ -1376,5 +1411,45 @@ mod tests {
             animator.nodes[&key].hover_target_offset,
             Point { x: 0.0, y: -20.0 }
         );
+    }
+
+    #[test]
+    fn traveled_item_follows_the_pointer_exactly_after_its_initial_motion() {
+        let key = NodeKey::Action(vec![], 0);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![target(
+                key.clone(),
+                NodeRole::Item,
+                Point { x: 100.0, y: 100.0 },
+            )],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+        let motion = Motion {
+            duration: Duration::from_secs(1),
+            spring: Spring::default(),
+        };
+        let mut first = target(key.clone(), NodeRole::Item, Point { x: 180.0, y: 120.0 });
+        first.rest_position = Point { x: 100.0, y: 100.0 };
+        first.active = true;
+        first.traveling = true;
+        animator.hover_with_follow(vec![first], motion, motion, Duration::ZERO, Duration::ZERO);
+        animator.nodes.get_mut(&key).unwrap().hover_started =
+            Instant::now() - Duration::from_secs(2);
+        animator.nodes.get_mut(&key).unwrap().sample(Instant::now());
+
+        let mut second = target(key.clone(), NodeRole::Item, Point { x: 240.0, y: 160.0 });
+        second.rest_position = Point { x: 100.0, y: 100.0 };
+        second.active = true;
+        second.traveling = true;
+        animator.hover_with_follow(vec![second], motion, motion, Duration::ZERO, Duration::ZERO);
+
+        let node = &animator.nodes[&key];
+        assert_eq!(node.position, Point { x: 240.0, y: 160.0 });
+        assert!(node.travel_connector);
+        assert_eq!(node.connector_factor, 1.0);
     }
 }

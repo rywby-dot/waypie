@@ -420,6 +420,8 @@ impl App {
             return vec![];
         };
         let path = self.state.path();
+        let travel_enabled =
+            config.travel_item_animation && (config.hover_mode || self.turbo_active);
         let centers = self.state.centers();
         let mut targets = vec![];
         for (depth, center) in centers.iter().copied().enumerate() {
@@ -460,6 +462,7 @@ impl App {
                 size: style.width.unwrap_or(0.0) * style.scale,
                 rest_size: rest_style.width.unwrap_or(0.0) * rest_style.scale,
                 active,
+                traveling: false,
                 icon_visible: role != NodeRole::Center
                     || !matches!(self.state.active(), Some(Target::Item(_))),
             });
@@ -480,6 +483,7 @@ impl App {
             });
         for (index, item) in current.items.iter().enumerate() {
             let active = self.state.active() == Some(Target::Item(index));
+            let traveling = travel_enabled && active;
             let mut selectors = vec!["circle", "circle.item"];
             if item.is_submenu() {
                 selectors.push("circle.submenu");
@@ -515,8 +519,13 @@ impl App {
                 0.0
             };
             let distance = (config.menu_radius + extra_distance).max(0.0);
-            let position =
-                crate::geometry::radial_position(center, item.angle.unwrap_or(0.0), distance);
+            let position = if traveling {
+                self.state.pointer().unwrap_or_else(|| {
+                    crate::geometry::radial_position(center, item.angle.unwrap_or(0.0), distance)
+                })
+            } else {
+                crate::geometry::radial_position(center, item.angle.unwrap_or(0.0), distance)
+            };
             let rest_position = crate::geometry::radial_position(
                 center,
                 item.angle.unwrap_or(0.0),
@@ -539,6 +548,7 @@ impl App {
                 size: style.width.unwrap_or(0.0) * style.scale,
                 rest_size: rest_style.width.unwrap_or(0.0) * rest_style.scale,
                 active,
+                traveling,
                 icon_visible: true,
             });
         }
@@ -617,6 +627,9 @@ impl App {
             let icon_duration = animation
                 .as_ref()
                 .map_or(Duration::ZERO, |animation| animation.icon_duration);
+            let connector_duration = animation
+                .as_ref()
+                .map_or(Duration::ZERO, |animation| animation.connector_duration);
             self.animator.hover_with_follow(
                 targets,
                 Motion {
@@ -628,6 +641,7 @@ impl App {
                     spring: follow_spring,
                 },
                 icon_duration,
+                connector_duration,
             );
         }
     }

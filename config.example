@@ -6,6 +6,7 @@ active-label-in-center = true
 close-submenu-on-center-click = false
 hover-mode = false
 turbo-mode = true
+travel-item-animation = false
 preserve-proportions = false
 auto-alignment = true
 configurator-show-icons = true
