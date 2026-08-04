@@ -183,6 +183,7 @@ mod tests {
             center_mode: false,
             hover_mode: false,
             turbo_mode: false,
+            travel_item_animation: false,
             close_submenu_on_center_click: false,
             menu: Item {
                 label: "Root".into(),

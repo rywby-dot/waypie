@@ -38,6 +38,7 @@ class Settings:
     close_submenu_on_center_click: bool
     hover_mode: bool
     turbo_mode: bool
+    travel_item_animation: bool
     preserve_proportions: bool
     auto_alignment: bool
     configurator_show_icons: bool
@@ -95,6 +96,10 @@ def load_config():
     )
     hover_mode = boolean(source.get("hover-mode", False), "hover-mode")
     turbo_mode = boolean(source.get("turbo-mode", False), "turbo-mode")
+    travel_item_animation = boolean(
+        source.get("travel-item-animation", False),
+        "travel-item-animation",
+    )
     preserve_proportions = boolean(
         source.get("preserve-proportions", False),
         "preserve-proportions",
@@ -117,6 +122,7 @@ def load_config():
         close_submenu_on_center_click,
         hover_mode,
         turbo_mode,
+        travel_item_animation,
         preserve_proportions,
         auto_alignment,
         configurator_show_icons,

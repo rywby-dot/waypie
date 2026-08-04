@@ -18,6 +18,8 @@ pub struct Config {
     #[serde(default)]
     pub turbo_mode: bool,
     #[serde(default)]
+    pub travel_item_animation: bool,
+    #[serde(default)]
     pub close_submenu_on_center_click: bool,
     pub menu: Item,
 }
@@ -199,5 +201,14 @@ mod tests {
     #[test]
     fn return_uses_largest_gap() {
         assert_eq!(largest_gap_angle(&[0.0, 90.0, 180.0], None), 270.0);
+    }
+
+    #[test]
+    fn travel_item_animation_is_optional_and_can_be_enabled() {
+        let disabled: Config = toml::from_str("[menu]\nlabel = 'Root'").unwrap();
+        let enabled: Config =
+            toml::from_str("travel-item-animation = true\n[menu]\nlabel = 'Root'").unwrap();
+        assert!(!disabled.travel_item_animation);
+        assert!(enabled.travel_item_animation);
     }
 }
