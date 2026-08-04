@@ -95,6 +95,7 @@ class Configurator(Gtk.Application):
         self.updating_fields = False
         self.preview_animations = {}
         self.preview_color_animations = {}
+        self.preview_opacity_animations = {}
         self.preview_departures = []
         self.preview_tick = None
         self.preview_hover_target = None
@@ -566,6 +567,7 @@ class Configurator(Gtk.Application):
             self.restoring_undo = False
         self.preview_animations.clear()
         self.preview_color_animations.clear()
+        self.preview_opacity_animations.clear()
         self.preview_departures.clear()
         self.rebuild_tree()
         self.sync_fields()
@@ -766,6 +768,46 @@ class Configurator(Gtk.Application):
             )
         )
 
+    def animated_preview_opacity(self, key, target):
+        now = GLib.get_monotonic_time() / 1_000_000
+        duration = animation_duration(self.styles, "opacity-duration")
+        animation = self.preview_opacity_animations.get(key)
+        if animation is None:
+            animation = {
+                "current": target,
+                "start": target,
+                "target": target,
+                "started": now,
+                "duration": 0,
+            }
+            self.preview_opacity_animations[key] = animation
+        self.update_preview_opacity(animation, now)
+        if animation["target"] != target:
+            animation.update(
+                start=animation["current"],
+                target=target,
+                started=now,
+                duration=duration,
+            )
+        self.update_preview_opacity(animation, now)
+        if animation["current"] != animation["target"]:
+            self.ensure_preview_tick()
+        return animation["current"]
+
+    @staticmethod
+    def update_preview_opacity(animation, now):
+        duration = animation["duration"]
+        progress = (
+            1.0 if duration == 0 else min(1.0, (now - animation["started"]) / duration)
+        )
+        if progress >= 1:
+            animation["current"] = animation["target"]
+            return
+        progress = progress * progress * (3 - 2 * progress)
+        animation["current"] = (
+            animation["start"] + (animation["target"] - animation["start"]) * progress
+        )
+
     def capture_preview_departures(self, items):
         if self.canvas is None:
             return
@@ -844,6 +886,10 @@ class Configurator(Gtk.Application):
             self.update_preview_color(animation, now)
             if animation["current"] != animation["target"]:
                 active = True
+        for animation in self.preview_opacity_animations.values():
+            self.update_preview_opacity(animation, now)
+            if animation["current"] != animation["target"]:
+                active = True
         if any(
             departure["duration"] == 0
             or now - departure["started"] < departure["duration"]
@@ -909,7 +955,13 @@ class Configurator(Gtk.Application):
 
     def draw_preview(self, _canvas, context, width, height):
         overlay = computed_style(self.styles, ("overlay",))
-        context.set_source_rgba(*overlay["background-color"])
+        overlay["background-color"] = self.animated_preview_color(
+            ("overlay-color",), overlay["background-color"]
+        )
+        overlay["opacity"] = self.animated_preview_opacity(
+            ("overlay-opacity",), overlay["opacity"]
+        )
+        set_source_color(context, overlay["background-color"], overlay["opacity"])
         context.paint()
 
         parent = None
@@ -1079,6 +1131,13 @@ class Configurator(Gtk.Application):
         submenu_indicator_skip_index=None,
     ):
         style = dict(style)
+        target_content_opacity = content_opacity(style)
+        style["opacity"] = self.animated_preview_opacity(
+            ("item-opacity", id(item)), style["opacity"]
+        )
+        style["text-opacity"] = self.animated_preview_opacity(
+            ("item-content-opacity", id(item)), target_content_opacity
+        )
         for property_name in ("background-color", "border-color", "color"):
             style[property_name] = self.animated_preview_color(
                 ("item-color", id(item), property_name),
@@ -1204,6 +1263,10 @@ class Configurator(Gtk.Application):
         style["color"] = self.animated_preview_color(
             ("indicator-color", id(item)),
             style["color"],
+        )
+        style["opacity"] = self.animated_preview_opacity(
+            ("indicator-opacity", id(item)),
+            style["opacity"],
         )
 
         def draw_angles(indicator_style, angles):

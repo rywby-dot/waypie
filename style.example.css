@@ -30,6 +30,7 @@ animation {
   submenu-indicator-epsilon: 0.0001;
 
   color-duration: 500ms;
+  opacity-duration: 500ms;
   icon-duration: 180ms;
   connector-duration: 180ms;
   item-delete-duration: 220ms;

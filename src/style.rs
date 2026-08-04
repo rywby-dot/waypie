@@ -100,6 +100,7 @@ pub enum Radius {
 #[derive(Clone, Copy, Debug)]
 pub struct AnimationStyle {
     pub color_duration: Duration,
+    pub opacity_duration: Duration,
     pub icon_duration: Duration,
     pub item_delete_duration: Duration,
     pub close_duration: Duration,
@@ -199,6 +200,7 @@ impl StyleSheet {
         };
         Ok(AnimationStyle {
             color_duration: duration("color-duration", None)?,
+            opacity_duration: duration("opacity-duration", None)?,
             icon_duration: duration("icon-duration", None)?,
             item_delete_duration: duration("item-delete-duration", None)?,
             close_duration: duration("close-duration", None)?,
@@ -490,7 +492,7 @@ mod tests {
     #[test]
     fn animation_settings_separate_timed_effects_from_springs() {
         let sheet = StyleSheet::parse(
-            "animation { color-duration: 160ms; icon-duration: 180ms; item-delete-duration: 250ms; \
+            "animation { color-duration: 160ms; opacity-duration: 170ms; icon-duration: 180ms; item-delete-duration: 250ms; \
              close-duration: 220ms; connector-duration: 140ms; \
              action-scale: 1.4; menu-move-damping-ratio: 0.8; \
              menu-move-stiffness: 700; menu-move-epsilon: 0.001; \
@@ -499,6 +501,7 @@ mod tests {
         );
         let animation = sheet.animation().unwrap();
         assert_eq!(animation.color_duration, Duration::from_millis(160));
+        assert_eq!(animation.opacity_duration, Duration::from_millis(170));
         assert_eq!(animation.icon_duration, Duration::from_millis(180));
         assert_eq!(animation.item_delete_duration, Duration::from_millis(250));
         assert_eq!(animation.close_duration, Duration::from_millis(220));
