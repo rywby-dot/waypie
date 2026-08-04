@@ -512,6 +512,11 @@ impl Animator {
                 .and_then(|parent| target_positions.get(parent))
                 .copied();
             if let Some(node) = self.nodes.get_mut(&key) {
+                let menu_node = matches!(&key, NodeKey::Menu(_));
+                let had_indicators =
+                    menu_node && matches!(node.role, NodeRole::Item | NodeRole::History);
+                let wants_indicators =
+                    menu_node && matches!(target.role, NodeRole::Item | NodeRole::History);
                 let opening_connector = node.role == NodeRole::Item
                     && target.role == NodeRole::Center
                     && !target.item_path.is_empty();
@@ -519,10 +524,11 @@ impl Animator {
                     animate && node.role == NodeRole::Center && target.role == NodeRole::Item;
                 if opening_connector {
                     node.set_connector_target(1.0, connector_duration, now);
-                    node.set_indicator_target(0.0, indicator, now);
                 } else if returning {
                     node.set_connector_target(0.0, connector_duration, now);
-                    node.set_indicator_target(1.0, indicator, now);
+                }
+                if had_indicators != wants_indicators {
+                    node.set_indicator_target(f64::from(wants_indicators), indicator, now);
                 }
                 node.item_path = target.item_path;
                 node.role = target.role;
@@ -576,7 +582,8 @@ impl Animator {
                     node.removing = false;
                     node.return_connector = false;
                     node.indicator_factor = f64::from(
-                        target.role == NodeRole::Item && matches!(&key, NodeKey::Menu(_)),
+                        matches!(target.role, NodeRole::Item | NodeRole::History)
+                            && matches!(&key, NodeKey::Menu(_)),
                     );
                     node.indicator_from = node.indicator_factor;
                     node.indicator_target = node.indicator_factor;
@@ -601,8 +608,8 @@ impl Animator {
                 let initial = if create_animated { 0.0 } else { 1.0 };
                 let creates_connector =
                     target.role == NodeRole::Center && !target.item_path.is_empty();
-                let creates_indicator =
-                    target.role == NodeRole::Item && matches!(&key, NodeKey::Menu(_));
+                let creates_indicator = matches!(target.role, NodeRole::Item | NodeRole::History)
+                    && matches!(&key, NodeKey::Menu(_));
                 let parent = parent_key(&key);
                 let parent_position = parent
                     .as_ref()
@@ -1025,6 +1032,41 @@ mod tests {
         assert_eq!(nodes[0].key, key);
         assert_eq!(nodes[0].role, NodeRole::Center);
         assert_eq!(nodes[0].position, Point { x: 300.0, y: 100.0 });
+    }
+
+    #[test]
+    fn previous_menu_circle_reveals_its_own_indicators() {
+        let key = NodeKey::Menu(vec![]);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![target(key.clone(), NodeRole::Center, Point::default())],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+        let indicator = Motion {
+            duration: Duration::from_secs(1),
+            spring: Spring::default(),
+        };
+        animator.reconcile_with_effects(
+            vec![target(key.clone(), NodeRole::History, Point::default())],
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Motion::default(),
+            TransitionEffects {
+                indicator,
+                ..TransitionEffects::default()
+            },
+            true,
+        );
+
+        let node = &animator.nodes[&key];
+        assert_eq!(node.role, NodeRole::History);
+        assert_eq!(node.indicator_target, 1.0);
+        assert_eq!(node.indicator_duration, indicator.duration);
     }
 
     #[test]

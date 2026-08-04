@@ -417,6 +417,52 @@ mod tests {
     }
 
     #[test]
+    fn active_connector_overrides_the_base_connector_style() {
+        let sheet = StyleSheet::parse(
+            "connector { color: #ff0000; opacity: 0.4; width: 9px; } \
+             connector.active { color: #00ff00; opacity: 0.8; width: 12px; }",
+        );
+        let style = sheet.circle(&["connector", "connector.active"]).unwrap();
+        assert_eq!(style.color, parse_color("#00ff00", "color").unwrap());
+        assert_eq!(style.opacity, 0.8);
+        assert_eq!(style.width, Some(12.0));
+    }
+
+    #[test]
+    fn return_indicator_overrides_the_base_indicator_style() {
+        let sheet = StyleSheet::parse(
+            "submenu-indicator { color: #ff0000; opacity: 0.4; width: 20px; } \
+             submenu-indicator.return { color: #00ff00; opacity: 0.7; width: 30px; }",
+        );
+        let style = sheet
+            .circle(&["submenu-indicator", "submenu-indicator.return"])
+            .unwrap();
+        assert_eq!(style.color, parse_color("#00ff00", "color").unwrap());
+        assert_eq!(style.opacity, 0.7);
+        assert_eq!(style.width, Some(30.0));
+    }
+
+    #[test]
+    fn active_return_indicator_has_the_last_cascade_override() {
+        let sheet = StyleSheet::parse(
+            "submenu-indicator { opacity: 0.2; width: 20px; } \
+             submenu-indicator.active { opacity: 0.4; width: 24px; } \
+             submenu-indicator.return { opacity: 0.6; width: 28px; } \
+             submenu-indicator.return.active { opacity: 0.9; width: 32px; }",
+        );
+        let style = sheet
+            .circle(&[
+                "submenu-indicator",
+                "submenu-indicator.active",
+                "submenu-indicator.return",
+                "submenu-indicator.return.active",
+            ])
+            .unwrap();
+        assert_eq!(style.opacity, 0.9);
+        assert_eq!(style.width, Some(32.0));
+    }
+
+    #[test]
     fn rgb_and_rgba_are_compatible_with_python_styles() {
         assert_eq!(parse_color("rgb(255, 0, 128)", "color").unwrap().red, 1.0);
         assert_eq!(

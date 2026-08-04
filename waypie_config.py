@@ -903,6 +903,11 @@ class Configurator(Gtk.Application):
                 parent_center_style,
                 show_icon=self.show_icons_check.get_active(),
                 opacity=parent_geometry[3],
+                submenu_indicators=bool(parent.items),
+                submenu_indicators_active=self.preview_hover_target
+                == ("parent-center", None),
+                submenu_indicators_return=True,
+                submenu_indicator_skip_index=self.current_path[-1],
             )
             for _index, item, style, x, y, size, opacity in parent_circles:
                 self.draw_preview_item(
@@ -1021,6 +1026,8 @@ class Configurator(Gtk.Application):
         opacity=1.0,
         submenu_indicators=False,
         submenu_indicators_active=False,
+        submenu_indicators_return=False,
+        submenu_indicator_skip_index=None,
     ):
         if submenu_indicators:
             self.draw_preview_submenu_indicators(
@@ -1032,6 +1039,8 @@ class Configurator(Gtk.Application):
                 style,
                 opacity,
                 submenu_indicators_active,
+                submenu_indicators_return,
+                submenu_indicator_skip_index,
             )
         radius = resolve_radius(style["border-radius"], size)
         rounded_rectangle(
@@ -1126,64 +1135,76 @@ class Configurator(Gtk.Application):
         submenu_style,
         opacity,
         active=False,
+        return_circle=False,
+        skip_index=None,
     ):
         selectors = ["submenu-indicator"]
         if active:
             selectors.append("submenu-indicator.active")
+        if return_circle:
+            selectors.append("submenu-indicator.return")
+            if active:
+                selectors.append("submenu-indicator.return.active")
         style = computed_style(self.styles, selectors)
-        indicator_size = style["width"]
-        protrusion = style["protrusion"]
-        if (
-            not item.items
-            or indicator_size is None
-            or indicator_size <= 0
-            or protrusion <= 0
-        ):
-            return
-        orbit = max(0, circle_size / 2 - indicator_size / 2 + protrusion)
-        context.save()
-        if style["cut-indicators"]:
-            clip_x1, clip_y1, clip_x2, clip_y2 = context.clip_extents()
-            context.rectangle(
-                clip_x1,
-                clip_y1,
-                clip_x2 - clip_x1,
-                clip_y2 - clip_y1,
-            )
-            clip_size = max(0, circle_size - INDICATOR_CLIP_OVERLAP * 2)
-            radius = max(
-                0,
-                resolve_radius(submenu_style["border-radius"], circle_size)
-                - INDICATOR_CLIP_OVERLAP,
-            )
-            rounded_rectangle(
-                context,
-                x - clip_size / 2,
-                y - clip_size / 2,
-                clip_size,
-                clip_size,
-                radius,
-            )
-            context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
-            context.clip()
-        for child in item.items:
-            radians = math.radians(child.angle)
-            indicator_x = x + orbit * math.sin(radians)
-            indicator_y = y - orbit * math.cos(radians)
-            context.arc(
-                indicator_x,
-                indicator_y,
-                indicator_size / 2,
-                0,
-                math.tau,
-            )
-            set_source_color(
-                context,
-                style["color"],
-                style["opacity"] * opacity,
-            )
-            context.fill()
-        context.restore()
+
+        def draw_angles(indicator_style, angles):
+            indicator_size = indicator_style["width"]
+            protrusion = indicator_style["protrusion"]
+            if indicator_size is None or indicator_size <= 0 or protrusion <= 0:
+                return
+            orbit = max(0, circle_size / 2 - indicator_size / 2 + protrusion)
+            context.save()
+            if indicator_style["cut-indicators"]:
+                clip_x1, clip_y1, clip_x2, clip_y2 = context.clip_extents()
+                context.rectangle(
+                    clip_x1,
+                    clip_y1,
+                    clip_x2 - clip_x1,
+                    clip_y2 - clip_y1,
+                )
+                clip_size = max(0, circle_size - INDICATOR_CLIP_OVERLAP * 2)
+                radius = max(
+                    0,
+                    resolve_radius(submenu_style["border-radius"], circle_size)
+                    - INDICATOR_CLIP_OVERLAP,
+                )
+                rounded_rectangle(
+                    context,
+                    x - clip_size / 2,
+                    y - clip_size / 2,
+                    clip_size,
+                    clip_size,
+                    radius,
+                )
+                context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+                context.clip()
+            for angle in angles:
+                radians = math.radians(angle)
+                indicator_x = x + orbit * math.sin(radians)
+                indicator_y = y - orbit * math.cos(radians)
+                context.arc(
+                    indicator_x,
+                    indicator_y,
+                    indicator_size / 2,
+                    0,
+                    math.tau,
+                )
+                set_source_color(
+                    context,
+                    indicator_style["color"],
+                    indicator_style["opacity"] * opacity,
+                )
+                context.fill()
+            context.restore()
+
+        draw_angles(
+            style,
+            (
+                child.angle
+                for index, child in enumerate(item.items)
+                if index != skip_index
+            ),
+        )
 
     def preview_hit(self, x, y):
         _menu, _center, circles = self.preview_layout()
