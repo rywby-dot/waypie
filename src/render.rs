@@ -39,6 +39,8 @@ struct IndicatorFrame<'a> {
     submenu_style: &'a CircleStyle,
     styles: &'a StyleSheet,
     active: bool,
+    return_circle: bool,
+    skip_index: Option<usize>,
     scale: f64,
     reveal: f64,
 }
@@ -52,6 +54,8 @@ struct ItemFrame<'a> {
     active: bool,
     content: ItemContent<'a>,
     indicators: bool,
+    indicators_return: bool,
+    indicator_skip_index: Option<usize>,
     indicator_reveal: f64,
     geometry_size: f64,
     opacity: f64,
@@ -63,6 +67,10 @@ enum ItemContent<'a> {
     Default,
     Label(&'a str),
     IconOrBlank,
+}
+
+fn connector_is_active(role: NodeRole, active: bool) -> bool {
+    role == NodeRole::History && active
 }
 
 pub struct Renderer {
@@ -177,11 +185,17 @@ impl Renderer {
                     icon_root: scene.icon_root,
                     active: node.active,
                     content,
-                    indicators: node.role == NodeRole::Item
+                    indicators: matches!(node.role, NodeRole::Item | NodeRole::History)
                         || (node.role == NodeRole::Center
                             && !node.item_path.is_empty()
                             && !node.is_removing()
                             && node.indicator_factor > 0.0),
+                    indicators_return: node.role == NodeRole::History,
+                    indicator_skip_index: if node.role == NodeRole::History {
+                        path.get(node.item_path.len()).copied()
+                    } else {
+                        None
+                    },
                     indicator_reveal: (node.indicator_factor * node.opacity)
                         .clamp(0.0, 1.0)
                         .sqrt(),
@@ -203,11 +217,6 @@ impl Renderer {
         {
             return;
         }
-        let style = scene.styles.circle(&["connector"]).unwrap_or_default();
-        let width = style.width.unwrap_or(0.0);
-        if width <= 0.0 {
-            return;
-        }
         let mut paint = Paint::default();
         for depth in 0..path.len() {
             let start_key = NodeKey::Menu(path[..depth].to_vec());
@@ -220,6 +229,16 @@ impl Renderer {
             };
             let connector_factor = end_node.connector_factor.clamp(0.0, 1.0);
             if connector_factor <= f64::EPSILON {
+                continue;
+            }
+            let selectors = if connector_is_active(start_node.role, start_node.active) {
+                ["connector", "connector.active"].as_slice()
+            } else {
+                ["connector"].as_slice()
+            };
+            let style = scene.styles.circle(selectors).unwrap_or_default();
+            let width = style.width.unwrap_or(0.0);
+            if width <= 0.0 {
                 continue;
             }
             let start_radius = start_node.size / 2.0;
@@ -275,6 +294,11 @@ impl Renderer {
             if connector_factor <= f64::EPSILON {
                 continue;
             }
+            let style = scene.styles.circle(&["connector"]).unwrap_or_default();
+            let width = style.width.unwrap_or(0.0);
+            if width <= 0.0 {
+                continue;
+            }
             let center_position = center.position;
             let action_position = action.position;
             let delta = Point {
@@ -328,6 +352,8 @@ impl Renderer {
                     submenu_style: &visual_style,
                     styles: frame.styles,
                     active: frame.active,
+                    return_circle: frame.indicators_return,
+                    skip_index: frame.indicator_skip_index,
                     scale: if base_size > 0.0 {
                         (size / base_size).max(0.0)
                     } else {
@@ -389,9 +415,36 @@ impl Renderer {
         } else {
             vec!["submenu-indicator"]
         };
+        let mut selectors = selectors;
+        if frame.return_circle {
+            selectors.push("submenu-indicator.return");
+            if frame.active {
+                selectors.push("submenu-indicator.return.active");
+            }
+        }
         let Ok(style) = frame.styles.circle(&selectors) else {
             return;
         };
+        let child_angles = frame
+            .item
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != frame.skip_index)
+            .map(|(_, child)| child.angle.unwrap_or(0.0))
+            .collect::<Vec<_>>();
+        self.draw_indicator_angles(pixmap, center, circle_size, &frame, &style, &child_angles);
+    }
+
+    fn draw_indicator_angles(
+        &mut self,
+        pixmap: &mut Pixmap,
+        center: Point,
+        circle_size: f64,
+        frame: &IndicatorFrame<'_>,
+        style: &CircleStyle,
+        angles: &[f64],
+    ) {
         let size = style.width.unwrap_or(0.0) * frame.scale;
         if size <= 0.0 || style.protrusion <= 0.0 {
             return;
@@ -424,8 +477,8 @@ impl Renderer {
         } else {
             None
         };
-        for child in &frame.item.items {
-            let position = radial_position(center, child.angle.unwrap_or(0.0), radius);
+        for angle in angles {
+            let position = radial_position(center, *angle, radius);
             if let Some(path) =
                 PathBuilder::from_circle(position.x as f32, position.y as f32, (size / 2.0) as f32)
             {
@@ -799,4 +852,17 @@ fn padded_pixmap(source: &Pixmap) -> Option<Pixmap> {
         None,
     );
     Some(padded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connector_is_active_only_for_a_focused_history_circle() {
+        assert!(connector_is_active(NodeRole::History, true));
+        assert!(!connector_is_active(NodeRole::History, false));
+        assert!(!connector_is_active(NodeRole::Center, true));
+        assert!(!connector_is_active(NodeRole::Item, true));
+    }
 }
