@@ -27,8 +27,10 @@ pub struct NodeTarget {
     pub item_path: Vec<usize>,
     pub role: NodeRole,
     pub position: Point,
+    pub rest_position: Point,
     pub origin: Point,
     pub size: f64,
+    pub rest_size: f64,
     pub active: bool,
     pub icon_visible: bool,
 }
@@ -51,6 +53,17 @@ pub struct VisualNode {
     pub active: bool,
     pub selected_action: bool,
     pub return_connector: bool,
+    base_position: Point,
+    base_size: f64,
+    hover_offset: Point,
+    hover_from_offset: Point,
+    hover_target_offset: Point,
+    hover_scale: f64,
+    hover_from_scale: f64,
+    hover_target_scale: f64,
+    hover_started: Instant,
+    hover_duration: Duration,
+    hover_spring: Spring,
     collapse_to: Point,
     from_position: Point,
     target_position: Point,
@@ -114,24 +127,19 @@ impl VisualNode {
         };
         let progress = raw.clamp(0.0, 1.0);
         let position_progress = (progress / self.position_end.max(f64::EPSILON)).clamp(0.0, 1.0);
-        let position_movement = self.spring.sample(
-            position_progress,
-            self.duration.as_secs_f64() * self.position_end,
-        );
-        let size_movement = self.spring.sample(progress, self.duration.as_secs_f64());
+        let position_movement = self.spring.sample(position_progress);
+        let size_movement = self.spring.sample(progress);
         let fade = smoothstep(
             ((progress - self.opacity_delay) / (1.0 - self.opacity_delay).max(f64::EPSILON))
                 .clamp(0.0, 1.0),
         );
-        self.position = if let Some(anchor) = self.creation_anchor {
+        self.base_position = if let Some(anchor) = self.creation_anchor {
             let anchor_progress = if anchor.duration.is_zero() {
                 1.0
             } else {
                 ((now - self.started).as_secs_f64() / anchor.duration.as_secs_f64()).clamp(0.0, 1.0)
             };
-            let anchor_movement = anchor
-                .spring
-                .sample(anchor_progress, anchor.duration.as_secs_f64());
+            let anchor_movement = anchor.spring.sample(anchor_progress);
             let anchor_position = anchor.from.lerp(anchor.to, anchor_movement);
             Point {
                 x: anchor_position.x + (self.target_position.x - anchor.to.x) * position_movement,
@@ -141,8 +149,25 @@ impl VisualNode {
             self.from_position
                 .lerp(self.target_position, position_movement)
         };
-        self.size = self.from_scale + (self.target_scale - self.from_scale) * size_movement;
+        self.base_size = self.from_scale + (self.target_scale - self.from_scale) * size_movement;
         self.opacity = self.from_opacity + (self.target_opacity - self.from_opacity) * fade;
+        let hover_progress = if self.hover_duration.is_zero() {
+            1.0
+        } else {
+            ((now - self.hover_started).as_secs_f64() / self.hover_duration.as_secs_f64())
+                .clamp(0.0, 1.0)
+        };
+        let hover_movement = self.hover_spring.sample(hover_progress);
+        self.hover_offset = self
+            .hover_from_offset
+            .lerp(self.hover_target_offset, hover_movement);
+        self.hover_scale = self.hover_from_scale
+            + (self.hover_target_scale - self.hover_from_scale) * hover_movement;
+        self.position = Point {
+            x: self.base_position.x + self.hover_offset.x,
+            y: self.base_position.y + self.hover_offset.y,
+        };
+        self.size = self.base_size * self.hover_scale;
         let icon_progress = if self.icon_duration.is_zero() {
             1.0
         } else {
@@ -152,14 +177,19 @@ impl VisualNode {
         self.icon_opacity =
             self.icon_from + (self.icon_target - self.icon_from) * smoothstep(icon_progress);
         if progress >= 1.0 {
-            self.size = self.target_scale;
+            self.base_size = self.target_scale;
             self.opacity = self.target_opacity;
         }
         if self.movement_finished(now) {
-            self.position = self.target_position;
+            self.base_position = self.target_position;
             self.creation_anchor = None;
             self.return_connector = false;
         }
+        self.position = Point {
+            x: self.base_position.x + self.hover_offset.x,
+            y: self.base_position.y + self.hover_offset.y,
+        };
+        self.size = self.base_size * self.hover_scale;
     }
 
     fn retarget(&mut self, target: TransitionTarget, now: Instant) {
@@ -186,6 +216,15 @@ impl VisualNode {
         self.position_end = target.position_end;
         self.opacity_delay = target.opacity_delay;
         self.creation_anchor = None;
+        self.base_position = self.position;
+        self.base_size = self.size;
+        self.hover_offset = Point::default();
+        self.hover_from_offset = Point::default();
+        self.hover_target_offset = Point::default();
+        self.hover_scale = 1.0;
+        self.hover_from_scale = 1.0;
+        self.hover_target_scale = 1.0;
+        self.hover_duration = Duration::ZERO;
         if self.duration.is_zero() {
             self.sample(now);
         }
@@ -201,6 +240,7 @@ impl VisualNode {
 
     fn finished(&self, now: Instant) -> bool {
         self.movement_finished(now)
+            && (self.hover_duration.is_zero() || now - self.hover_started >= self.hover_duration)
             && (self.icon_duration.is_zero() || now - self.icon_started >= self.icon_duration)
     }
 }
@@ -252,7 +292,7 @@ impl Animator {
                 let destination = parent_key
                     .as_ref()
                     .and_then(|key| targets.get(key))
-                    .map_or(node.collapse_to, |target| target.position);
+                    .map_or(node.collapse_to, |target| target.rest_position);
                 node.retarget(
                     TransitionTarget {
                         position: destination,
@@ -281,8 +321,8 @@ impl Animator {
                 if animate {
                     node.retarget(
                         TransitionTarget {
-                            position: target.position,
-                            size: target.size,
+                            position: target.rest_position,
+                            size: target.rest_size,
                             opacity: 1.0,
                             duration: move_duration,
                             spring: move_spring,
@@ -294,13 +334,15 @@ impl Animator {
                     );
                     node.return_connector = returning;
                 } else {
-                    node.position = target.position;
-                    node.size = target.size;
+                    node.position = target.rest_position;
+                    node.size = target.rest_size;
+                    node.base_position = target.rest_position;
+                    node.base_size = target.rest_size;
                     node.opacity = 1.0;
-                    node.from_position = target.position;
-                    node.target_position = target.position;
-                    node.from_scale = target.size;
-                    node.target_scale = target.size;
+                    node.from_position = target.rest_position;
+                    node.target_position = target.rest_position;
+                    node.from_scale = target.rest_size;
+                    node.target_scale = target.rest_size;
                     node.from_opacity = 1.0;
                     node.target_opacity = 1.0;
                     node.removing = false;
@@ -334,7 +376,7 @@ impl Animator {
                         item_path: target.item_path,
                         role: target.role,
                         position: creation_origin,
-                        size: target.size * initial,
+                        size: target.rest_size * initial,
                         opacity: initial,
                         icon_opacity: if target.icon_visible
                             && create_animated
@@ -349,11 +391,22 @@ impl Animator {
                         active: target.active,
                         selected_action: false,
                         return_connector: false,
+                        base_position: creation_origin,
+                        base_size: target.rest_size * initial,
+                        hover_offset: Point::default(),
+                        hover_from_offset: Point::default(),
+                        hover_target_offset: Point::default(),
+                        hover_scale: 1.0,
+                        hover_from_scale: 1.0,
+                        hover_target_scale: 1.0,
+                        hover_started: now,
+                        hover_duration: Duration::ZERO,
+                        hover_spring: Spring::default(),
                         collapse_to: target.origin,
                         from_position: creation_origin,
-                        target_position: target.position,
-                        from_scale: target.size * initial,
-                        target_scale: target.size,
+                        target_position: target.rest_position,
+                        from_scale: target.rest_size * initial,
+                        target_scale: target.rest_size,
                         from_opacity: initial,
                         target_opacity: 1.0,
                         icon_from: if target.icon_visible
@@ -401,34 +454,50 @@ impl Animator {
                 continue;
             }
             node.sample(now);
+            let active_changed = node.active != target.active;
             node.item_path = target.item_path;
             node.role = target.role;
-            node.active = target.active;
             node.selected_action = false;
             node.collapse_to = target.origin;
             node.set_icon_visible(target.icon_visible, icon_duration, now);
+            let target_offset = Point {
+                x: target.position.x - target.rest_position.x,
+                y: target.position.y - target.rest_position.y,
+            };
+            let target_scale = if target.rest_size > f64::EPSILON {
+                target.size / target.rest_size
+            } else {
+                1.0
+            };
+            let hover_finished =
+                node.hover_duration.is_zero() || now - node.hover_started >= node.hover_duration;
+            let returning_to_rest = target_offset == Point::default()
+                && (target_scale - 1.0).abs() < f64::EPSILON
+                && (node.hover_target_offset != Point::default()
+                    || (node.hover_target_scale - 1.0).abs() >= f64::EPSILON);
+            if hover_finished || active_changed || returning_to_rest {
+                node.hover_from_offset = node.hover_offset;
+                node.hover_from_scale = node.hover_scale;
+                node.hover_started = now;
+                node.hover_duration = duration;
+                node.hover_spring = spring;
+            }
+            node.hover_target_offset = target_offset;
+            node.hover_target_scale = target_scale;
+            node.active = target.active;
             if duration.is_zero() {
-                node.position = target.position;
-                node.size = target.size;
-                node.from_position = target.position;
-                node.target_position = target.position;
-                node.from_scale = target.size;
-                node.target_scale = target.size;
+                node.hover_offset = target_offset;
+                node.hover_from_offset = target_offset;
+                node.hover_scale = target_scale;
+                node.hover_from_scale = target_scale;
+                node.position = Point {
+                    x: node.base_position.x + target_offset.x,
+                    y: node.base_position.y + target_offset.y,
+                };
+                node.size = node.base_size * target_scale;
                 continue;
             }
-            node.retarget(
-                TransitionTarget {
-                    position: target.position,
-                    size: target.size,
-                    opacity: 1.0,
-                    duration,
-                    spring,
-                    removing: false,
-                    position_end: 1.0,
-                    opacity_delay: 0.0,
-                },
-                now,
-            );
+            node.active = target.active;
         }
     }
 
@@ -466,11 +535,7 @@ impl Animator {
                     duration,
                     spring,
                     removing: true,
-                    position_end: if selected_target.is_some() {
-                        2.0 / 3.0
-                    } else {
-                        1.0
-                    },
+                    position_end: 1.0,
                     opacity_delay: if selected_target.is_some() {
                         2.0 / 3.0
                     } else {
@@ -516,8 +581,10 @@ mod tests {
             key,
             role,
             position,
+            rest_position: position,
             origin: Point::default(),
             size: 100.0,
+            rest_size: 100.0,
             active: false,
             icon_visible: true,
         }
@@ -604,5 +671,86 @@ mod tests {
         let anchor = child.creation_anchor.unwrap();
         assert_eq!(anchor.from, Point { x: 200.0, y: 100.0 });
         assert_eq!(anchor.to, Point { x: 300.0, y: 100.0 });
+    }
+
+    #[test]
+    fn follow_animation_is_independent_from_an_opening_transition() {
+        let key = NodeKey::Action(vec![1], 0);
+        let mut animator = Animator::default();
+        let mut opening = target(key.clone(), NodeRole::Item, Point { x: 400.0, y: 100.0 });
+        opening.origin = Point { x: 300.0, y: 100.0 };
+        animator.reconcile(
+            vec![opening],
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Duration::ZERO,
+            true,
+        );
+        let started = animator.nodes[&key].started;
+        let from_position = animator.nodes[&key].from_position;
+
+        let mut followed = target(key.clone(), NodeRole::Item, Point { x: 430.0, y: 100.0 });
+        followed.rest_position = Point { x: 400.0, y: 100.0 };
+        animator.hover(
+            vec![followed],
+            Duration::from_millis(300),
+            Duration::ZERO,
+            Spring::default(),
+        );
+
+        let node = &animator.nodes[&key];
+        assert_eq!(node.started, started);
+        assert_eq!(node.from_position, from_position);
+        assert_eq!(node.duration, Duration::from_secs(1));
+        assert_eq!(node.target_position, Point { x: 400.0, y: 100.0 });
+        assert_eq!(node.hover_target_offset, Point { x: 30.0, y: 0.0 });
+        assert_eq!(node.hover_duration, Duration::from_millis(300));
+    }
+
+    #[test]
+    fn follow_offset_gets_a_fresh_animation_when_returning_to_rest() {
+        let key = NodeKey::Action(vec![], 0);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![target(
+                key.clone(),
+                NodeRole::Item,
+                Point { x: 100.0, y: 100.0 },
+            )],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+        let mut followed = target(key.clone(), NodeRole::Item, Point { x: 130.0, y: 100.0 });
+        followed.rest_position = Point { x: 100.0, y: 100.0 };
+        let duration = Duration::from_secs(1);
+        animator.hover(vec![followed], duration, Duration::ZERO, Spring::default());
+        animator.nodes.get_mut(&key).unwrap().hover_started =
+            Instant::now() - Duration::from_millis(500);
+        animator.nodes.get_mut(&key).unwrap().sample(Instant::now());
+        let displaced = animator.nodes[&key].hover_offset;
+
+        animator.hover(
+            vec![target(
+                key.clone(),
+                NodeRole::Item,
+                Point { x: 100.0, y: 100.0 },
+            )],
+            duration,
+            Duration::ZERO,
+            Spring::default(),
+        );
+
+        let node = &animator.nodes[&key];
+        assert!(node.hover_from_offset.distance(displaced) < 0.01);
+        assert_eq!(node.hover_target_offset, Point::default());
+        assert_eq!(node.hover_duration, duration);
     }
 }

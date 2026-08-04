@@ -52,6 +52,7 @@ DEFAULT_PARENT_LINK = {
 }
 DEFAULT_HISTORY = {"opacity": "0.35", "scale": "2"}
 ALL_ICON_THEMES = "__waypie_all_icon_themes__"
+INDICATOR_CLIP_OVERLAP = 1.0
 
 
 class Configurator(Gtk.Application):
@@ -1147,13 +1148,18 @@ class Configurator(Gtk.Application):
                 clip_x2 - clip_x1,
                 clip_y2 - clip_y1,
             )
-            radius = resolve_radius(submenu_style["border-radius"], circle_size)
+            clip_size = max(0, circle_size - INDICATOR_CLIP_OVERLAP * 2)
+            radius = max(
+                0,
+                resolve_radius(submenu_style["border-radius"], circle_size)
+                - INDICATOR_CLIP_OVERLAP,
+            )
             rounded_rectangle(
                 context,
-                x - circle_size / 2,
-                y - circle_size / 2,
-                circle_size,
-                circle_size,
+                x - clip_size / 2,
+                y - clip_size / 2,
+                clip_size,
+                clip_size,
                 radius,
             )
             context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
@@ -1680,10 +1686,11 @@ class Configurator(Gtk.Application):
             validate_editable_tree(self.settings.root)
             text = serialize_config(self.settings)
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            if CONFIG_PATH.exists():
+            backup = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.bak")
+            if CONFIG_PATH.exists() and not backup.exists():
                 shutil.copy2(
                     CONFIG_PATH,
-                    CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.bak"),
+                    backup,
                 )
             temporary = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")
             temporary.write_text(text, encoding="utf-8")

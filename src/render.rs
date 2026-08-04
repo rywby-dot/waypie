@@ -16,6 +16,7 @@ use tiny_skia::{
 };
 
 const ICON_SOURCE_PADDING: u32 = 2;
+const INDICATOR_CLIP_OVERLAP: f64 = 1.0;
 
 use crate::{
     config::{Config, Item, item_at_path},
@@ -380,16 +381,19 @@ impl Renderer {
         let mut paint = Paint::default();
         paint.set_color(to_skia(style.color, style.opacity * frame.opacity));
         let clip = if style.cut_indicators {
+            let clip_size = (circle_size - INDICATOR_CLIP_OVERLAP * 2.0).max(0.0);
             let rect = Rect::from_xywh(
-                (center.x - circle_size / 2.0) as f32,
-                (center.y - circle_size / 2.0) as f32,
-                circle_size as f32,
-                circle_size as f32,
+                (center.x - clip_size / 2.0) as f32,
+                (center.y - clip_size / 2.0) as f32,
+                clip_size as f32,
+                clip_size as f32,
             );
             rect.and_then(|rect| {
                 let mut mask = Mask::new(pixmap.width(), pixmap.height())?;
+                let radius =
+                    (frame.submenu_style.radius(circle_size) - INDICATOR_CLIP_OVERLAP).max(0.0);
                 mask.fill_path(
-                    &rounded_rect(rect, frame.submenu_style.radius(circle_size) as f32),
+                    &rounded_rect(rect, radius as f32),
                     FillRule::Winding,
                     true,
                     Transform::identity(),

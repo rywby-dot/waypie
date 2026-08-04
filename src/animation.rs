@@ -16,26 +16,26 @@ impl Default for Spring {
 }
 
 impl Spring {
-    pub fn sample(self, progress: f64, duration: f64) -> f64 {
+    pub fn sample(self, progress: f64) -> f64 {
         let progress = progress.clamp(0.0, 1.0);
         if progress == 0.0 || progress == 1.0 {
             return progress;
         }
-        let elapsed = progress * duration;
         let damping = self.damping_ratio;
-        let frequency = self.stiffness.sqrt();
+        let frequency_ratio = (self.stiffness / 1000.0).sqrt();
+        let elapsed = progress * settling_window(damping, self.epsilon) * frequency_ratio;
         let value = if damping < 1.0 {
             let root = (1.0 - damping * damping).sqrt();
-            let damped = frequency * root;
-            let decay = (-damping * frequency * elapsed).exp();
+            let damped = root;
+            let decay = (-damping * elapsed).exp();
             1.0 - decay * ((damped * elapsed).cos() + damping / root * (damped * elapsed).sin())
         } else if (damping - 1.0).abs() < f64::EPSILON {
-            let decay = (-frequency * elapsed).exp();
-            1.0 - (1.0 + frequency * elapsed) * decay
+            let decay = (-elapsed).exp();
+            1.0 - (1.0 + elapsed) * decay
         } else {
             let root = (damping * damping - 1.0).sqrt();
-            let first = -frequency * (damping - root);
-            let second = -frequency * (damping + root);
+            let first = -(damping - root);
+            let second = -(damping + root);
             let first_weight = -second / (second - first);
             let second_weight = first / (second - first);
             1.0 - first_weight * (first * elapsed).exp() - second_weight * (second * elapsed).exp()
@@ -46,6 +46,37 @@ impl Spring {
             value
         }
     }
+}
+
+fn settling_window(damping: f64, epsilon: f64) -> f64 {
+    let error = |time: f64| {
+        if damping < 1.0 {
+            (-damping * time).exp() / (1.0 - damping * damping).sqrt()
+        } else if (damping - 1.0).abs() < f64::EPSILON {
+            (1.0 + time) * (-time).exp()
+        } else {
+            let root = (damping * damping - 1.0).sqrt();
+            let first = -(damping - root);
+            let second = -(damping + root);
+            let first_weight = -second / (second - first);
+            let second_weight = first / (second - first);
+            (first_weight * (first * time).exp() + second_weight * (second * time).exp()).abs()
+        }
+    };
+    let mut low = 0.0;
+    let mut high = 1.0;
+    while error(high) > epsilon && high < 1_000_000.0 {
+        high *= 2.0;
+    }
+    for _ in 0..64 {
+        let middle = (low + high) / 2.0;
+        if error(middle) > epsilon {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    high
 }
 
 pub fn smoothstep(progress: f64) -> f64 {
@@ -64,6 +95,13 @@ mod tests {
             stiffness: 100.0,
             epsilon: 0.000001,
         };
-        assert!((0..100).any(|step| spring.sample(step as f64 / 100.0, 1.0) > 1.0));
+        assert!((0..100).any(|step| spring.sample(step as f64 / 100.0) > 1.0));
+    }
+
+    #[test]
+    fn default_spring_uses_the_complete_normalized_timeline() {
+        let spring = Spring::default();
+        assert!(spring.sample(0.25) < 0.9);
+        assert!(spring.sample(0.9) > 0.99);
     }
 }
