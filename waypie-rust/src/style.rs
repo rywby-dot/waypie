@@ -2,8 +2,10 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs,
     path::Path,
+    time::Duration,
 };
 
+use crate::animation::Spring;
 use anyhow::{Context, Result, bail};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,6 +97,21 @@ pub enum Radius {
     Percent(f64),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AnimationStyle {
+    pub hover_duration: Duration,
+    pub icon_duration: Duration,
+    pub menu_duration: Duration,
+    pub item_create_duration: Duration,
+    pub close_duration: Duration,
+    pub action_duration: Duration,
+    pub action_scale: f64,
+    pub hover_spring: Spring,
+    pub menu_move_spring: Spring,
+    pub item_create_spring: Spring,
+    pub action_spring: Spring,
+}
+
 #[derive(Clone, Debug)]
 pub struct StyleSheet {
     rules: HashMap<String, HashMap<String, String>>,
@@ -150,6 +167,48 @@ impl StyleSheet {
 
     pub fn color_style(&self, selector: &str) -> Result<CircleStyle> {
         self.circle(&[selector])
+    }
+
+    pub fn animation(&self) -> Result<AnimationStyle> {
+        let rule = self.rules.get("animation");
+        let duration = |name: &str, fallback: Option<&str>| -> Result<Duration> {
+            let value = rule
+                .and_then(|values| values.get(name))
+                .or_else(|| fallback.and_then(|fallback| rule.and_then(|r| r.get(fallback))));
+            value.map_or(Ok(Duration::ZERO), |value| parse_duration(value, name))
+        };
+        let number = |name: &str, default: f64| -> Result<f64> {
+            rule.and_then(|values| values.get(name))
+                .map_or(Ok(default), |value| parse_positive(value, name))
+        };
+        let spring = |prefix: &str| -> Result<Spring> {
+            let damping_ratio = number(&format!("{prefix}-damping-ratio"), 1.0)?;
+            if !(0.1..=10.0).contains(&damping_ratio) {
+                bail!("{prefix}-damping-ratio must be between 0.1 and 10");
+            }
+            let epsilon = number(&format!("{prefix}-epsilon"), 0.0001)?;
+            if epsilon >= 1.0 {
+                bail!("{prefix}-epsilon must be less than 1");
+            }
+            Ok(Spring {
+                damping_ratio,
+                stiffness: number(&format!("{prefix}-stiffness"), 1000.0)?,
+                epsilon,
+            })
+        };
+        Ok(AnimationStyle {
+            hover_duration: duration("hover-duration", None)?,
+            icon_duration: duration("icon-duration", None)?,
+            menu_duration: duration("menu-duration", None)?,
+            item_create_duration: duration("item-create-duration", Some("menu-duration"))?,
+            close_duration: duration("close-duration", Some("menu-duration"))?,
+            action_duration: duration("action-duration", Some("close-duration"))?,
+            action_scale: number("action-scale", 1.3)?,
+            hover_spring: spring("hover")?,
+            menu_move_spring: spring("menu-move")?,
+            item_create_spring: spring("item-create")?,
+            action_spring: spring("action")?,
+        })
     }
 
     pub fn font_families(&self) -> Vec<String> {
@@ -325,6 +384,16 @@ fn parse_positive(value: &str, name: &str) -> Result<f64> {
     Ok(number)
 }
 
+fn parse_duration(value: &str, name: &str) -> Result<Duration> {
+    let value = value.trim();
+    let milliseconds = value
+        .strip_suffix("ms")
+        .ok_or_else(|| anyhow::anyhow!("{name} must use ms"))?
+        .trim()
+        .parse::<u64>()?;
+    Ok(Duration::from_millis(milliseconds))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +437,33 @@ mod tests {
             StyleSheet::parse("circle { width: 70px; }").font_families(),
             vec!["Sans"]
         );
+    }
+
+    #[test]
+    fn animation_settings_include_durations_and_springs() {
+        let sheet = StyleSheet::parse(
+            "animation { hover-duration: 120ms; menu-duration: 300ms; item-create-duration: 250ms; \
+             close-duration: 220ms; action-duration: 160ms; icon-duration: 180ms; \
+             action-scale: 1.4; menu-move-damping-ratio: 0.8; \
+             menu-move-stiffness: 700; menu-move-epsilon: 0.001; }",
+        );
+        let animation = sheet.animation().unwrap();
+        assert_eq!(animation.hover_duration, Duration::from_millis(120));
+        assert_eq!(animation.menu_duration, Duration::from_millis(300));
+        assert_eq!(animation.item_create_duration, Duration::from_millis(250));
+        assert_eq!(animation.close_duration, Duration::from_millis(220));
+        assert_eq!(animation.action_duration, Duration::from_millis(160));
+        assert_eq!(animation.icon_duration, Duration::from_millis(180));
+        assert_eq!(animation.action_scale, 1.4);
+        assert_eq!(animation.menu_move_spring.damping_ratio, 0.8);
+        assert_eq!(animation.menu_move_spring.stiffness, 700.0);
+    }
+
+    #[test]
+    fn new_animation_durations_fall_back_to_existing_settings() {
+        let sheet = StyleSheet::parse("animation { menu-duration: 300ms; close-duration: 220ms; }");
+        let animation = sheet.animation().unwrap();
+        assert_eq!(animation.item_create_duration, Duration::from_millis(300));
+        assert_eq!(animation.action_duration, Duration::from_millis(220));
     }
 }

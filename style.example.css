@@ -3,13 +3,27 @@ overlay {
   background-color: transparent;
 }
 
-/* Animation speed for hover effects, icons, menu transitions, and closing the complete menu. */
+/* Animation durations, action growth, and spring physics for every animated transition. */
 animation {
   hover-duration: 300ms;
   icon-duration: 180ms;
   menu-duration: 300ms;
+  item-create-duration: 300ms;
   close-duration: 220ms;
+  action-duration: 220ms;
   action-scale: 1.3;
+  hover-damping-ratio: 1;
+  hover-stiffness: 1000;
+  hover-epsilon: 0.0001;
+  menu-move-damping-ratio: 1;
+  menu-move-stiffness: 1000;
+  menu-move-epsilon: 0.0001;
+  item-create-damping-ratio: 1;
+  item-create-stiffness: 1000;
+  item-create-epsilon: 0.0001;
+  action-damping-ratio: 1;
+  action-stiffness: 1000;
+  action-epsilon: 0.0001;
 }
 
 /* Lines connecting the currently open menu to all previous menus. */
