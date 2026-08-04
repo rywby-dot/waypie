@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -86,15 +86,14 @@ pub struct VisualNode {
     removing: bool,
     position_end: f64,
     opacity_delay: f64,
-    creation_anchor: Option<CreationAnchor>,
+    position_anchor: Option<PositionAnchor>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct CreationAnchor {
-    from: Point,
-    to: Point,
-    duration: Duration,
-    spring: Spring,
+#[derive(Clone, Debug)]
+struct PositionAnchor {
+    parent: NodeKey,
+    from_offset: Point,
+    target_offset: Point,
 }
 
 struct TransitionTarget {
@@ -106,6 +105,23 @@ struct TransitionTarget {
     removing: bool,
     position_end: f64,
     opacity_delay: f64,
+}
+
+fn parent_key(key: &NodeKey) -> Option<NodeKey> {
+    match key {
+        NodeKey::Action(path, _) => Some(NodeKey::Menu(path.clone())),
+        NodeKey::Menu(path) if !path.is_empty() => {
+            Some(NodeKey::Menu(path[..path.len() - 1].to_vec()))
+        }
+        NodeKey::Menu(_) => None,
+    }
+}
+
+fn node_depth(key: &NodeKey) -> usize {
+    match key {
+        NodeKey::Menu(path) => path.len(),
+        NodeKey::Action(path, _) => path.len() + 1,
+    }
 }
 
 impl VisualNode {
@@ -156,22 +172,9 @@ impl VisualNode {
             ((progress - self.opacity_delay) / (1.0 - self.opacity_delay).max(f64::EPSILON))
                 .clamp(0.0, 1.0),
         );
-        self.base_position = if let Some(anchor) = self.creation_anchor {
-            let anchor_progress = if anchor.duration.is_zero() {
-                1.0
-            } else {
-                ((now - self.started).as_secs_f64() / anchor.duration.as_secs_f64()).clamp(0.0, 1.0)
-            };
-            let anchor_movement = anchor.spring.sample(anchor_progress);
-            let anchor_position = anchor.from.lerp(anchor.to, anchor_movement);
-            Point {
-                x: anchor_position.x + (self.target_position.x - anchor.to.x) * position_movement,
-                y: anchor_position.y + (self.target_position.y - anchor.to.y) * position_movement,
-            }
-        } else {
-            self.from_position
-                .lerp(self.target_position, position_movement)
-        };
+        self.base_position = self
+            .from_position
+            .lerp(self.target_position, position_movement);
         self.base_size = self.from_scale + (self.target_scale - self.from_scale) * size_movement;
         self.opacity = self.from_opacity + (self.target_opacity - self.from_opacity) * fade;
         let hover_progress = if self.hover_duration.is_zero() {
@@ -213,7 +216,6 @@ impl VisualNode {
         }
         if self.movement_finished(now) {
             self.base_position = self.target_position;
-            self.creation_anchor = None;
             self.return_connector = false;
         }
         self.position = Point {
@@ -224,7 +226,6 @@ impl VisualNode {
     }
 
     fn retarget(&mut self, target: TransitionTarget, now: Instant) {
-        self.sample(now);
         if self.target_position == target.position
             && (self.target_scale - target.size).abs() < f64::EPSILON
             && (self.target_opacity - target.opacity).abs() < f64::EPSILON
@@ -246,7 +247,7 @@ impl VisualNode {
         self.removing = target.removing;
         self.position_end = target.position_end;
         self.opacity_delay = target.opacity_delay;
-        self.creation_anchor = None;
+        self.position_anchor = None;
         self.base_position = self.position;
         self.base_size = self.size;
         self.hover_offset = Point::default();
@@ -262,11 +263,7 @@ impl VisualNode {
     }
 
     fn movement_finished(&self, now: Instant) -> bool {
-        let transition_finished = self.duration.is_zero() || now - self.started >= self.duration;
-        let anchor_finished = self.creation_anchor.is_none_or(|anchor| {
-            anchor.duration.is_zero() || now - self.started >= anchor.duration
-        });
-        transition_finished && anchor_finished
+        self.duration.is_zero() || now - self.started >= self.duration
     }
 
     fn finished(&self, now: Instant) -> bool {
@@ -292,6 +289,52 @@ impl Animator {
         self.nodes.clear();
     }
 
+    fn sample_all(&mut self, now: Instant) {
+        for node in self.nodes.values_mut() {
+            node.sample(now);
+        }
+
+        let mut anchored = self
+            .nodes
+            .iter()
+            .filter_map(|(key, node)| node.position_anchor.as_ref().map(|_| key.clone()))
+            .collect::<Vec<_>>();
+        anchored.sort_by_key(node_depth);
+        for key in anchored {
+            let Some(anchor) = self
+                .nodes
+                .get(&key)
+                .and_then(|node| node.position_anchor.clone())
+            else {
+                continue;
+            };
+            let Some(parent_position) = self.nodes.get(&anchor.parent).map(|node| node.position)
+            else {
+                continue;
+            };
+            let Some(node) = self.nodes.get_mut(&key) else {
+                continue;
+            };
+            let progress = if node.duration.is_zero() {
+                1.0
+            } else {
+                ((now - node.started).as_secs_f64() / node.duration.as_secs_f64()).clamp(0.0, 1.0)
+            };
+            let movement = node
+                .spring
+                .sample((progress / node.position_end.max(f64::EPSILON)).clamp(0.0, 1.0));
+            let offset = anchor.from_offset.lerp(anchor.target_offset, movement);
+            node.base_position = Point {
+                x: parent_position.x + offset.x,
+                y: parent_position.y + offset.y,
+            };
+            node.position = Point {
+                x: node.base_position.x + node.hover_offset.x,
+                y: node.base_position.y + node.hover_offset.y,
+            };
+        }
+    }
+
     pub fn reconcile(
         &mut self,
         targets: Vec<NodeTarget>,
@@ -306,22 +349,23 @@ impl Animator {
         let create_spring = creation.spring;
         let now = Instant::now();
         let animate = animate && (!move_duration.is_zero() || !create_duration.is_zero());
-        for node in self.nodes.values_mut() {
-            node.sample(now);
-        }
+        self.sample_all(now);
         let targets = targets
             .into_iter()
             .map(|target| (target.key.clone(), target))
             .collect::<HashMap<_, _>>();
+        let sampled_positions = self
+            .nodes
+            .iter()
+            .map(|(key, node)| (key.clone(), node.position))
+            .collect::<HashMap<_, _>>();
+        let target_positions = targets
+            .iter()
+            .map(|(key, target)| (key.clone(), target.rest_position))
+            .collect::<HashMap<_, _>>();
         for (key, node) in &mut self.nodes {
             if !targets.contains_key(key) && !node.removing {
-                let parent_key = match key {
-                    NodeKey::Action(path, _) => Some(NodeKey::Menu(path.clone())),
-                    NodeKey::Menu(path) if !path.is_empty() => {
-                        Some(NodeKey::Menu(path[..path.len() - 1].to_vec()))
-                    }
-                    NodeKey::Menu(_) => None,
-                };
+                let parent_key = parent_key(key);
                 let destination = parent_key
                     .as_ref()
                     .and_then(|key| targets.get(key))
@@ -339,9 +383,39 @@ impl Animator {
                     },
                     now,
                 );
+                if let Some(parent) = parent_key {
+                    let parent_position = sampled_positions
+                        .get(&parent)
+                        .copied()
+                        .or_else(|| targets.get(&parent).map(|target| target.rest_position))
+                        .unwrap_or(destination);
+                    node.position_anchor = Some(PositionAnchor {
+                        parent,
+                        from_offset: Point {
+                            x: node.position.x - parent_position.x,
+                            y: node.position.y - parent_position.y,
+                        },
+                        target_offset: Point::default(),
+                    });
+                }
             }
         }
         for (key, target) in targets {
+            let parent = parent_key(&key);
+            let parent_current = parent
+                .as_ref()
+                .and_then(|parent| sampled_positions.get(parent))
+                .copied()
+                .or_else(|| {
+                    parent
+                        .as_ref()
+                        .and_then(|parent| target_positions.get(parent))
+                        .copied()
+                });
+            let parent_target = parent
+                .as_ref()
+                .and_then(|parent| target_positions.get(parent))
+                .copied();
             if let Some(node) = self.nodes.get_mut(&key) {
                 let opening_connector = node.role == NodeRole::Item
                     && target.role == NodeRole::Center
@@ -373,6 +447,21 @@ impl Animator {
                         },
                         now,
                     );
+                    if let (Some(parent), Some(parent_current), Some(parent_target)) =
+                        (parent.clone(), parent_current, parent_target)
+                    {
+                        node.position_anchor = Some(PositionAnchor {
+                            parent,
+                            from_offset: Point {
+                                x: node.position.x - parent_current.x,
+                                y: node.position.y - parent_current.y,
+                            },
+                            target_offset: Point {
+                                x: target.rest_position.x - parent_target.x,
+                                y: target.rest_position.y - parent_target.y,
+                            },
+                        });
+                    }
                     node.return_connector = returning;
                 } else {
                     node.position = target.rest_position;
@@ -388,29 +477,39 @@ impl Animator {
                     node.target_opacity = 1.0;
                     node.removing = false;
                     node.return_connector = false;
+                    node.position_anchor = match (parent, parent_target) {
+                        (Some(parent), Some(parent_target)) => Some(PositionAnchor {
+                            parent,
+                            from_offset: Point {
+                                x: target.rest_position.x - parent_target.x,
+                                y: target.rest_position.y - parent_target.y,
+                            },
+                            target_offset: Point {
+                                x: target.rest_position.x - parent_target.x,
+                                y: target.rest_position.y - parent_target.y,
+                            },
+                        }),
+                        _ => None,
+                    };
                 }
             } else {
                 let create_animated = animate && !create_duration.is_zero();
                 let initial = if create_animated { 0.0 } else { 1.0 };
                 let creates_connector =
                     target.role == NodeRole::Center && !target.item_path.is_empty();
-                let parent_key = match &key {
-                    NodeKey::Action(path, _) => Some(NodeKey::Menu(path.clone())),
-                    NodeKey::Menu(path) if !path.is_empty() => {
-                        Some(NodeKey::Menu(path[..path.len() - 1].to_vec()))
-                    }
-                    NodeKey::Menu(_) => None,
-                };
-                let parent_position = parent_key
+                let parent = parent_key(&key);
+                let parent_position = parent
                     .as_ref()
                     .and_then(|parent| self.nodes.get(parent))
                     .map(|parent| parent.position);
                 let creation_origin = parent_position.unwrap_or(target.origin);
-                let creation_anchor = parent_position.map(|from| CreationAnchor {
-                    from,
-                    to: target.origin,
-                    duration: move_duration,
-                    spring: move_spring,
+                let position_anchor = parent.map(|parent| PositionAnchor {
+                    parent,
+                    from_offset: Point::default(),
+                    target_offset: Point {
+                        x: target.rest_position.x - parent_target.unwrap_or(target.origin).x,
+                        y: target.rest_position.y - parent_target.unwrap_or(target.origin).y,
+                    },
                 });
                 self.nodes.insert(
                     key.clone(),
@@ -480,7 +579,7 @@ impl Animator {
                         removing: false,
                         position_end: 1.0,
                         opacity_delay: 0.0,
-                        creation_anchor,
+                        position_anchor,
                     },
                 );
             }
@@ -498,6 +597,7 @@ impl Animator {
         spring: Spring,
     ) {
         let now = Instant::now();
+        self.sample_all(now);
         for target in targets {
             let Some(node) = self.nodes.get_mut(&target.key) else {
                 continue;
@@ -505,7 +605,6 @@ impl Animator {
             if node.removing {
                 continue;
             }
-            node.sample(now);
             let active_changed = node.active != target.active;
             node.item_path = target.item_path;
             node.role = target.role;
@@ -581,13 +680,13 @@ impl Animator {
         spring: Spring,
     ) {
         let now = Instant::now();
+        self.sample_all(now);
         let current_center = self
             .nodes
-            .values()
-            .find(|node| node.role == NodeRole::Center && !node.removing)
-            .map(|node| node.target_position);
+            .iter()
+            .find(|(_, node)| node.role == NodeRole::Center && !node.removing)
+            .map(|(key, node)| (key.clone(), node.position, node.target_position));
         for node in self.nodes.values_mut() {
-            node.sample(now);
             let selected_target = selected
                 .as_ref()
                 .filter(|(key, _, _)| *key == &node.key)
@@ -608,7 +707,9 @@ impl Animator {
                 node.set_connector_target(connector_target, close_duration, now);
             }
             let collapse_position = if node.role == NodeRole::Item {
-                current_center.unwrap_or(node.collapse_to)
+                current_center
+                    .as_ref()
+                    .map_or(node.collapse_to, |(_, _, target)| *target)
             } else {
                 node.collapse_to
             };
@@ -640,17 +741,40 @@ impl Animator {
                 },
                 now,
             );
+            if selected_target.is_none()
+                && node.role == NodeRole::Item
+                && let Some((parent, parent_position, _)) = &current_center
+            {
+                node.position_anchor = Some(PositionAnchor {
+                    parent: parent.clone(),
+                    from_offset: Point {
+                        x: node.position.x - parent_position.x,
+                        y: node.position.y - parent_position.y,
+                    },
+                    target_offset: Point::default(),
+                });
+            }
         }
     }
 
     pub fn tick(&mut self) -> bool {
         let now = Instant::now();
+        self.sample_all(now);
+        let retained_parents = self
+            .nodes
+            .values()
+            .filter(|node| !node.finished(now))
+            .filter_map(|node| {
+                node.position_anchor
+                    .as_ref()
+                    .map(|anchor| anchor.parent.clone())
+            })
+            .collect::<HashSet<_>>();
         let mut changed = false;
-        self.nodes.retain(|_, node| {
+        self.nodes.retain(|key, node| {
             changed |= !node.finished(now) || node.removing;
-            node.sample(now);
             let finished = node.finished(now);
-            !(node.removing && finished)
+            !(node.removing && finished && !retained_parents.contains(key))
         });
         changed
     }
@@ -756,6 +880,74 @@ mod tests {
     }
 
     #[test]
+    fn disappearing_descendant_stays_attached_when_its_parent_is_retargeted() {
+        let parent_key = NodeKey::Menu(vec![1]);
+        let child_key = NodeKey::Action(vec![1], 0);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![
+                target(
+                    parent_key.clone(),
+                    NodeRole::Center,
+                    Point { x: 200.0, y: 100.0 },
+                ),
+                target(
+                    child_key.clone(),
+                    NodeRole::Item,
+                    Point { x: 300.0, y: 100.0 },
+                ),
+            ],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+
+        animator.reconcile(
+            vec![target(
+                parent_key.clone(),
+                NodeRole::Item,
+                Point { x: 100.0, y: 100.0 },
+            )],
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Duration::ZERO,
+            true,
+        );
+
+        assert_eq!(
+            animator.nodes[&child_key]
+                .position_anchor
+                .as_ref()
+                .map(|anchor| &anchor.parent),
+            Some(&parent_key)
+        );
+
+        let halfway = Instant::now() - Duration::from_millis(500);
+        animator.nodes.get_mut(&parent_key).unwrap().started = halfway;
+        animator.nodes.get_mut(&child_key).unwrap().started = halfway;
+        animator.sample_all(Instant::now());
+        let first_parent = animator.nodes[&parent_key].position;
+        let first_child = animator.nodes[&child_key].position;
+
+        let parent = animator.nodes.get_mut(&parent_key).unwrap();
+        parent.from_position.x += 40.0;
+        parent.target_position.x += 40.0;
+        animator.sample_all(Instant::now());
+        let parent_shift = animator.nodes[&parent_key].position.x - first_parent.x;
+        let child_shift = animator.nodes[&child_key].position.x - first_child.x;
+
+        assert!((parent_shift - 40.0).abs() < 0.1);
+        assert!((child_shift - parent_shift).abs() < 0.1);
+    }
+
+    #[test]
     fn submenu_items_expand_from_the_moving_submenu_circle() {
         let submenu = NodeKey::Menu(vec![1]);
         let mut animator = Animator::default();
@@ -800,9 +992,48 @@ mod tests {
             .unwrap();
         assert_eq!(child.position, Point { x: 200.0, y: 100.0 });
         assert_eq!(child.size, 0.0);
-        let anchor = child.creation_anchor.unwrap();
-        assert_eq!(anchor.from, Point { x: 200.0, y: 100.0 });
-        assert_eq!(anchor.to, Point { x: 300.0, y: 100.0 });
+        let anchor = child.position_anchor.unwrap();
+        assert_eq!(anchor.parent, NodeKey::Menu(vec![1]));
+        assert_eq!(anchor.from_offset, Point::default());
+        assert_eq!(anchor.target_offset, Point { x: 100.0, y: 0.0 });
+    }
+
+    #[test]
+    fn child_is_linked_when_it_is_created_together_with_its_parent() {
+        let parent_key = NodeKey::Menu(vec![1]);
+        let child_key = NodeKey::Action(vec![1], 0);
+        let mut animator = Animator::default();
+        let mut parent = target(
+            parent_key.clone(),
+            NodeRole::Center,
+            Point { x: 200.0, y: 100.0 },
+        );
+        parent.origin = Point { x: 100.0, y: 100.0 };
+        let mut child = target(
+            child_key.clone(),
+            NodeRole::Item,
+            Point { x: 300.0, y: 100.0 },
+        );
+        child.origin = Point { x: 200.0, y: 100.0 };
+
+        animator.reconcile(
+            vec![child, parent],
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Duration::ZERO,
+            true,
+        );
+
+        let anchor = animator.nodes[&child_key].position_anchor.as_ref().unwrap();
+        assert_eq!(anchor.parent, parent_key);
+        assert_eq!(anchor.from_offset, Point::default());
+        assert_eq!(anchor.target_offset, Point { x: 100.0, y: 0.0 });
     }
 
     #[test]
