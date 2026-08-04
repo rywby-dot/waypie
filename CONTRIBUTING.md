@@ -3,30 +3,58 @@
 Waypie is experimental software, but focused pull requests and bug reports are
 welcome.
 
+The runtime lives in the root Cargo crate (`Cargo.toml` and `src/`) and is
+entirely written in Rust. Python is used only by the GTK configurator:
+
+- `waypie_config.py` — configurator UI and editing logic;
+- `waypie_common.py` — configurator model, TOML, CSS, icon, and drawing helpers;
+- `waypie_animation.py` — configurator preview animations.
+
 ## Pull requests
 
-Keep each pull request focused on one concern.
+Keep each pull request focused on one concern and do not commit generated
+`target/`, Python caches, wheels, or local configuration files.
 
-Before submitting a change, run the same checks as CI:
+Run all required checks with:
 
 ```sh
-ruff format --check waypie.py waypie_animation.py waypie_config.py waypie_common.py
-ruff check waypie.py waypie_animation.py waypie_config.py waypie_common.py tests
-python -m py_compile waypie.py waypie_animation.py waypie_config.py waypie_common.py
-python -m unittest discover -s tests
-python -m build
+make check
 ```
 
-These checks verify formatting, static analysis, Python syntax, and the package
-used by `pipx install .`. A full runtime check must be performed separately in
-a Wayland session with GTK 4, PyGObject, Cairo, and gtk4-layer-shell installed.
+This command runs:
+
+- `cargo fmt --check`;
+- Clippy for every Rust target with warnings denied;
+- all Rust unit and documentation tests;
+- Ruff formatting and lint checks for the configurator;
+- Python compilation and unit tests.
+
+Also verify that the optimized binary builds:
+
+```sh
+make build
+```
+
+Test installation without touching the normal binary or configuration paths by
+using temporary directories:
+
+```sh
+make install-runtime PREFIX=/tmp/waypie-install
+make install-config CONFIG_DIR=/tmp/waypie-config
+```
+
+The graphical configurator and layer-shell runtime must be tested separately
+inside a Wayland session. Exercise multiple outputs, submenu entry and return,
+Hover Mode, Turbo Mode, icons, repeated `waypie --show`, and each closing path.
 
 ## Reporting bugs
 
 Include:
 
-- what you expected and what happened;
-- exact steps to reproduce;
+- expected and actual behavior;
+- exact reproduction steps;
 - distribution and Wayland compositor;
-- Python, GTK 4, and gtk4-layer-shell versions;
-- terminal output from Waypie, if any.
+- Waypie commit, Rust version, and GPU/driver information when rendering is
+  involved;
+- terminal output from `waypie --show`;
+- the relevant `config` and `style.css` fragments.

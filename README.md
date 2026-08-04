@@ -1,174 +1,169 @@
 # Waypie
-<img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/ef3cfe74-ffd4-4c3b-8ef9-32a8a9b49c32" />
-<img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/b534ad4f-f8cf-4159-a3a7-6fad2846d2d6" />
 
-**Waypie is a Kando-like radial menu for Wayland. It uses an overlay
-layer-shell surface, supports arbitrarily nested submenus, animated navigation,
-icons, angular selection, and a graphical menu configurator.**
+<img width="960" height="540" alt="Waypie menu" src="https://github.com/user-attachments/assets/ef3cfe74-ffd4-4c3b-8ef9-32a8a9b49c32" />
+<img width="960" height="540" alt="Waypie configurator" src="https://github.com/user-attachments/assets/b534ad4f-f8cf-4159-a3a7-6fad2846d2d6" />
+
+Waypie is a lightweight Kando-like radial menu for Wayland. The menu runtime is
+written in Rust and uses a native layer-shell surface. The graphical
+configurator remains a Python/GTK 4 application.
+
+Waypie supports arbitrarily nested submenus, animated navigation, angular
+selection, Hover Mode, Turbo Mode, CSS-like styling, monochrome and color
+icons, and multiple monitors.
 
 > [!WARNING]
 > Waypie is experimental software, primarily built with AI.
 
-It is recommended to read about Kando first https://kando.menu/intro/
+## Requirements
+
+The runtime requires:
+
+- a Wayland compositor with the `wlr-layer-shell` protocol;
+- Rust and Cargo to build from source;
+- `libxkbcommon` and Fontconfig at runtime.
+
+The configurator additionally requires Python 3.11 or newer, GTK 4, PyGObject,
+Pycairo, and pipx.
+
+On Arch Linux, the required packages can be installed with:
+
+```sh
+sudo pacman -S --needed git rust cargo libxkbcommon fontconfig python python-pipx gtk4 python-gobject python-cairo
+```
+
+Package names differ between distributions.
 
 ## Installation
 
-Waypie requires Python 3.11 or newer, GTK 4, PyGObject, Cairo/Pycairo, and
-gtk4-layer-shell.
-
-Clone the repository and install it into an isolated environment with pipx:
+Clone the Rust branch and run the Makefile:
 
 ```sh
-git clone https://github.com/rywby-dot/waypie.git
+git clone --branch rust-rewrite --single-branch https://github.com/rywby-dot/waypie.git
 cd waypie
-pipx install .
+make install
 ```
 
-Create the configuration directory and install the example files and bundled
-icon sets:
+By default this does four things:
+
+1. builds the Rust crate in release mode using the committed `Cargo.lock`;
+2. installs the Rust binary as `~/.local/bin/waypie`;
+3. installs the Python configurator as `waypie-config` using pipx;
+4. installs missing example files and bundled icons under
+   `~/.config/waypie/` without replacing existing user files.
+
+Make sure `~/.local/bin` is in `PATH`. For a custom binary prefix:
 
 ```sh
-mkdir -p ~/.config/waypie
-cp config.example ~/.config/waypie/config
-cp style.example.css ~/.config/waypie/style.css
-cp -r icons ~/.config/waypie
+make install-runtime PREFIX=/usr/local
 ```
 
-To update an existing installation:
+This may require root privileges for a system directory. The configurator and
+user configuration can also be installed separately:
+
+```sh
+make install-configurator
+make install-config
+```
+
+### Updating
 
 ```sh
 cd waypie
 git pull
-pipx upgrade waypie
+make install
 ```
 
-## Starting and showing the menu
+Existing `config`, `style.css`, and icons are preserved.
 
-Start the persistent Waypie process:
+### Uninstalling
 
 ```sh
-waypie
+make uninstall
 ```
 
-It starts hidden and waits for a show command. Add this command to the
-autostart configuration of your compositor if Waypie should always be
-available.
+This removes the installed Rust binary and pipx configurator. User data in
+`~/.config/waypie` is intentionally retained.
 
-Show the menu from a key binding:
+## Running the menu
+
+Add this command to a compositor key binding:
 
 ```sh
 waypie --show
 ```
 
-`waypie --show` is a toggle. Running it again while the menu is visible closes
-the menu. If no Waypie process is running, `waypie --show` starts one and opens
-the menu.
+Waypie is not a persistent daemon. Each invocation starts the native Rust
+runtime, opens the menu, and exits after the menu closes. While a menu is open,
+a small per-display control socket allows another `waypie --show` invocation to
+close it. No Waypie process remains in memory afterward.
+
+Running `waypie` without arguments also opens the menu. Available commands are:
+
+```text
+waypie --show       Open the menu, or close the currently open instance
+waypie --configure  Open the graphical configurator
+waypie --kill       Ask the currently open instance to close
+```
 
 The complete menu can be closed with:
 
 - `Escape`;
 - right click anywhere on the layer;
 - another `waypie --show`;
-- a left click on the root menu's central hitbox;
-- a left click on a submenu center when **Close on click** is enabled;
+- the root menu's central hitbox;
+- a submenu center when **Close on click** is enabled;
 - selection of a command.
 
-When **Close on click** is disabled, clicking a submenu's central circle returns
-to its parent instead. A central hitbox size of `0` disables center clicks, but
-does not change directional selection.
+Closing immediately makes the layer click-through, then plays the configured
+closing animation. Selecting a command also activates it at the beginning of
+the animation, so Waypie never delays interaction with the launched program.
 
-If the layer becomes unresponsive, kill only the current Waypie process:
+If `center-mode` is disabled, the first menu is placed at the pointer position
+reported by the compositor. Some compositors do not provide that position
+until the pointer moves. Enable **Center mode** if the menu must always appear
+immediately at the center of the active output.
 
-```sh
-waypie --kill
-```
+## Selection and navigation
 
-The command reads Waypie's PID from `$XDG_RUNTIME_DIR/waypie` and verifies the
-process owner and command before sending `SIGKILL`. Other layer-shell
-applications are not affected. If the desktop remains captured after this
-command has killed Waypie, the Wayland client and its surfaces no longer exist;
-the compositor failed to clear the destroyed layer's input focus.
+The visible circles are indicators, not ordinary button hitboxes. Apart from
+the optional central hitbox, selection is determined by the pointer direction
+from the current menu center. The complete angular sector remains selectable
+even when the pointer is beyond the visible circle.
 
-Closing immediately removes keyboard focus and makes the layer click-through,
-then plays the internal closing animation for `close-duration`. The layer-shell
-window is hidden only after the animation finishes, so the transition does not
-delay interaction with windows below it.
-
-Selecting a command starts it and makes the layer click-through immediately.
-During the single `close-duration` animation, its circle moves to the pointer,
-keeps growing for the complete transition, and starts fading as soon as it
-arrives. At the same time, the current menu items collapse into its center,
-while central and history circles shrink in place. Their opacity reaches zero
-before their spring-scaled geometry reaches zero. `action-scale` sets the
-selected circle's final size multiplier and defaults to `1.3`. There is no
-additional action delay.
-
-In the default pointer mode, the initial menu center is taken from the first
-pointer-motion event received by the newly activated layer. On some
-compositors, the menu therefore remains invisible after `waypie --show` until
-the pointer is moved. Enable **Center mode** in the configurator if the menu
-must appear immediately in the center without querying the pointer position.
-
-Example compositor binding:
-
-```text
-[keybindings]
-"mod+d" = "spawn waypie --show"
-```
-
-## How selection and navigation work
-
-The cursor direction selects an item. The visible item circle is a visual
-indicator; the complete angular sector is the actual hit area. This allows an
-action to remain selectable even when the cursor is farther away from its
-circle (see kando behavior here https://youtu.be/ZTdfnUDMO9k?t=37&si=x9jvLQj-XF3lyw7R).
-
-The central circle belongs to the currently open menu. Its optional hitbox
-closes the root menu and either returns from or closes a submenu according to
-**Close on click**. Hovering an item applies the `circle.active` style, and a
-left click executes its command or opens its submenu.
-
-The visible circles are not button hitboxes. Except for an enabled central
-hitbox, selection depends only on the direction from the active menu center.
+Opening a submenu moves its circle to the new center. Its children grow and
+spread out from that moving circle. Previous menus remain connected by lines
+and can be selected by their return direction. Clicking a submenu center
+returns to its parent unless **Close on click** is enabled.
 
 ### Hover Mode
-(same as in kando)
-Enable `hover-mode` in the configurator to navigate and select without
-clicking. Once the pointer has made a sufficiently long movement, Waypie
-selects the current direction when either:
 
-- the pointer remains nearly stationary for a short time; or
-- the movement makes a sufficiently sharp turn.
+Enable `hover-mode` in the configurator to navigate without clicking. After a
+sufficiently long pointer stroke, the current direction is selected when the
+pointer pauses or turns sharply. Hover Mode can open submenus, return through
+the menu chain, and execute commands.
 
-Hover Mode can open submenus, return to previous menus, and immediately execute
-commands. The detector uses the same default thresholds as Kando. Developers can
-tune these constants together at the top of `waypie_hover.py`.
+The gesture constants are grouped near the top of
+`src/hover.rs` for developers who want to tune them.
 
 ### Turbo Mode
-(same as in kando)
-Enable `turbo-mode` to use the modifier from the compositor shortcut as a
+
+Enable `turbo-mode` to use the modifier held by the compositor shortcut as a
 temporary mouse button:
 
 1. Press a shortcut such as `Super+R`, `Alt+Space`, or `Ctrl+Shift+Space`.
-2. Keep its modifier key or keys held after Waypie opens.
-3. Use pauses or turns to move through submenus without clicking.
-4. Point toward the final action and release the last held modifier.
+2. Keep its modifier held while navigating through the menu.
+3. Point toward the final action.
+4. Release the last modifier to execute it.
 
-While a modifier is held, gesture selections open submenus and return through
-the menu chain, but do not execute final commands. The current action is
-executed only when the last held `Super`, `Alt`, `Ctrl`, or `Shift` key is
-released. Releasing the non-modifier part of the shortcut first is supported.
-
-Waypie reads the modifiers that are actually held from GDK pointer events, so
-the shortcut does not need to be duplicated in `config`. Hover Mode and Turbo
-Mode can be enabled independently. A compositor that does not forward the
-modifier-release event may not support Turbo Mode reliably.
+Waypie reads the modifiers delivered through the Wayland keyboard protocol, so
+the shortcut does not need to be duplicated in `config`. Support depends on the
+compositor forwarding modifier press and release events to the layer.
 
 ## Graphical configurator
 
-<img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/2acca4ac-9ee7-49b3-a194-94b79a1f2b4c" />
+<img width="960" height="540" alt="Graphical configurator" src="https://github.com/user-attachments/assets/2acca4ac-9ee7-49b3-a194-94b79a1f2b4c" />
 
-Open the configurator with either command:
+Open it with either command:
 
 ```sh
 waypie-config
@@ -178,135 +173,135 @@ waypie-config
 waypie --configure
 ```
 
-Menu contents and geometry should normally be edited through this GUI rather
-than by writing TOML manually.
+Use the GUI to add, remove, reorder, and position actions and submenus; edit
+labels and commands; select icons; and change runtime geometry and interaction
+settings.
 
-The toolbar options are:
+The main configurator options are:
 
-- **Preserve proportions** keeps all items evenly distributed while a group is
-  moved. A submenu's invisible return direction occupies one slot in the
-  distribution.
-- **Auto alignment** snaps rotation to a 5-degree grid.
-- **Show icons** controls only the configurator preview. It does not change
-  runtime icon behavior.
-- **Center layout** performs one complete equal-spacing operation regardless
-  of the checkboxes. In a submenu it centers the group around the fixed return
-  direction. In the root menu it chooses the closest axis-based rotation.
+- **Preserve proportions** keeps items evenly distributed while rotating a
+  group. A submenu's return direction occupies one invisible slot.
+- **Auto alignment** snaps group rotation to a 5-degree grid.
+- **Show icons** changes only the configurator preview.
+- **Center layout** performs one equal-spacing operation independently of the
+  two alignment checkboxes.
+- **Center mode**, **Hover mode**, **Turbo mode**, and **Close on click** control
+  the corresponding runtime behavior.
 
-Toolbar actions also have global configurator shortcuts, shown below each
-button label:
+Shortcuts work while focus is outside text-entry fields:
 
 - `Ctrl+D` — delete the selected item;
-- `Ctrl+Q` — add a command to the currently open menu;
+- `Ctrl+Q` — add a command;
 - `Ctrl+X` — add a submenu;
 - `Ctrl+S` — save;
 - `Ctrl+A` — center the current layout;
-- `Ctrl+Z` — undo the last edit, including additions, deletions, layout
-  changes, dragging, settings, and icon selection.
+- `Ctrl+Z` — undo the last edit.
 
-### Configuration settings
+Press **Save** to write `~/.config/waypie/config`; the previous version is saved
+as `config.bak`. Because the Rust runtime starts fresh for every opening, the
+next `waypie --show` automatically reads the new configuration. No daemon
+restart or hot-reload step is required.
 
-### Saving and applying changes
+The configurator uses application ID `waypie.config`. Its icon picker is a
+modal transient window of the same application.
 
-Edits exist only in the configurator's memory until **Save** is pressed.
-Pressing **Save** writes:
+## Configuration
+
+Runtime geometry and behavior are stored in:
 
 ```text
 ~/.config/waypie/config
 ```
 
-The previous configuration is copied to:
+The GUI manages these settings:
 
-```text
-~/.config/waypie/config.bak
-```
+- `menu-radius` — normal distance from the current center to its items;
+- `center-hitbox-size` — diameter of the central hitbox; `0` disables it;
+- `minimum-edge-distance` — minimum safe distance for a newly opened menu
+  center from an output edge;
+- `center-mode`, `hover-mode`, `turbo-mode`, and
+  `close-submenu-on-center-click` — runtime switches;
+- `preserve-proportions`, `auto-alignment`, and `configurator-show-icons` —
+  configurator-only persistent preferences.
 
-The persistent Waypie process reloads `config` every time the menu changes from
-hidden to visible. After pressing **Save**, close an already visible menu and
-run `waypie --show` again. The next opening immediately uses the new geometry,
-commands, angles, icons, and configurator settings; the process does not need
-to be restarted.
-
-The configurator never edits or hot-reloads `style.css`. Restart Waypie after
-changing visual styles.
-
-For compositor window rules, the configurator uses the application ID
-`waypie.config`. The icon picker is a modal transient window belonging to the
-same application.
+Each menu item can contain a `label`, `angle`, optional icon pair
+(`icon-theme` and `icon`), and either a `command` or nested `items`. Empty
+submenus are valid. Angles are rounded to whole degrees when saved and loaded.
 
 ## Styling
 
-All visual settings remain in:
+All runtime colors, sizes, borders, fonts, opacity, indicators, connector
+appearance, and animation parameters are stored in:
 
 ```text
 ~/.config/waypie/style.css
 ```
 
-<img width="960" height="540" alt="image" src="https://github.com/user-attachments/assets/df232c03-c11b-4661-bcde-c9f16a30072a" />
+The GUI reads this file for its preview but never rewrites it. Since every menu
+opening is a new process, saving `style.css` is enough; the next opening uses
+the new style.
 
-Edit this file manually. The GUI deliberately does not duplicate CSS settings.
-Restart the running Waypie process after changing it.
+The cascade starts with `circle` and can be overridden by:
 
-Example from style.css:
-```css
-circle.active {
-  scale: 1.15;
-  distance: 20px;
-  follow-distance: 20%;
-}
-```
+- `circle.active`;
+- `circle.item` and `circle.item.active`;
+- `circle.submenu` and `circle.submenu.active`;
+- `circle.center` and `circle.center.active`;
+- `circle.history` and `circle.history.active`;
+- `submenu-indicator` and `submenu-indicator.active`.
 
-Monochrome SVG icons using `currentColor` inherit the CSS `color` property.
+The `animation` block independently controls hover, icon fading, menu movement,
+item creation, closing, and selected-action durations and spring parameters.
+See `style.example.css` for every supported property.
 
 ## Icons
 
-The repository includes the monochrome Simple Icons and Tabler Icons
-collections. The installation commands above copy them to:
+Waypie scans immediate child directories of:
 
 ```text
 ~/.config/waypie/icons/
 ```
 
-Every immediate child directory is treated as a separate icon theme. Files in
-that directory are scanned recursively. Additional downloaded themes can be
-copied alongside the bundled ones.
+Each child directory is an icon theme, and files below it are scanned
+recursively. Supported formats are SVG, PNG, WebP, JPEG, and GIF.
 
 ```text
 ~/.config/waypie/icons/
 ├── tabler-icons/
-│   ├── outline/
-│   │   ├── apps.svg
-│   │   └── terminal.svg
-│   └── filled/
-│       └── calculator.svg
+│   ├── outline/terminal.svg
+│   └── filled/calculator.svg
 └── Papirus-Dark/
-    └── 16x16/
-        └── actions/
-            ├── configuration.svg
-            └── cm_runterm.svg
+    └── 16x16/actions/configuration.svg
 ```
 
-Supported file types are:
+Use the searchable icon picker in the configurator to select a theme and icon,
+or search all themes at once. Themes are ordered by their recent selection
+history stored in `~/.config/waypie/.icon-history.json`.
 
-- SVG;
-- PNG;
-- WebP;
-- JPEG;
-- GIF.
+Monochrome SVG files using `currentColor` inherit the circle's CSS `color`.
+Suitable monochrome collections include Tabler Icons, Lucide, Material
+Symbols, and Simple Icons. Papirus and other desktop icon themes provide large
+full-color collections.
 
-At runtime, a circle normally shows its icon. When that action becomes active,
-the icon disappears and the label is shown instead, matching Kando's
-interaction style. If no icon is assigned, the label is always shown.
-
-Useful sources include monochrome SVG collections such as Tabler Icons,
-Lucide, Material Symbols, and Simple Icons, and full-color desktop themes such
-as Papirus. Download or clone a collection, then place the directory containing
-its icon files under `~/.config/waypie/icons/`.
+At runtime, an assigned icon is shown normally and fades when it is replaced by
+the active label. Text appears immediately. If an item or central menu has no
+icon, its text remains visible in every state.
 
 ## Development
 
-Contributor checks and packaging instructions are documented in
-`CONTRIBUTING.md`.
+Run all Rust and Python checks with:
+
+```sh
+make check
+```
+
+Build only the optimized runtime with:
+
+```sh
+make build
+```
+
+See `CONTRIBUTING.md` for more details.
 
 ## Inspired by
 
@@ -316,7 +311,4 @@ Contributor checks and packaging instructions are documented in
 - [Driftwm](https://github.com/malbiruk/driftwm)
 - [Wlogout](https://github.com/ArtsyMacaw/wlogout)
 
-
-
 https://github.com/user-attachments/assets/fddcc941-bbec-448d-bd93-f253433c687d
-

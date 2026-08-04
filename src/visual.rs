@@ -68,6 +68,15 @@ pub struct VisualNode {
     removing: bool,
     position_end: f64,
     opacity_delay: f64,
+    creation_anchor: Option<CreationAnchor>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CreationAnchor {
+    from: Point,
+    to: Point,
+    duration: Duration,
+    spring: Spring,
 }
 
 struct TransitionTarget {
@@ -114,9 +123,24 @@ impl VisualNode {
             ((progress - self.opacity_delay) / (1.0 - self.opacity_delay).max(f64::EPSILON))
                 .clamp(0.0, 1.0),
         );
-        self.position = self
-            .from_position
-            .lerp(self.target_position, position_movement);
+        self.position = if let Some(anchor) = self.creation_anchor {
+            let anchor_progress = if anchor.duration.is_zero() {
+                1.0
+            } else {
+                ((now - self.started).as_secs_f64() / anchor.duration.as_secs_f64()).clamp(0.0, 1.0)
+            };
+            let anchor_movement = anchor
+                .spring
+                .sample(anchor_progress, anchor.duration.as_secs_f64());
+            let anchor_position = anchor.from.lerp(anchor.to, anchor_movement);
+            Point {
+                x: anchor_position.x + (self.target_position.x - anchor.to.x) * position_movement,
+                y: anchor_position.y + (self.target_position.y - anchor.to.y) * position_movement,
+            }
+        } else {
+            self.from_position
+                .lerp(self.target_position, position_movement)
+        };
         self.size = self.from_scale + (self.target_scale - self.from_scale) * size_movement;
         self.opacity = self.from_opacity + (self.target_opacity - self.from_opacity) * fade;
         let icon_progress = if self.icon_duration.is_zero() {
@@ -128,9 +152,12 @@ impl VisualNode {
         self.icon_opacity =
             self.icon_from + (self.icon_target - self.icon_from) * smoothstep(icon_progress);
         if progress >= 1.0 {
-            self.position = self.target_position;
             self.size = self.target_scale;
             self.opacity = self.target_opacity;
+        }
+        if self.movement_finished(now) {
+            self.position = self.target_position;
+            self.creation_anchor = None;
             self.return_connector = false;
         }
     }
@@ -158,13 +185,18 @@ impl VisualNode {
         self.removing = target.removing;
         self.position_end = target.position_end;
         self.opacity_delay = target.opacity_delay;
+        self.creation_anchor = None;
         if self.duration.is_zero() {
             self.sample(now);
         }
     }
 
     fn movement_finished(&self, now: Instant) -> bool {
-        self.duration.is_zero() || now - self.started >= self.duration
+        let transition_finished = self.duration.is_zero() || now - self.started >= self.duration;
+        let anchor_finished = self.creation_anchor.is_none_or(|anchor| {
+            anchor.duration.is_zero() || now - self.started >= anchor.duration
+        });
+        transition_finished && anchor_finished
     }
 
     fn finished(&self, now: Instant) -> bool {
@@ -277,13 +309,31 @@ impl Animator {
             } else {
                 let create_animated = animate && !create_duration.is_zero();
                 let initial = if create_animated { 0.0 } else { 1.0 };
+                let parent_key = match &key {
+                    NodeKey::Action(path, _) => Some(NodeKey::Menu(path.clone())),
+                    NodeKey::Menu(path) if !path.is_empty() => {
+                        Some(NodeKey::Menu(path[..path.len() - 1].to_vec()))
+                    }
+                    NodeKey::Menu(_) => None,
+                };
+                let parent_position = parent_key
+                    .as_ref()
+                    .and_then(|parent| self.nodes.get(parent))
+                    .map(|parent| parent.position);
+                let creation_origin = parent_position.unwrap_or(target.origin);
+                let creation_anchor = parent_position.map(|from| CreationAnchor {
+                    from,
+                    to: target.origin,
+                    duration: move_duration,
+                    spring: move_spring,
+                });
                 self.nodes.insert(
                     key.clone(),
                     VisualNode {
                         key,
                         item_path: target.item_path,
                         role: target.role,
-                        position: target.origin,
+                        position: creation_origin,
                         size: target.size * initial,
                         opacity: initial,
                         icon_opacity: if target.icon_visible
@@ -300,7 +350,7 @@ impl Animator {
                         selected_action: false,
                         return_connector: false,
                         collapse_to: target.origin,
-                        from_position: target.origin,
+                        from_position: creation_origin,
                         target_position: target.position,
                         from_scale: target.size * initial,
                         target_scale: target.size,
@@ -325,6 +375,7 @@ impl Animator {
                         removing: false,
                         position_end: 1.0,
                         opacity_delay: 0.0,
+                        creation_anchor,
                     },
                 );
             }
@@ -503,5 +554,55 @@ mod tests {
         assert_eq!(nodes[0].key, key);
         assert_eq!(nodes[0].role, NodeRole::Center);
         assert_eq!(nodes[0].position, Point { x: 300.0, y: 100.0 });
+    }
+
+    #[test]
+    fn submenu_items_expand_from_the_moving_submenu_circle() {
+        let submenu = NodeKey::Menu(vec![1]);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![target(
+                submenu.clone(),
+                NodeRole::Item,
+                Point { x: 200.0, y: 100.0 },
+            )],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+
+        let mut center = target(submenu, NodeRole::Center, Point { x: 300.0, y: 100.0 });
+        center.origin = Point { x: 300.0, y: 100.0 };
+        let mut child = target(
+            NodeKey::Action(vec![1], 0),
+            NodeRole::Item,
+            Point { x: 400.0, y: 100.0 },
+        );
+        child.origin = Point { x: 300.0, y: 100.0 };
+        animator.reconcile(
+            vec![center, child],
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Duration::ZERO,
+            true,
+        );
+
+        let child = animator
+            .nodes()
+            .into_iter()
+            .find(|node| node.key == NodeKey::Action(vec![1], 0))
+            .unwrap();
+        assert_eq!(child.position, Point { x: 200.0, y: 100.0 });
+        assert_eq!(child.size, 0.0);
+        let anchor = child.creation_anchor.unwrap();
+        assert_eq!(anchor.from, Point { x: 200.0, y: 100.0 });
+        assert_eq!(anchor.to, Point { x: 300.0, y: 100.0 });
     }
 }

@@ -71,7 +71,6 @@ class Configurator(Gtk.Application):
         self.alignment_check = None
         self.show_icons_check = None
         self.center_mode_check = None
-        self.active_label_in_center_check = None
         self.close_submenu_on_center_click_check = None
         self.hover_mode_check = None
         self.turbo_mode_check = None
@@ -256,17 +255,6 @@ class Configurator(Gtk.Application):
         self.center_mode_check.set_active(self.settings.center_mode)
         self.center_mode_check.connect("toggled", self.on_center_mode_changed)
         properties.append(self.center_mode_check)
-        self.active_label_in_center_check = Gtk.CheckButton(
-            label="Show active label in center"
-        )
-        self.active_label_in_center_check.set_active(
-            self.settings.active_label_in_center
-        )
-        self.active_label_in_center_check.connect(
-            "toggled",
-            self.on_active_label_in_center_changed,
-        )
-        properties.append(self.active_label_in_center_check)
         self.close_submenu_on_center_click_check = Gtk.CheckButton(
             label="Close on click"
         )
@@ -563,10 +551,6 @@ class Configurator(Gtk.Application):
                 (self.alignment_check, self.settings.auto_alignment),
                 (self.show_icons_check, self.settings.configurator_show_icons),
                 (self.center_mode_check, self.settings.center_mode),
-                (
-                    self.active_label_in_center_check,
-                    self.settings.active_label_in_center,
-                ),
                 (
                     self.close_submenu_on_center_click_check,
                     self.settings.close_submenu_on_center_click,
@@ -1392,15 +1376,6 @@ class Configurator(Gtk.Application):
         self.settings.center_mode = self.center_mode_check.get_active()
         self.set_status("Unsaved changes")
 
-    def on_active_label_in_center_changed(self, _check):
-        if self.restoring_undo:
-            return
-        self.push_undo()
-        self.settings.active_label_in_center = (
-            self.active_label_in_center_check.get_active()
-        )
-        self.set_status("Unsaved changes")
-
     def on_close_submenu_on_center_click_changed(self, _check):
         if self.restoring_undo:
             return
@@ -1750,9 +1725,6 @@ def serialize_config(settings):
         f"minimum-edge-distance = {toml_number(settings.minimum_edge_distance)}"
     )
     lines.append(f"center-mode = {str(settings.center_mode).lower()}")
-    lines.append(
-        f"active-label-in-center = {str(settings.active_label_in_center).lower()}"
-    )
     lines.append(
         "close-submenu-on-center-click = "
         f"{str(settings.close_submenu_on_center_click).lower()}"
