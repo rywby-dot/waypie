@@ -501,6 +501,70 @@ def animation_duration(rules, name, fallback_name=None):
     return seconds / 1000 if unit == "ms" else seconds
 
 
+def spring_duration(rules, prefix):
+    damping = animation_number(rules, f"{prefix}-damping-ratio", 1.0)
+    stiffness = animation_number(rules, f"{prefix}-stiffness", 1000.0)
+    epsilon = animation_number(rules, f"{prefix}-epsilon", 0.0001)
+    if not 0.1 <= damping <= 10:
+        raise SystemExit(f"waypie: {prefix}-damping-ratio must be between 0.1 and 10")
+    if epsilon >= 1:
+        raise SystemExit(f"waypie: {prefix}-epsilon must be less than 1")
+
+    def error(seconds):
+        if damping < 1:
+            return math.exp(-damping * seconds) / math.sqrt(1 - damping * damping)
+        if damping == 1:
+            return (1 + seconds) * math.exp(-seconds)
+        root = math.sqrt(damping * damping - 1)
+        first = -(damping - root)
+        second = -(damping + root)
+        first_weight = -second / (second - first)
+        second_weight = first / (second - first)
+        return abs(
+            first_weight * math.exp(first * seconds)
+            + second_weight * math.exp(second * seconds)
+        )
+
+    low, high = 0.0, 1.0
+    while error(high) > epsilon and high < 1_000_000:
+        high *= 2
+    for _ in range(64):
+        middle = (low + high) / 2
+        if error(middle) > epsilon:
+            low = middle
+        else:
+            high = middle
+    return high / math.sqrt(stiffness)
+
+
+def spring_value(rules, prefix, progress):
+    progress = min(1.0, max(0.0, progress))
+    if progress in {0.0, 1.0}:
+        return progress
+    damping = animation_number(rules, f"{prefix}-damping-ratio", 1.0)
+    duration = spring_duration(rules, prefix)
+    stiffness = animation_number(rules, f"{prefix}-stiffness", 1000.0)
+    elapsed = progress * duration * math.sqrt(stiffness)
+    if damping < 1:
+        root = math.sqrt(1 - damping * damping)
+        decay = math.exp(-damping * elapsed)
+        return 1 - decay * (
+            math.cos(root * elapsed) + damping / root * math.sin(root * elapsed)
+        )
+    if damping == 1:
+        return 1 - (1 + elapsed) * math.exp(-elapsed)
+    root = math.sqrt(damping * damping - 1)
+    first = -(damping - root)
+    second = -(damping + root)
+    first_weight = -second / (second - first)
+    second_weight = first / (second - first)
+    return (
+        1
+        - first_weight * math.exp(first * elapsed)
+        - second_weight * math.exp(second * elapsed)
+    )
+
+
 def animation_number(rules, name, default):
     value = rules.get("animation", {}).get(name)
     if value is None:

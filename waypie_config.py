@@ -13,7 +13,6 @@ gi.require_version("GdkPixbuf", "2.0")
 
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
-from waypie_animation import spring
 from waypie_common import (
     CONFIG_DIR,
     CONFIG_PATH,
@@ -41,6 +40,8 @@ from waypie_common import (
     scaled_icon_size,
     set_source_color,
     sort_icon_themes,
+    spring_duration,
+    spring_value,
     theme_icons,
 )
 
@@ -666,12 +667,14 @@ class Configurator(Gtk.Application):
         animation = self.preview_animations.get(key)
         if animation is None:
             initial = spawn if spawn is not None else target
+            spring_name = "item-create" if spawn is not None else "menu-move"
             animation = {
                 "current": initial,
                 "start": initial,
                 "target": target,
                 "started": now,
-                "duration": animation_duration(self.styles, "menu-duration"),
+                "duration": spring_duration(self.styles, spring_name),
+                "spring": spring_name,
             }
             self.preview_animations[key] = animation
         else:
@@ -680,30 +683,28 @@ class Configurator(Gtk.Application):
                 current = animation["current"]
                 position_changed = current[:2] != target[:2]
                 opacity_changed = current[3] != target[3]
-                duration_name = (
-                    "menu-duration"
-                    if position_changed or opacity_changed
-                    else "hover-duration"
+                spring_name = (
+                    "menu-move" if position_changed or opacity_changed else "hover"
                 )
                 animation.update(
                     start=current,
                     target=target,
                     started=now,
-                    duration=animation_duration(self.styles, duration_name),
+                    duration=spring_duration(self.styles, spring_name),
+                    spring=spring_name,
                 )
         self.update_preview_animation(animation, now)
         if animation["current"] != animation["target"]:
             self.ensure_preview_tick()
         return animation["current"]
 
-    @staticmethod
-    def update_preview_animation(animation, now):
+    def update_preview_animation(self, animation, now):
         duration = animation["duration"]
         if duration == 0:
             animation["current"] = animation["target"]
             return
         progress = min(1.0, (now - animation["started"]) / duration)
-        eased = spring(progress)
+        eased = spring_value(self.styles, animation["spring"], progress)
         animation["current"] = tuple(
             start + (target - start) * eased
             for start, target in zip(
@@ -728,7 +729,7 @@ class Configurator(Gtk.Application):
             for _index, item, style, x, y, size in circles
         }
         now = GLib.get_monotonic_time() / 1_000_000
-        duration = animation_duration(self.styles, "menu-duration")
+        duration = animation_duration(self.styles, "item-delete-duration")
         for item in items:
             node = circles_by_id.get(id(item))
             if node is None:
@@ -763,7 +764,7 @@ class Configurator(Gtk.Application):
                 if duration == 0
                 else min(1.0, (now - departure["started"]) / duration)
             )
-            eased = spring(progress)
+            eased = progress * progress * (3 - 2 * progress)
             geometry = tuple(
                 start + (target - start) * eased
                 for start, target in zip(

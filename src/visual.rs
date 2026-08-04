@@ -41,6 +41,14 @@ pub struct Motion {
     pub spring: Spring,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TransitionEffects {
+    pub deletion_duration: Duration,
+    pub icon_duration: Duration,
+    pub connector_duration: Duration,
+    pub indicator: Motion,
+}
+
 #[derive(Clone, Debug)]
 pub struct VisualNode {
     pub key: NodeKey,
@@ -54,6 +62,7 @@ pub struct VisualNode {
     pub selected_action: bool,
     pub return_connector: bool,
     pub connector_factor: f64,
+    pub indicator_factor: f64,
     base_position: Point,
     base_size: f64,
     hover_offset: Point,
@@ -69,6 +78,11 @@ pub struct VisualNode {
     connector_target: f64,
     connector_started: Instant,
     connector_duration: Duration,
+    indicator_from: f64,
+    indicator_target: f64,
+    indicator_started: Instant,
+    indicator_duration: Duration,
+    indicator_spring: Spring,
     collapse_to: Point,
     from_position: Point,
     target_position: Point,
@@ -83,6 +97,7 @@ pub struct VisualNode {
     started: Instant,
     duration: Duration,
     spring: Spring,
+    use_spring: bool,
     removing: bool,
     position_end: f64,
     opacity_delay: f64,
@@ -102,6 +117,7 @@ struct TransitionTarget {
     opacity: f64,
     duration: Duration,
     spring: Spring,
+    use_spring: bool,
     removing: bool,
     position_end: f64,
     opacity_delay: f64,
@@ -143,6 +159,21 @@ impl VisualNode {
         }
     }
 
+    fn set_indicator_target(&mut self, target: f64, motion: Motion, now: Instant) {
+        if (self.indicator_target - target).abs() < f64::EPSILON {
+            return;
+        }
+        self.indicator_from = self.indicator_factor;
+        self.indicator_target = target;
+        self.indicator_started = now;
+        self.indicator_duration = motion.duration;
+        self.indicator_spring = motion.spring;
+        if motion.duration.is_zero() {
+            self.indicator_factor = target;
+            self.indicator_from = target;
+        }
+    }
+
     fn set_icon_visible(&mut self, visible: bool, duration: Duration, now: Instant) {
         let target = f64::from(visible);
         if (self.icon_target - target).abs() < f64::EPSILON {
@@ -166,8 +197,16 @@ impl VisualNode {
         };
         let progress = raw.clamp(0.0, 1.0);
         let position_progress = (progress / self.position_end.max(f64::EPSILON)).clamp(0.0, 1.0);
-        let position_movement = self.spring.sample(position_progress);
-        let size_movement = self.spring.sample(progress);
+        let position_movement = if self.use_spring {
+            self.spring.sample(position_progress)
+        } else {
+            smoothstep(position_progress)
+        };
+        let size_movement = if self.use_spring {
+            self.spring.sample(progress)
+        } else {
+            smoothstep(progress)
+        };
         let fade = smoothstep(
             ((progress - self.opacity_delay) / (1.0 - self.opacity_delay).max(f64::EPSILON))
                 .clamp(0.0, 1.0),
@@ -210,6 +249,15 @@ impl VisualNode {
         };
         self.connector_factor = self.connector_from
             + (self.connector_target - self.connector_from) * smoothstep(connector_progress);
+        let indicator_progress = if self.indicator_duration.is_zero() {
+            1.0
+        } else {
+            ((now - self.indicator_started).as_secs_f64() / self.indicator_duration.as_secs_f64())
+                .clamp(0.0, 1.0)
+        };
+        self.indicator_factor = self.indicator_from
+            + (self.indicator_target - self.indicator_from)
+                * self.indicator_spring.sample(indicator_progress);
         if progress >= 1.0 {
             self.base_size = self.target_scale;
             self.opacity = self.target_opacity;
@@ -244,6 +292,7 @@ impl VisualNode {
         self.started = now;
         self.duration = target.duration;
         self.spring = target.spring;
+        self.use_spring = target.use_spring;
         self.removing = target.removing;
         self.position_end = target.position_end;
         self.opacity_delay = target.opacity_delay;
@@ -271,6 +320,8 @@ impl VisualNode {
             && (self.hover_duration.is_zero() || now - self.hover_started >= self.hover_duration)
             && (self.connector_duration.is_zero()
                 || now - self.connector_started >= self.connector_duration)
+            && (self.indicator_duration.is_zero()
+                || now - self.indicator_started >= self.indicator_duration)
             && (self.icon_duration.is_zero() || now - self.icon_started >= self.icon_duration)
     }
 }
@@ -320,9 +371,12 @@ impl Animator {
             } else {
                 ((now - node.started).as_secs_f64() / node.duration.as_secs_f64()).clamp(0.0, 1.0)
             };
-            let movement = node
-                .spring
-                .sample((progress / node.position_end.max(f64::EPSILON)).clamp(0.0, 1.0));
+            let progress = (progress / node.position_end.max(f64::EPSILON)).clamp(0.0, 1.0);
+            let movement = if node.use_spring {
+                node.spring.sample(progress)
+            } else {
+                smoothstep(progress)
+            };
             let offset = anchor.from_offset.lerp(anchor.target_offset, movement);
             node.base_position = Point {
                 x: parent_position.x + offset.x,
@@ -343,6 +397,32 @@ impl Animator {
         icon_duration: Duration,
         animate: bool,
     ) {
+        self.reconcile_with_effects(
+            targets,
+            movement,
+            creation,
+            TransitionEffects {
+                icon_duration,
+                ..TransitionEffects::default()
+            },
+            animate,
+        );
+    }
+
+    pub fn reconcile_with_effects(
+        &mut self,
+        targets: Vec<NodeTarget>,
+        movement: Motion,
+        creation: Motion,
+        effects: TransitionEffects,
+        animate: bool,
+    ) {
+        let TransitionEffects {
+            deletion_duration,
+            icon_duration,
+            connector_duration,
+            indicator,
+        } = effects;
         let move_duration = movement.duration;
         let create_duration = creation.duration;
         let move_spring = movement.spring;
@@ -366,6 +446,9 @@ impl Animator {
         for (key, node) in &mut self.nodes {
             if !targets.contains_key(key) && !node.removing {
                 let parent_key = parent_key(key);
+                if matches!(key, NodeKey::Menu(_)) {
+                    node.set_indicator_target(0.0, indicator, now);
+                }
                 let destination = parent_key
                     .as_ref()
                     .and_then(|key| targets.get(key))
@@ -375,8 +458,9 @@ impl Animator {
                         position: destination,
                         size: 0.0,
                         opacity: 0.0,
-                        duration: create_duration,
-                        spring: create_spring,
+                        duration: deletion_duration,
+                        spring: Spring::default(),
+                        use_spring: false,
                         removing: true,
                         position_end: 1.0,
                         opacity_delay: 0.0,
@@ -423,9 +507,11 @@ impl Animator {
                 let returning =
                     animate && node.role == NodeRole::Center && target.role == NodeRole::Item;
                 if opening_connector {
-                    node.set_connector_target(1.0, move_duration, now);
+                    node.set_connector_target(1.0, connector_duration, now);
+                    node.set_indicator_target(0.0, indicator, now);
                 } else if returning {
-                    node.set_connector_target(0.0, move_duration, now);
+                    node.set_connector_target(0.0, connector_duration, now);
+                    node.set_indicator_target(1.0, indicator, now);
                 }
                 node.item_path = target.item_path;
                 node.role = target.role;
@@ -441,6 +527,7 @@ impl Animator {
                             opacity: 1.0,
                             duration: move_duration,
                             spring: move_spring,
+                            use_spring: true,
                             removing: false,
                             position_end: 1.0,
                             opacity_delay: 0.0,
@@ -477,6 +564,12 @@ impl Animator {
                     node.target_opacity = 1.0;
                     node.removing = false;
                     node.return_connector = false;
+                    node.indicator_factor = f64::from(
+                        target.role == NodeRole::Item && matches!(&key, NodeKey::Menu(_)),
+                    );
+                    node.indicator_from = node.indicator_factor;
+                    node.indicator_target = node.indicator_factor;
+                    node.indicator_duration = Duration::ZERO;
                     node.position_anchor = match (parent, parent_target) {
                         (Some(parent), Some(parent_target)) => Some(PositionAnchor {
                             parent,
@@ -497,6 +590,8 @@ impl Animator {
                 let initial = if create_animated { 0.0 } else { 1.0 };
                 let creates_connector =
                     target.role == NodeRole::Center && !target.item_path.is_empty();
+                let creates_indicator =
+                    target.role == NodeRole::Item && matches!(&key, NodeKey::Menu(_));
                 let parent = parent_key(&key);
                 let parent_position = parent
                     .as_ref()
@@ -549,10 +644,20 @@ impl Animator {
                         connector_target: if creates_connector { 1.0 } else { 0.0 },
                         connector_started: now,
                         connector_duration: if creates_connector {
-                            move_duration
+                            connector_duration
                         } else {
                             Duration::ZERO
                         },
+                        indicator_factor: 0.0,
+                        indicator_from: 0.0,
+                        indicator_target: if creates_indicator { 1.0 } else { 0.0 },
+                        indicator_started: now,
+                        indicator_duration: if creates_indicator {
+                            indicator.duration
+                        } else {
+                            Duration::ZERO
+                        },
+                        indicator_spring: indicator.spring,
                         collapse_to: target.origin,
                         from_position: creation_origin,
                         target_position: target.rest_position,
@@ -576,6 +681,7 @@ impl Animator {
                         started: now,
                         duration: create_duration,
                         spring: create_spring,
+                        use_spring: true,
                         removing: false,
                         position_end: 1.0,
                         opacity_delay: 0.0,
@@ -596,6 +702,17 @@ impl Animator {
         icon_duration: Duration,
         spring: Spring,
     ) {
+        let motion = Motion { duration, spring };
+        self.hover_with_follow(targets, motion, motion, icon_duration);
+    }
+
+    pub fn hover_with_follow(
+        &mut self,
+        targets: Vec<NodeTarget>,
+        hover: Motion,
+        follow: Motion,
+        icon_duration: Duration,
+    ) {
         let now = Instant::now();
         self.sample_all(now);
         for target in targets {
@@ -606,6 +723,13 @@ impl Animator {
                 continue;
             }
             let active_changed = node.active != target.active;
+            let motion = if node.active || target.active {
+                hover
+            } else {
+                follow
+            };
+            let duration = motion.duration;
+            let spring = motion.spring;
             node.item_path = target.item_path;
             node.role = target.role;
             node.selected_action = false;
@@ -679,6 +803,25 @@ impl Animator {
         action_duration: Duration,
         spring: Spring,
     ) {
+        self.close_with_effects(
+            selected,
+            close_duration,
+            action_duration,
+            Duration::ZERO,
+            Motion::default(),
+            spring,
+        );
+    }
+
+    pub fn close_with_effects(
+        &mut self,
+        selected: Option<(&NodeKey, Point, f64)>,
+        close_duration: Duration,
+        action_duration: Duration,
+        connector_duration: Duration,
+        indicator: Motion,
+        spring: Spring,
+    ) {
         let now = Instant::now();
         self.sample_all(now);
         let current_center = self
@@ -697,14 +840,17 @@ impl Animator {
                 node.connector_from = 1.0;
                 node.connector_target = 0.0;
                 node.connector_started = now;
-                node.connector_duration = action_duration;
+                node.connector_duration = connector_duration;
             } else if matches!(&node.key, NodeKey::Menu(_)) {
                 let connector_target = if node.role == NodeRole::Item {
                     1.0
                 } else {
                     0.0
                 };
-                node.set_connector_target(connector_target, close_duration, now);
+                node.set_connector_target(connector_target, connector_duration, now);
+                if node.role == NodeRole::Item {
+                    node.set_indicator_target(0.0, indicator, now);
+                }
             }
             let collapse_position = if node.role == NodeRole::Item {
                 current_center
@@ -731,6 +877,7 @@ impl Animator {
                     opacity: 0.0,
                     duration,
                     spring,
+                    use_spring: selected_target.is_some(),
                     removing: true,
                     position_end: 1.0,
                     opacity_delay: if selected_target.is_some() {
@@ -786,6 +933,24 @@ impl Animator {
     pub fn is_animating(&self) -> bool {
         let now = Instant::now();
         self.nodes.values().any(|node| !node.finished(now))
+    }
+
+    pub fn remaining_duration(&self) -> Duration {
+        let now = Instant::now();
+        self.nodes
+            .values()
+            .flat_map(|node| {
+                [
+                    (node.started, node.duration),
+                    (node.hover_started, node.hover_duration),
+                    (node.connector_started, node.connector_duration),
+                    (node.indicator_started, node.indicator_duration),
+                    (node.icon_started, node.icon_duration),
+                ]
+            })
+            .map(|(started, duration)| duration.saturating_sub(now.duration_since(started)))
+            .max()
+            .unwrap_or(Duration::ZERO)
     }
 }
 
