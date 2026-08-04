@@ -581,6 +581,11 @@ impl Animator {
         spring: Spring,
     ) {
         let now = Instant::now();
+        let current_center = self
+            .nodes
+            .values()
+            .find(|node| node.role == NodeRole::Center && !node.removing)
+            .map(|node| node.target_position);
         for node in self.nodes.values_mut() {
             node.sample(now);
             let selected_target = selected
@@ -594,10 +599,20 @@ impl Animator {
                 node.connector_target = 0.0;
                 node.connector_started = now;
                 node.connector_duration = action_duration;
-            } else if matches!(&node.key, NodeKey::Menu(path) if !path.is_empty()) {
-                node.set_connector_target(0.0, close_duration, now);
+            } else if matches!(&node.key, NodeKey::Menu(_)) {
+                let connector_target = if node.role == NodeRole::Item {
+                    1.0
+                } else {
+                    0.0
+                };
+                node.set_connector_target(connector_target, close_duration, now);
             }
-            let (position, scale) = selected_target.unwrap_or((node.collapse_to, 0.0));
+            let collapse_position = if node.role == NodeRole::Item {
+                current_center.unwrap_or(node.collapse_to)
+            } else {
+                node.collapse_to
+            };
+            let (position, scale) = selected_target.unwrap_or((collapse_position, 0.0));
             let size = if selected_target.is_some() {
                 node.size * scale
             } else {
@@ -702,6 +717,42 @@ mod tests {
         assert_eq!(nodes[0].key, key);
         assert_eq!(nodes[0].role, NodeRole::Center);
         assert_eq!(nodes[0].position, Point { x: 300.0, y: 100.0 });
+    }
+
+    #[test]
+    fn closing_during_a_return_collapses_stale_items_into_the_current_center() {
+        let center_key = NodeKey::Menu(vec![]);
+        let stale_item_key = NodeKey::Action(vec![1], 0);
+        let center = Point { x: 300.0, y: 100.0 };
+        let stale_submenu_center = Point { x: 500.0, y: 100.0 };
+        let mut animator = Animator::default();
+
+        let center_target = target(center_key, NodeRole::Center, center);
+        let mut stale_item = target(
+            stale_item_key.clone(),
+            NodeRole::Item,
+            Point { x: 550.0, y: 100.0 },
+        );
+        stale_item.origin = stale_submenu_center;
+        animator.reconcile(
+            vec![center_target, stale_item],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+
+        animator.close(
+            None,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Spring::default(),
+        );
+
+        let stale_item = &animator.nodes[&stale_item_key];
+        assert_eq!(stale_item.collapse_to, stale_submenu_center);
+        assert_eq!(stale_item.target_position, center);
+        assert!(stale_item.removing);
     }
 
     #[test]
