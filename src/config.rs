@@ -20,6 +20,8 @@ pub struct Config {
     #[serde(default)]
     pub turbo_mode: bool,
     #[serde(default)]
+    pub hold_to_turbo: bool,
+    #[serde(default)]
     pub travel_item_animation: bool,
     #[serde(default)]
     pub close_submenu_on_center_click: bool,
@@ -204,9 +206,13 @@ mod tests {
     #[test]
     fn travel_item_animation_is_optional_and_can_be_enabled() {
         let disabled: Config = toml::from_str("[menu]\nlabel = 'Root'").unwrap();
-        let enabled: Config =
-            toml::from_str("travel-item-animation = true\n[menu]\nlabel = 'Root'").unwrap();
+        let enabled: Config = toml::from_str(
+            "travel-item-animation = true\nhold-to-turbo = true\n[menu]\nlabel = 'Root'",
+        )
+        .unwrap();
         assert!(!disabled.travel_item_animation);
+        assert!(!disabled.hold_to_turbo);
         assert!(enabled.travel_item_animation);
+        assert!(enabled.hold_to_turbo);
     }
 }
