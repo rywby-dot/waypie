@@ -22,9 +22,14 @@ Pycairo, and pipx.
 On Arch Linux, the required packages can be installed with:
 
 ```sh
-sudo pacman -S --needed git rust cargo libxkbcommon fontconfig python python-pipx gtk4 python-gobject python-cairo
+sudo pacman -S git rust cargo libxkbcommon fontconfig python python-pipx gtk4 python-gobject python-cairo
 ```
-
+```sh
+sudo xbps-install -S git rust cargo libxkbcommon-devel fontconfig-devel python3 python3-pipx gtk4-devel python3-gobject python3-cairo
+```
+```sh
+sudo apt install -y git rustc cargo libxkbcommon-dev libfontconfig-dev python3 pipx libgtk-4-dev python3-gi python3-cairo python3-gi-cairo
+```
 Package names differ between distributions.
 
 ## Installation
