@@ -12,10 +12,17 @@ concurrency:
 
 jobs:
   check:
-    name: Python checks
+    name: Checks and builds
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig-dev libxkbcommon-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - uses: actions/setup-python@v6
         with:
@@ -24,14 +31,11 @@ jobs:
       - name: Install check tools
         run: python -m pip install build ruff
 
-      - name: Check formatting
-        run: ruff format --check waypie.py waypie_config.py waypie_common.py
+      - name: Run checks
+        run: make check RUFF=ruff PYTHON=python
 
-      - name: Lint
-        run: ruff check waypie.py waypie_config.py waypie_common.py
-
-      - name: Check syntax
-        run: python -m py_compile waypie.py waypie_config.py waypie_common.py
-
-      - name: Build package
+      - name: Build Python configurator package
         run: python -m build
+
+      - name: Build Rust runtime
+        run: make build
