@@ -1,15 +1,9 @@
 # Waypie
 
-<img width="960" height="540" alt="Waypie menu" src="https://github.com/user-attachments/assets/ef3cfe74-ffd4-4c3b-8ef9-32a8a9b49c32" />
-<img width="960" height="540" alt="Waypie configurator" src="https://github.com/user-attachments/assets/b534ad4f-f8cf-4159-a3a7-6fad2846d2d6" />
-
-Waypie is a lightweight Kando-like radial menu for Wayland. The menu runtime is
-written in Rust and uses a native layer-shell surface. The graphical
-configurator remains a Python/GTK 4 application.
-
-Waypie supports arbitrarily nested submenus, animated navigation, angular
-selection, Hover Mode, Turbo Mode, CSS-like styling, monochrome and color
-icons, and multiple monitors.
+- Waypie is a lightweight and fast Kando-like radial menu for Wayland, written with Rust
+- It is not need a daemon
+- Support Point and Click Mode, Marking Mode, Turbo Mode, Hover Mode, Centered Mode [from Kando](https://kando.menu/usage/)
+- It is also recommended to [read about Kando](https://kando.menu/intro/) first, before using Waypie 
 
 > [!WARNING]
 > Waypie is experimental software, primarily built with AI.
@@ -34,11 +28,8 @@ sudo pacman -S --needed git rust cargo libxkbcommon fontconfig python python-pip
 Package names differ between distributions.
 
 ## Installation
-
-Clone the Rust branch and run the Makefile:
-
 ```sh
-git clone --branch rust-rewrite --single-branch https://github.com/rywby-dot/waypie.git
+git clone https://github.com/rywby-dot/waypie.git
 cd waypie
 make install
 ```
@@ -51,18 +42,13 @@ By default this does four things:
 4. installs missing example files and bundled icons under
    `~/.config/waypie/` without replacing existing user files.
 
-For the configurator, `make install` automatically chooses the correct pipx
-operation: `pipx install .` on the first installation and
-`pipx upgrade waypie` when its environment already exists.
-
 Make sure `~/.local/bin` is in `PATH`. For a custom binary prefix:
 
 ```sh
 make install-runtime PREFIX=/usr/local
 ```
 
-This may require root privileges for a system directory. The configurator and
-user configuration can also be installed separately:
+The configurator and user configuration can also be installed separately:
 
 ```sh
 make install-configurator
@@ -85,11 +71,7 @@ To deliberately replace both configuration files with the repository defaults:
 make forceinstall
 ```
 
-Before replacement, the current files are saved as `config.bak` and
-`style.css.bak`. A repeated `forceinstall` updates these backups to the files
-that are current immediately before that replacement. Existing icons are never
-deleted or overwritten; icon files newly added to the repository are copied
-into the user's `icons/` directory.
+run `make help` to see avalible options
 
 ### Uninstalling
 
@@ -107,18 +89,18 @@ Add this command to a compositor key binding:
 ```sh
 waypie --show
 ```
+or
+```sh
+waypie
+```
 
-Waypie is not a persistent daemon. Each invocation starts the native Rust
-runtime, opens the menu, and exits after the menu closes. While a menu is open,
-a small per-display control socket allows another `waypie --show` invocation to
-close it. No Waypie process remains in memory afterward.
-
-Running `waypie` without arguments also opens the menu. Available commands are:
+Available commands are:
 
 ```text
 waypie --show       Open the menu, or close the currently open instance
 waypie --configure  Open the graphical configurator
 waypie --kill       Ask the currently open instance to close
+waypie --help       Show help menu
 ```
 
 The complete menu can be closed with:
@@ -151,39 +133,6 @@ spread out from that moving circle. Previous menus remain connected by lines
 and can be selected by their return direction. Clicking a submenu center
 returns to its parent unless **Close on click** is enabled.
 
-### Hover Mode
-
-Enable `hover-mode` in the configurator to navigate without clicking. After a
-sufficiently long pointer stroke, the current direction is selected when the
-pointer pauses or turns sharply. Hover Mode can open submenus, return through
-the menu chain, and execute commands.
-
-With **Travel item animation** enabled, the selected item and an active
-connector move to the pointer in Hover and Turbo modes. After the initial
-transition the item follows the pointer exactly. Disable it to retain the
-normal stationary active-item behavior.
-
-The gesture constants are grouped near the top of
-`src/hover.rs` for developers who want to tune them.
-
-### Turbo Mode
-
-Enable `turbo-mode` to use the modifier held by the compositor shortcut as a
-temporary mouse button:
-
-1. Press a shortcut such as `Super+R`, `Alt+Space`, or `Ctrl+Shift+Space`.
-2. Keep its modifier held while navigating through the menu.
-3. Point toward the final action.
-4. Release the last modifier to execute it.
-
-Enable `hold-to-turbo` to get the same behavior from the left mouse button.
-A press and release without movement remains a normal click. Any pointer
-movement while the button is held starts Turbo Mode, even if the pointer stays
-inside the current hitbox; releasing selects the current item.
-
-Waypie reads the modifiers delivered through the Wayland keyboard protocol, so
-the shortcut does not need to be duplicated in `config`. Support depends on the
-compositor forwarding modifier press and release events to the layer.
 
 ## Graphical configurator
 
