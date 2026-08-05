@@ -108,7 +108,6 @@ fn run() -> Result<()> {
         viewporter,
         qh,
     );
-    app.prepare_layers();
     if arguments.is_empty() || arguments == ["--show"] {
         app.show(activation_token)?;
     }
