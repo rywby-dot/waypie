@@ -151,7 +151,7 @@ mod animation_profile_tests {
 }
 
 struct OutputLayer {
-    output: wl_output::WlOutput,
+    output: Option<wl_output::WlOutput>,
     surface: LayerSurface,
     width: u32,
     height: u32,
@@ -313,37 +313,57 @@ impl App {
     }
 
     pub fn prepare_layers(&mut self) {
+        let center_mode = self
+            .config
+            .as_ref()
+            .is_some_and(|config| config.center_mode);
+        if center_mode {
+            if self.layers.iter().any(|layer| layer.output.is_none()) {
+                return;
+            }
+            self.create_layer(None);
+            return;
+        }
+
         let outputs = self.output_state.outputs().collect::<Vec<_>>();
         for output in outputs {
-            if self.layers.iter().any(|layer| layer.output == output) {
+            if self
+                .layers
+                .iter()
+                .any(|layer| layer.output.as_ref() == Some(&output))
+            {
                 continue;
             }
-            let wl_surface = self.compositor.create_surface(&self.qh);
-            let surface = self.layer_shell.create_layer_surface(
-                &self.qh,
-                wl_surface,
-                Layer::Overlay,
-                Some("waypie"),
-                Some(&output),
-            );
-            surface.set_anchor(Anchor::TOP | Anchor::RIGHT | Anchor::BOTTOM | Anchor::LEFT);
-            surface.set_size(0, 0);
-            surface.set_exclusive_zone(-1);
-            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
-            self.set_click_through(&surface, true);
-            surface.commit();
-            let viewport = self
-                .viewporter
-                .as_ref()
-                .map(|viewporter| viewporter.get_viewport(surface.wl_surface(), &self.qh, ()));
-            self.layers.push(OutputLayer {
-                output,
-                surface,
-                width: 0,
-                height: 0,
-                viewport,
-            });
+            self.create_layer(Some(output));
         }
+    }
+
+    fn create_layer(&mut self, output: Option<wl_output::WlOutput>) {
+        let wl_surface = self.compositor.create_surface(&self.qh);
+        let surface = self.layer_shell.create_layer_surface(
+            &self.qh,
+            wl_surface,
+            Layer::Overlay,
+            Some("waypie"),
+            output.as_ref(),
+        );
+        surface.set_anchor(Anchor::TOP | Anchor::RIGHT | Anchor::BOTTOM | Anchor::LEFT);
+        surface.set_size(0, 0);
+        surface.set_exclusive_zone(-1);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        self.set_click_through(&surface, true);
+        surface.commit();
+        let viewport = self
+            .viewporter
+            .as_ref()
+            .map(|viewporter| viewporter.get_viewport(surface.wl_surface(), &self.qh, ()));
+        self.layers.push(OutputLayer {
+            output,
+            surface,
+            width: 0,
+            height: 0,
+            viewport,
+        });
     }
 
     pub fn show(&mut self, activation_token: Option<String>) -> Result<()> {
@@ -356,13 +376,13 @@ impl App {
         let animation = AnimationProfile::from(animation_style);
         self.renderer.configure_fonts(styles.font_families());
         self.renderer.configure_animations(animation_style);
+        self.config = Some(config);
+        self.styles = Some(styles);
+        self.animation = animation;
         self.prepare_layers();
         if self.layers.is_empty() {
             bail!("no Wayland outputs are available");
         }
-        self.config = Some(config);
-        self.styles = Some(styles);
-        self.animation = animation;
         self.state.reset();
         self.hover_detector.reset(None);
         self.pending_activation = activation_token;
@@ -1071,6 +1091,20 @@ impl LayerShellHandler for App {
         self.layers[index].height = configure.new_size.1;
         if self.active_layer == Some(index) {
             self.draw();
+        } else if self.visible
+            && self.layers[index].output.is_none()
+            && self
+                .config
+                .as_ref()
+                .is_some_and(|config| config.center_mode)
+        {
+            self.select_output(
+                index,
+                Point {
+                    x: configure.new_size.0 as f64 / 2.0,
+                    y: configure.new_size.1 as f64 / 2.0,
+                },
+            );
         } else {
             self.attach_transparent(index);
         }
@@ -1259,7 +1293,11 @@ impl OutputHandler for App {
         _: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
-        if let Some(index) = self.layers.iter().position(|layer| layer.output == output) {
+        if let Some(index) = self
+            .layers
+            .iter()
+            .position(|layer| layer.output.as_ref() == Some(&output))
+        {
             let selected = self.active_layer == Some(index);
             self.layers.remove(index);
             if selected {
