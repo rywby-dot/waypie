@@ -366,23 +366,13 @@ impl App {
         });
     }
 
-    pub fn show(&mut self, activation_token: Option<String>) -> Result<()> {
+    pub fn begin_show(&mut self, activation_token: Option<String>) -> Result<()> {
         if self.visible {
             return Ok(());
         }
         let config = Config::load(&self.config_dir.join("config"))?;
-        let styles = StyleSheet::load(&self.config_dir.join("style.css"))?;
-        let animation_style = styles.animation()?;
-        let animation = AnimationProfile::from(animation_style);
-        self.renderer.configure_fonts(styles.font_families());
-        self.renderer.configure_animations(animation_style);
         self.config = Some(config);
-        self.styles = Some(styles);
-        self.animation = animation;
-        self.prepare_layers();
-        if self.layers.is_empty() {
-            bail!("no Wayland outputs are available");
-        }
+        self.styles = None;
         self.state.reset();
         self.hover_detector.reset(None);
         self.pending_activation = activation_token;
@@ -393,11 +383,37 @@ impl App {
         self.closing_until = None;
         self.active_layer = None;
         self.visible = true;
+        self.prepare_layers();
+        if self.layers.is_empty() {
+            bail!("no Wayland outputs are available");
+        }
         for index in 0..self.layers.len() {
             let surface = &self.layers[index].surface;
             surface.set_keyboard_interactivity(KeyboardInteractivity::None);
             surface.set_input_region(None);
             surface.commit();
+        }
+        Ok(())
+    }
+
+    pub fn finish_show(&mut self) -> Result<()> {
+        if !self.visible {
+            return Ok(());
+        }
+        let styles = StyleSheet::load(&self.config_dir.join("style.css"))?;
+        let animation_style = styles.animation()?;
+        self.animation = AnimationProfile::from(animation_style);
+        self.renderer.configure_fonts(styles.font_families());
+        self.renderer.configure_animations(animation_style);
+        self.styles = Some(styles);
+
+        if let (Some(position), Some(config)) = (self.pointer_position, self.config.as_ref()) {
+            self.state
+                .update_pointer(position, config, self.center_hitbox());
+        }
+        if self.active_layer.is_some() {
+            self.sync_visual(false);
+            self.draw();
         }
         Ok(())
     }
@@ -1091,22 +1107,23 @@ impl LayerShellHandler for App {
         self.layers[index].height = configure.new_size.1;
         if self.active_layer == Some(index) {
             self.draw();
-        } else if self.visible
-            && self.layers[index].output.is_none()
-            && self
-                .config
-                .as_ref()
-                .is_some_and(|config| config.center_mode)
-        {
-            self.select_output(
-                index,
-                Point {
-                    x: configure.new_size.0 as f64 / 2.0,
-                    y: configure.new_size.1 as f64 / 2.0,
-                },
-            );
         } else {
             self.attach_transparent(index);
+            if self.visible
+                && self.layers[index].output.is_none()
+                && self
+                    .config
+                    .as_ref()
+                    .is_some_and(|config| config.center_mode)
+            {
+                self.select_output(
+                    index,
+                    Point {
+                        x: configure.new_size.0 as f64 / 2.0,
+                        y: configure.new_size.1 as f64 / 2.0,
+                    },
+                );
+            }
         }
     }
 }

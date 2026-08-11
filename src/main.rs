@@ -68,7 +68,7 @@ fn run() -> Result<()> {
     remove_if_present(&socket_path)?;
 
     let conn = Connection::connect_to_env().context("cannot connect to Wayland")?;
-    let (globals, event_queue) = registry_queue_init(&conn)?;
+    let (globals, mut event_queue) = registry_queue_init(&conn)?;
     let qh = event_queue.handle();
     let compositor = CompositorState::bind(&globals, &qh)?;
     let layer_shell = LayerShell::bind(&globals, &qh)?;
@@ -81,7 +81,6 @@ fn run() -> Result<()> {
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let handle = event_loop.handle();
-    WaylandSource::new(conn, event_queue).insert(handle.clone())?;
     let (socket, socket_path) = bind_control_socket()?;
     handle.insert_source(
         Generic::new(socket, Interest::READ, Mode::Level),
@@ -108,9 +107,15 @@ fn run() -> Result<()> {
         viewporter,
         qh,
     );
-    if arguments.is_empty() || arguments == ["--show"] {
-        app.show(activation_token)?;
+    let show_on_startup = arguments.is_empty() || arguments == ["--show"];
+    if show_on_startup {
+        app.begin_show(activation_token)?;
+        event_queue.roundtrip(&mut app)?;
+        conn.flush()?;
+        app.finish_show()?;
+        conn.flush()?;
     }
+    WaylandSource::new(conn, event_queue).insert(handle.clone())?;
     while !app.exit {
         let timeout = app.needs_tick().then_some(Duration::from_millis(10));
         event_loop.dispatch(timeout, &mut app)?;
