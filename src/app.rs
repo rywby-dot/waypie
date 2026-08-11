@@ -251,6 +251,7 @@ pub struct App {
     pointer_position: Option<Point>,
     keyboard_turbo_active: bool,
     keyboard_modifiers: Modifiers,
+    quick_navigation_centered: bool,
     pointer_hold: Option<PointerHold>,
     input_inhibitor: Option<ZwlrInputInhibitorV1>,
     animator: Animator,
@@ -305,6 +306,7 @@ impl App {
             pointer_position: None,
             keyboard_turbo_active: false,
             keyboard_modifiers: Modifiers::default(),
+            quick_navigation_centered: false,
             pointer_hold: None,
             input_inhibitor: None,
             animator: Animator::default(),
@@ -390,6 +392,7 @@ impl App {
         self.pointer_position = None;
         self.keyboard_turbo_active = false;
         self.keyboard_modifiers = Modifiers::default();
+        self.quick_navigation_centered = false;
         self.pointer_hold = None;
         self.animator.clear();
         self.closing_until = None;
@@ -937,6 +940,50 @@ impl App {
         }
     }
 
+    fn center_quick_navigation(&mut self, layer_index: usize) {
+        if self.quick_navigation_centered {
+            return;
+        }
+        let (Some(config), Some(layer)) = (self.config.as_ref(), self.layers.get(layer_index))
+        else {
+            return;
+        };
+        let center = Point {
+            x: layer.width as f64 / 2.0,
+            y: layer.height as f64 / 2.0,
+        };
+        if self.state.move_current_to(center, config) {
+            self.quick_navigation_centered = true;
+            self.sync_visual(true);
+        }
+    }
+
+    fn activate_quick_item(&mut self, item_index: usize, position: Point, layer_index: usize) {
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
+        let Some(item) = self.state.current(config).items.get(item_index).cloned() else {
+            return;
+        };
+        if item.is_submenu() {
+            let Some(layer) = self.layers.get(layer_index) else {
+                return;
+            };
+            self.state.open_submenu_anchored(
+                item_index,
+                position,
+                config,
+                layer.width,
+                layer.height,
+            );
+            self.complete_navigation();
+        } else if let Some(command) = item.command {
+            launch(&command);
+            let key = NodeKey::Action(self.state.path().to_vec(), item_index);
+            self.begin_hide(Some((key, position)));
+        }
+    }
+
     fn activate_quick_key(&mut self, input: &str) {
         if self.keyboard_modifiers.ctrl
             || self.keyboard_modifiers.alt
@@ -947,35 +994,47 @@ impl App {
         let Some(config) = self.config.as_ref() else {
             return;
         };
-        let item_index = self
+        let item = self
             .state
             .current(config)
             .items
             .iter()
-            .position(|item| key_matches(&item.keys, input));
-        if let Some(item_index) = item_index {
-            let Some(layer_index) = self.active_layer else {
-                return;
-            };
+            .enumerate()
+            .find(|(_, item)| key_matches(&item.keys, input))
+            .map(|(index, item)| (index, item.angle.unwrap_or(0.0)));
+        let back = key_matches(&config.back_keys, input);
+        let menu_radius = config.menu_radius;
+        if item.is_none() && !back {
+            return;
+        }
+        let Some(layer_index) = self.active_layer else {
+            return;
+        };
+        self.center_quick_navigation(layer_index);
+        if let Some((item_index, angle)) = item {
             let Some(center) = self.state.centers().last().copied() else {
                 return;
             };
-            let item = &self.state.current(config).items[item_index];
-            let position = radial_position(center, item.angle.unwrap_or(0.0), config.menu_radius);
+            let position = radial_position(center, angle, menu_radius);
             self.keyboard_turbo_active = false;
-            self.activate_item(item_index, position, layer_index, false);
-            return;
-        }
-        if !key_matches(&config.back_keys, input) {
+            self.activate_quick_item(item_index, position, layer_index);
             return;
         }
         self.keyboard_turbo_active = false;
         if self.state.path().is_empty() {
             self.hide();
-        } else if let (Some(layer_index), Some(position)) =
-            (self.active_layer, self.state.centers().last().copied())
+        } else if let Some(position) = self.state.centers().last().copied()
+            && let Some(layer) = self.layers.get(layer_index)
         {
-            self.return_to(self.state.path().len() - 1, position, layer_index);
+            let depth = self.state.path().len() - 1;
+            let size = (layer.width, layer.height);
+            let returned = self.config.as_ref().is_some_and(|config| {
+                self.state
+                    .return_to_anchored(depth, position, config, size.0, size.1)
+            });
+            if returned {
+                self.complete_navigation();
+            }
         }
     }
 

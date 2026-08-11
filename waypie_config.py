@@ -21,6 +21,7 @@ from waypie_common import (
     angular_delta,
     angular_distance,
     animation_duration,
+    autogenerate_keys,
     colored_svg_source,
     computed_style,
     content_opacity,
@@ -33,6 +34,8 @@ from waypie_common import (
     load_config,
     load_icon_theme_history,
     load_styles,
+    menus_breadth_first,
+    parse_key_sets,
     remember_icon_theme,
     resolve_angles,
     resolve_radius,
@@ -76,6 +79,7 @@ class Configurator(Gtk.Application):
         self.center_mode_check = None
         self.always_center_mode_check = None
         self.back_keys_entry = None
+        self.autogenerate_key_sets_entry = None
         self.close_submenu_on_center_click_check = None
         self.hover_mode_check = None
         self.turbo_mode_check = None
@@ -131,6 +135,7 @@ class Configurator(Gtk.Application):
             ("Add submenu", "Ctrl+X", self.on_add_submenu),
             ("Delete", "Ctrl+D", self.on_delete),
             ("Center layout", "Ctrl+A", self.on_center_layout),
+            ("Center all layouts", "Ctrl+Shift+A", self.on_center_all_layouts),
             ("Save", "Ctrl+S", self.on_save),
         ):
             button = Gtk.Button()
@@ -289,6 +294,25 @@ class Configurator(Gtk.Application):
             "Each character returns to the parent menu, or closes the root menu."
         )
         self.back_keys_entry.connect("changed", self.on_back_keys_changed)
+        self.autogenerate_key_sets_entry = self.add_property(
+            properties,
+            "Autogenerate key sets",
+            Gtk.Entry(),
+        )
+        self.autogenerate_key_sets_entry.set_text(self.settings.autogenerate_key_sets)
+        self.autogenerate_key_sets_entry.set_placeholder_text("aф rы sв tа gп")
+        self.autogenerate_key_sets_entry.set_tooltip_text(
+            "Space-separated key sets for the first, second, and following circles."
+        )
+        self.autogenerate_key_sets_entry.connect(
+            "changed", self.on_autogenerate_key_sets_changed
+        )
+        autogenerate_button = Gtk.Button(label="Autogenerate")
+        autogenerate_button.set_tooltip_text(
+            "Assign the saved key sets to every menu in clockwise order."
+        )
+        autogenerate_button.connect("clicked", self.on_autogenerate_keys)
+        properties.append(autogenerate_button)
         self.close_submenu_on_center_click_check = Gtk.CheckButton(
             label="Close on click"
         )
@@ -544,6 +568,7 @@ class Configurator(Gtk.Application):
         if self.is_editable_widget(focus):
             return False
         control = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
         keyval = Gdk.keyval_to_lower(keyval)
         if control and keyval == Gdk.KEY_d:
             self.on_delete(None)
@@ -553,6 +578,8 @@ class Configurator(Gtk.Application):
             self.on_add_submenu(None)
         elif control and keyval == Gdk.KEY_s:
             self.on_save(None)
+        elif control and shift and keyval == Gdk.KEY_a:
+            self.on_center_all_layouts(None)
         elif control and keyval == Gdk.KEY_a:
             self.on_center_layout(None)
         elif control and keyval == Gdk.KEY_z:
@@ -606,6 +633,9 @@ class Configurator(Gtk.Application):
             self.selected_path = selected_path
             self.current_path = current_path
             self.back_keys_entry.set_text(self.settings.back_keys)
+            self.autogenerate_key_sets_entry.set_text(
+                self.settings.autogenerate_key_sets
+            )
             for name, spin in self.setting_spins.items():
                 value = getattr(self.settings, name)
                 if value is None:
@@ -1611,6 +1641,28 @@ class Configurator(Gtk.Application):
         self.settings.back_keys = entry.get_text()
         self.set_status("Unsaved changes")
 
+    def on_autogenerate_key_sets_changed(self, entry):
+        if self.restoring_undo:
+            return
+        self.push_undo()
+        self.settings.autogenerate_key_sets = entry.get_text()
+        self.set_status("Unsaved changes")
+
+    def on_autogenerate_keys(self, _button):
+        key_sets = self.autogenerate_key_sets_entry.get_text()
+        try:
+            parse_key_sets(key_sets)
+        except SystemExit as error:
+            self.set_status(str(error), error=True)
+            return
+        self.push_undo()
+        self.settings.autogenerate_key_sets = key_sets
+        autogenerate_keys(self.settings.root, key_sets)
+        self.rebuild_tree()
+        self.sync_fields()
+        self.canvas.queue_draw()
+        self.set_status("Unsaved changes")
+
     def on_close_submenu_on_center_click_changed(self, _check):
         if self.restoring_undo:
             return
@@ -1663,8 +1715,25 @@ class Configurator(Gtk.Application):
         if not menu.items:
             return
         self.push_undo()
+        self.center_menu_layout(menu, root=not self.current_path)
+        self.sync_fields()
+        self.canvas.queue_draw()
+        self.set_status("Unsaved changes")
 
-        if self.current_path:
+    def on_center_all_layouts(self, _button):
+        if not self.settings.root.items:
+            return
+        self.push_undo()
+        for index, menu in enumerate(menus_breadth_first(self.settings.root)):
+            self.center_menu_layout(menu, root=index == 0)
+        self.sync_fields()
+        self.canvas.queue_draw()
+        self.set_status("Unsaved changes")
+
+    def center_menu_layout(self, menu, root=False):
+        if not menu.items:
+            return
+        if not root:
             step = 360 / (len(menu.items) + 1)
             angles = [
                 round(menu.return_angle + (index + 1) * step) % 360
@@ -1686,9 +1755,6 @@ class Configurator(Gtk.Application):
 
         for item, angle in self.layout_assignment(menu.items, angles):
             self.set_item_angle(item, angle)
-        self.sync_fields()
-        self.canvas.queue_draw()
-        self.set_status("Unsaved changes")
 
     def proportional_angles(self, items, base=None):
         if not items:
@@ -1929,6 +1995,7 @@ class Configurator(Gtk.Application):
     def on_save(self, _button):
         try:
             validate_activation_keys(self.settings.back_keys, "back-keys")
+            parse_key_sets(self.settings.autogenerate_key_sets)
             validate_editable_tree(self.settings.root)
             text = serialize_config(self.settings)
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -1941,7 +2008,7 @@ class Configurator(Gtk.Application):
             temporary = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")
             temporary.write_text(text, encoding="utf-8")
             temporary.replace(CONFIG_PATH)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, SystemExit) as error:
             self.set_status(str(error), error=True)
             return
         self.set_status(f"Saved {CONFIG_PATH}")
@@ -2001,6 +2068,10 @@ def serialize_config(settings):
     lines.append(f"always-center-mode = {str(settings.always_center_mode).lower()}")
     if settings.back_keys:
         lines.append(f"back-keys = {json.dumps(settings.back_keys)}")
+    if settings.autogenerate_key_sets:
+        lines.append(
+            f"autogenerate-key-sets = {json.dumps(settings.autogenerate_key_sets)}"
+        )
     lines.append(
         "close-submenu-on-center-click = "
         f"{str(settings.close_submenu_on_center_click).lower()}"

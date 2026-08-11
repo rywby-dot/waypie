@@ -56,6 +56,15 @@ impl MenuState {
         ));
     }
 
+    pub fn move_current_to(&mut self, center: Point, config: &Config) -> bool {
+        let Some(current) = self.centers.last_mut() else {
+            return false;
+        };
+        *current = center;
+        self.align_history(config);
+        true
+    }
+
     pub fn update_pointer(&mut self, position: Point, config: &Config, center_hitbox: f64) -> bool {
         self.pointer = Some(position);
         let next = self.target_at(position, config, center_hitbox);
@@ -107,6 +116,29 @@ impl MenuState {
         width: u32,
         height: u32,
     ) -> bool {
+        self.open_submenu_with_anchor(index, at, config, width, height, config.always_center_mode)
+    }
+
+    pub fn open_submenu_anchored(
+        &mut self,
+        index: usize,
+        at: Point,
+        config: &Config,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        self.open_submenu_with_anchor(index, at, config, width, height, true)
+    }
+
+    fn open_submenu_with_anchor(
+        &mut self,
+        index: usize,
+        at: Point,
+        config: &Config,
+        width: u32,
+        height: u32,
+        anchored: bool,
+    ) -> bool {
         let Some(item) = self.current(config).items.get(index) else {
             return false;
         };
@@ -116,12 +148,12 @@ impl MenuState {
         let Some(parent) = self.centers.last().copied() else {
             return false;
         };
-        let child = if config.always_center_mode {
+        let child = if anchored {
             parent
         } else {
             clamp_center(at, width, height, config.minimum_edge_distance)
         };
-        let link_target = if config.always_center_mode { at } else { child };
+        let link_target = if anchored { at } else { child };
         self.link_lengths
             .push(parent.distance(link_target).max(config.menu_radius));
         self.path.push(index);
@@ -140,6 +172,29 @@ impl MenuState {
         width: u32,
         height: u32,
     ) -> bool {
+        self.return_to_with_anchor(depth, at, config, width, height, config.always_center_mode)
+    }
+
+    pub fn return_to_anchored(
+        &mut self,
+        depth: usize,
+        at: Point,
+        config: &Config,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        self.return_to_with_anchor(depth, at, config, width, height, true)
+    }
+
+    fn return_to_with_anchor(
+        &mut self,
+        depth: usize,
+        at: Point,
+        config: &Config,
+        width: u32,
+        height: u32,
+        anchored: bool,
+    ) -> bool {
         if depth >= self.path.len() {
             return false;
         }
@@ -150,7 +205,7 @@ impl MenuState {
         let Some(center) = self.centers.last_mut() else {
             return false;
         };
-        *center = if config.always_center_mode {
+        *center = if anchored {
             anchored_center.unwrap_or(at)
         } else {
             clamp_center(at, width, height, config.minimum_edge_distance)
@@ -285,5 +340,27 @@ mod tests {
         assert_eq!(state.centers().last(), Some(&anchor));
         assert!(state.return_to(0, state.centers()[0], &config, 300, 300));
         assert_eq!(state.centers(), &[anchor]);
+    }
+
+    #[test]
+    fn quick_navigation_can_anchor_without_enabling_always_center_mode() {
+        let mut config = config();
+        config.menu.items[0].command = None;
+        config.menu.items[0].items = vec![item("Child", 0.0)];
+        config.menu.items[0].return_angle = Some(180.0);
+
+        let output_center = Point { x: 150.0, y: 150.0 };
+        let mut state = MenuState::default();
+        state.place_root(Point { x: 40.0, y: 60.0 }, &config, 300, 300);
+        assert!(state.move_current_to(output_center, &config));
+        assert_eq!(state.centers(), &[output_center]);
+
+        let selected = Point { x: 150.0, y: 30.0 };
+        assert!(state.open_submenu_anchored(0, selected, &config, 300, 300));
+        assert_eq!(state.centers().last(), Some(&output_center));
+        assert_ne!(state.centers()[0], output_center);
+
+        assert!(state.return_to_anchored(0, output_center, &config, 300, 300));
+        assert_eq!(state.centers(), &[output_center]);
     }
 }

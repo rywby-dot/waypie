@@ -1,10 +1,14 @@
 import unittest
 
 from waypie_common import (
+    Item,
+    autogenerate_keys,
     colored_svg_source,
     computed_style,
     fixed_text_geometry,
+    menus_breadth_first,
     parse_item,
+    parse_key_sets,
     resolve_angles,
     scaled_icon_size,
     sort_icon_themes,
@@ -128,6 +132,89 @@ class EmptySubmenuTests(unittest.TestCase):
                 {"label": "Broken action", "command": ""},
                 "menu.items[0]",
             )
+
+
+class QuickKeyGenerationTests(unittest.TestCase):
+    def test_root_is_numbered_clockwise_from_zero(self):
+        root = Item(
+            "Root",
+            items=[
+                Item("Last", command="true", angle=300),
+                Item("First", command="true", angle=0),
+                Item("Second", command="true", angle=80),
+            ],
+        )
+
+        autogenerate_keys(root, "aф rы sв")
+
+        self.assertEqual(
+            {item.label: item.keys for item in root.items},
+            {"First": "aф", "Second": "rы", "Last": "sв"},
+        )
+
+    def test_submenu_is_numbered_clockwise_from_return_connector(self):
+        submenu = Item(
+            "Submenu",
+            angle=90,
+            items=[
+                Item("Third", command="true", angle=180),
+                Item("First", command="true", angle=280),
+                Item("Second", command="true", angle=20),
+            ],
+        )
+        root = Item("Root", items=[submenu])
+
+        autogenerate_keys(root, "1 2 3")
+
+        self.assertEqual(submenu.return_angle, 270)
+        self.assertEqual(
+            {item.label: item.keys for item in submenu.items},
+            {"First": "1", "Second": "2", "Third": "3"},
+        )
+
+    def test_missing_sets_clear_unassigned_circle_keys(self):
+        root = Item(
+            "Root",
+            items=[
+                Item("First", keys="old", command="true", angle=0),
+                Item("Second", keys="stale", command="true", angle=180),
+            ],
+        )
+
+        autogenerate_keys(root, "new")
+
+        self.assertEqual([item.keys for item in root.items], ["new", ""])
+
+    def test_key_sets_reject_conflicts_between_positions(self):
+        with self.assertRaises(SystemExit):
+            parse_key_sets("aф rФ")
+
+    def test_every_nested_menu_is_generated(self):
+        deepest = Item(
+            "Deepest",
+            angle=180,
+            items=[Item("Deep action", command="true", angle=45)],
+        )
+        middle = Item("Middle", angle=90, items=[deepest])
+        root = Item("Root", items=[middle])
+
+        count = autogenerate_keys(root, "aф")
+
+        self.assertEqual(count, 3)
+        self.assertEqual(middle.keys, "aф")
+        self.assertEqual(deepest.keys, "aф")
+        self.assertEqual(deepest.items[0].keys, "aф")
+
+    def test_menu_traversal_is_breadth_first(self):
+        nested = Item("Nested", items=[])
+        first = Item("First", items=[nested])
+        second = Item("Second", items=[])
+        root = Item("Root", items=[first, second])
+
+        self.assertEqual(
+            [menu.label for menu in menus_breadth_first(root)],
+            ["Root", "First", "Second", "Nested"],
+        )
 
     def test_unicode_quick_keys_are_preserved(self):
         item = parse_item(

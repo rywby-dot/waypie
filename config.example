@@ -4,6 +4,7 @@ minimum-edge-distance = 200
 center-mode = false
 always-center-mode = false
 back-keys = "qй"
+autogenerate-key-sets = "aф rы sв tа gп"
 close-submenu-on-center-click = false
 hover-mode = false
 turbo-mode = true

@@ -38,6 +38,7 @@ class Settings:
     center_mode: bool
     always_center_mode: bool
     back_keys: str
+    autogenerate_key_sets: str
     close_submenu_on_center_click: bool
     hover_mode: bool
     turbo_mode: bool
@@ -99,6 +100,10 @@ def load_config():
         "always-center-mode",
     )
     back_keys = parse_keys(source.get("back-keys", ""), "back-keys")
+    autogenerate_key_sets = parse_key_sets(
+        source.get("autogenerate-key-sets", ""),
+        "autogenerate-key-sets",
+    )
     close_submenu_on_center_click = boolean(
         source.get("close-submenu-on-center-click", False),
         "close-submenu-on-center-click",
@@ -131,6 +136,7 @@ def load_config():
         center_mode,
         always_center_mode,
         back_keys,
+        autogenerate_key_sets,
         close_submenu_on_center_click,
         hover_mode,
         turbo_mode,
@@ -214,6 +220,51 @@ def parse_keys(value, location):
     if len(normalized) != len(set(normalized)):
         raise SystemExit(f"waypie: {location} contains duplicate keys")
     return value
+
+
+def parse_key_sets(value, location="autogenerate-key-sets"):
+    if not isinstance(value, str):
+        raise SystemExit(f"waypie: {location} must be text")
+    groups = value.split()
+    assigned = {}
+    for index, group in enumerate(groups):
+        parse_keys(group, f"{location} group {index + 1}")
+        for key in normalized_keys(group):
+            if key in assigned:
+                raise SystemExit(
+                    f"waypie: {location} groups {assigned[key] + 1} and "
+                    f"{index + 1} both use key {key!r}"
+                )
+            assigned[key] = index
+    return value
+
+
+def autogenerate_keys(root, key_sets):
+    groups = key_sets.split()
+    resolve_angles(root, root=True)
+    assigned_count = 0
+    for menu_index, menu in enumerate(menus_breadth_first(root)):
+        root_menu = menu_index == 0
+        start = 0 if root_menu else menu.return_angle
+        start = 0 if start is None else start
+        ordered = sorted(
+            enumerate(menu.items),
+            key=lambda entry: (
+                (entry[1].angle - start) % 360,
+                entry[0],
+            ),
+        )
+        for number, (_index, item) in enumerate(ordered):
+            item.keys = groups[number] if number < len(groups) else ""
+            assigned_count += 1
+    return assigned_count
+
+
+def menus_breadth_first(root):
+    pending = [root]
+    for menu in pending:
+        yield menu
+        pending.extend(item for item in menu.items if item.is_submenu)
 
 
 def nonnegative_number(value, location):

@@ -156,8 +156,17 @@ assigned to the submenu itself never acts as a return key after that submenu
 has opened. `back-keys` returns to the parent, or closes the root menu. If an
 item and `back-keys` share a character, the current item takes priority.
 
+The configurator can fill these shortcuts for the whole tree. Enter
+space-separated alternatives such as `aф rы sв tа gп` in **Autogenerate key
+sets**, then press **Autogenerate**. Root items are numbered clockwise from
+`0°`; submenu items are numbered clockwise from their return connector. The
+connector itself is not an item and continues to use `back-keys`. The template
+is saved as `autogenerate-key-sets` and remains available the next time the
+configurator opens.
+
 ```toml
 back-keys = "qй"
+autogenerate-key-sets = "aф rы sв tа gп"
 
 [[menu.items]]
 label = "Applications"
@@ -196,6 +205,9 @@ waypie --configure
   rotated. A submenu's return direction occupies one invisible slot.
 * **Auto alignment** snaps the group rotation to a 5-degree grid.
 * **Show icons** affects only the configurator preview.
+* **Center layout** (`Ctrl+A`) centers the currently open menu. **Center all
+  layouts** (`Ctrl+Shift+A`) centers the root first, followed by every submenu
+  level in breadth-first order.
 * **Center mode**, **Hover mode**, **Turbo mode**, **Hold to turbo**,
   **Travel item animation**, and **Close on click** control the corresponding
   runtime behavior.
