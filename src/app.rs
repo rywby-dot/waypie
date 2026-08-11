@@ -60,6 +60,17 @@ use crate::{
 
 const LEFT_BUTTON: u32 = 0x110;
 const RIGHT_BUTTON: u32 = 0x111;
+const INPUT_CAPTURE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn index_after_removal(value: Option<usize>, removed: usize) -> Option<usize> {
+    value.and_then(|index| {
+        if index == removed {
+            None
+        } else {
+            Some(index - usize::from(index > removed))
+        }
+    })
+}
 
 #[derive(Clone, Copy)]
 struct AnimationProfile {
@@ -151,6 +162,14 @@ mod animation_profile_tests {
         assert!(hold.moved);
         assert!(!hold.update(origin));
         assert!(hold.moved);
+    }
+
+    #[test]
+    fn removing_a_layer_updates_a_tracked_layer_index() {
+        assert_eq!(index_after_removal(Some(1), 1), None);
+        assert_eq!(index_after_removal(Some(3), 1), Some(2));
+        assert_eq!(index_after_removal(Some(0), 1), Some(0));
+        assert_eq!(index_after_removal(None, 1), None);
     }
 }
 
@@ -254,6 +273,7 @@ pub struct App {
     quick_navigation_centered: bool,
     pointer_hold: Option<PointerHold>,
     input_inhibitor: Option<ZwlrInputInhibitorV1>,
+    input_capture_deadline: Option<Instant>,
     animator: Animator,
     closing_until: Option<Instant>,
 }
@@ -309,6 +329,7 @@ impl App {
             quick_navigation_centered: false,
             pointer_hold: None,
             input_inhibitor: None,
+            input_capture_deadline: None,
             animator: Animator::default(),
             closing_until: None,
         }
@@ -326,29 +347,14 @@ impl App {
     }
 
     pub fn prepare_layers(&mut self) {
-        let center_mode = self
-            .config
-            .as_ref()
-            .is_some_and(Config::opens_in_output_center);
-        if center_mode {
-            if self.layers.iter().any(|layer| layer.output.is_none()) {
-                return;
-            }
-            self.create_layer(None);
+        // Only the compositor knows the global pointer position, so let it
+        // choose the output for a single surface. Creating one exclusive
+        // surface per output makes keyboard focus select an arbitrary monitor
+        // on compositors which do not refresh pointer focus until motion.
+        if !self.visible || self.layers.iter().any(|layer| layer.output.is_none()) {
             return;
         }
-
-        let outputs = self.output_state.outputs().collect::<Vec<_>>();
-        for output in outputs {
-            if self
-                .layers
-                .iter()
-                .any(|layer| layer.output.as_ref() == Some(&output))
-            {
-                continue;
-            }
-            self.create_layer(Some(output));
-        }
+        self.create_layer(None);
     }
 
     fn create_layer(&mut self, output: Option<wl_output::WlOutput>) {
@@ -402,6 +408,7 @@ impl App {
             .input_inhibit_manager
             .as_ref()
             .map(|manager| manager.get_inhibitor(&self.qh, ()));
+        self.input_capture_deadline = Some(Instant::now() + INPUT_CAPTURE_TIMEOUT);
         self.prepare_layers();
         if self.layers.is_empty() {
             bail!("no Wayland outputs are available");
@@ -430,7 +437,7 @@ impl App {
             self.state
                 .update_pointer(position, config, self.center_hitbox());
         }
-        if self.active_layer.is_some() {
+        if self.active_layer.is_some() && !self.state.centers().is_empty() {
             self.sync_visual(false);
             self.draw();
         }
@@ -450,6 +457,7 @@ impl App {
             return;
         }
         self.pointer_hold = None;
+        self.input_capture_deadline = None;
         self.release_input_inhibitor();
         self.visible = false;
         for index in 0..self.layers.len() {
@@ -519,6 +527,7 @@ impl App {
     pub fn needs_tick(&self) -> bool {
         self.hover_enabled()
             || self.closing_until.is_some()
+            || self.input_capture_deadline.is_some()
             || self.animator.is_animating()
             || self.renderer.is_animating()
     }
@@ -547,11 +556,15 @@ impl App {
         region.destroy();
     }
 
-    fn select_output(&mut self, index: usize, pointer: Point) {
+    fn capture_output(&mut self, index: usize) {
         if self.active_layer.is_some() || index >= self.layers.len() {
             return;
         }
+        if self.layers[index].width == 0 || self.layers[index].height == 0 {
+            return;
+        }
         self.release_input_inhibitor();
+        self.input_capture_deadline = None;
         for candidate in 0..self.layers.len() {
             let surface = &self.layers[candidate].surface;
             if candidate == index {
@@ -573,13 +586,38 @@ impl App {
         let Some(config) = self.config.as_ref() else {
             return;
         };
-        let center = if config.opens_in_output_center() {
+        if config.opens_in_output_center() {
+            let center = Point {
+                x: self.layers[index].width as f64 / 2.0,
+                y: self.layers[index].height as f64 / 2.0,
+            };
+            self.initialize_menu(center, center);
+        }
+    }
+
+    fn select_output(&mut self, index: usize, pointer: Point) {
+        self.capture_output(index);
+        if self.active_layer != Some(index) || !self.state.centers().is_empty() {
+            return;
+        }
+        let center = if self
+            .config
+            .as_ref()
+            .is_some_and(Config::opens_in_output_center)
+        {
             Point {
                 x: self.layers[index].width as f64 / 2.0,
                 y: self.layers[index].height as f64 / 2.0,
             }
         } else {
             pointer
+        };
+        self.initialize_menu(center, pointer);
+    }
+
+    fn initialize_menu(&mut self, center: Point, pointer: Point) {
+        let (Some(config), Some(index)) = (self.config.as_ref(), self.active_layer) else {
+            return;
         };
         self.state.place_root(
             center,
@@ -944,6 +982,18 @@ impl App {
         if self.quick_navigation_centered {
             return;
         }
+        let Some(layer) = self.layers.get(layer_index) else {
+            return;
+        };
+        let center = Point {
+            x: layer.width as f64 / 2.0,
+            y: layer.height as f64 / 2.0,
+        };
+        if self.state.centers().is_empty() {
+            self.initialize_menu(center, center);
+            self.quick_navigation_centered = true;
+            return;
+        }
         let (Some(config), Some(layer)) = (self.config.as_ref(), self.layers.get(layer_index))
         else {
             return;
@@ -1039,6 +1089,13 @@ impl App {
     }
 
     pub fn tick_hover(&mut self) {
+        if self
+            .input_capture_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.hide();
+            return;
+        }
         if self.hover_enabled()
             && let Some(position) = self.hover_detector.on_timeout(Instant::now())
         {
@@ -1229,13 +1286,7 @@ impl LayerShellHandler for App {
         {
             let selected = self.active_layer == Some(index);
             self.layers.remove(index);
-            self.active_layer = self.active_layer.and_then(|active| {
-                if active == index {
-                    None
-                } else {
-                    Some(active - usize::from(active > index))
-                }
-            });
+            self.active_layer = index_after_removal(self.active_layer, index);
             if selected {
                 self.hide();
             }
@@ -1264,20 +1315,8 @@ impl LayerShellHandler for App {
         } else {
             self.attach_transparent(index);
             self.refresh_full_input_region(index);
-            if self.visible
-                && self.layers[index].output.is_none()
-                && self
-                    .config
-                    .as_ref()
-                    .is_some_and(Config::opens_in_output_center)
-            {
-                self.select_output(
-                    index,
-                    Point {
-                        x: configure.new_size.0 as f64 / 2.0,
-                        y: configure.new_size.1 as f64 / 2.0,
-                    },
-                );
+            if self.visible && self.layers[index].output.is_none() {
+                self.capture_output(index);
             }
         }
     }
@@ -1418,6 +1457,9 @@ impl KeyboardHandler for App {
         _: u32,
         event: KeyEvent,
     ) {
+        if !self.visible {
+            return;
+        }
         if event.keysym == Keysym::Escape {
             self.hide();
         } else if let Some(input) = event.utf8.as_deref() {
@@ -1444,6 +1486,10 @@ impl KeyboardHandler for App {
     ) {
         let was_active = self.keyboard_turbo_active;
         self.keyboard_modifiers = modifiers;
+        if !self.visible {
+            self.keyboard_turbo_active = false;
+            return;
+        }
         let held = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.logo;
         self.keyboard_turbo_active = self
             .config
