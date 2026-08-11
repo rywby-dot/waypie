@@ -66,6 +66,7 @@ class Configurator(Gtk.Application):
         self.tree = None
         self.status = None
         self.label_entry = None
+        self.keys_entry = None
         self.command_entry = None
         self.angle_spin = None
         self.icon_button = None
@@ -74,6 +75,7 @@ class Configurator(Gtk.Application):
         self.show_icons_check = None
         self.center_mode_check = None
         self.always_center_mode_check = None
+        self.back_keys_entry = None
         self.close_submenu_on_center_click_check = None
         self.hover_mode_check = None
         self.turbo_mode_check = None
@@ -201,6 +203,10 @@ class Configurator(Gtk.Application):
         item_title.add_css_class("heading")
         properties.append(item_title)
         self.label_entry = self.add_property(properties, "Label", Gtk.Entry())
+        self.keys_entry = self.add_property(properties, "Activation keys", Gtk.Entry())
+        self.keys_entry.set_tooltip_text(
+            "Each Unicode character, digit, or symbol activates this item separately."
+        )
         self.command_entry = self.add_property(properties, "Command", Gtk.Entry())
         self.angle_spin = self.add_property(
             properties,
@@ -273,6 +279,16 @@ class Configurator(Gtk.Application):
             "toggled", self.on_always_center_mode_changed
         )
         properties.append(self.always_center_mode_check)
+        self.back_keys_entry = self.add_property(
+            properties,
+            "Back / close keys",
+            Gtk.Entry(),
+        )
+        self.back_keys_entry.set_text(self.settings.back_keys)
+        self.back_keys_entry.set_tooltip_text(
+            "Each character returns to the parent menu, or closes the root menu."
+        )
+        self.back_keys_entry.connect("changed", self.on_back_keys_changed)
         self.close_submenu_on_center_click_check = Gtk.CheckButton(
             label="Close on click"
         )
@@ -327,6 +343,7 @@ class Configurator(Gtk.Application):
         root.append(content)
 
         self.label_entry.connect("changed", self.on_property_changed)
+        self.keys_entry.connect("changed", self.on_property_changed)
         self.command_entry.connect("changed", self.on_property_changed)
         self.angle_spin.connect("value-changed", self.on_property_changed)
 
@@ -412,6 +429,8 @@ class Configurator(Gtk.Application):
         is_root = not self.selected_path
         self.updating_fields = True
         self.label_entry.set_text(item.label)
+        self.keys_entry.set_text(item.keys)
+        self.keys_entry.set_sensitive(not is_root)
         self.command_entry.set_text(item.command or "")
         self.command_entry.set_sensitive(not is_root and not item.is_submenu)
         self.angle_spin.set_value(item.angle or 0)
@@ -427,6 +446,8 @@ class Configurator(Gtk.Application):
         self.push_undo()
         item = self.item_at(self.selected_path)
         item.label = self.label_entry.get_text()
+        if self.selected_path:
+            item.keys = self.keys_entry.get_text()
         if self.selected_path and not item.is_submenu:
             item.command = self.command_entry.get_text()
         if self.selected_path:
@@ -584,6 +605,7 @@ class Configurator(Gtk.Application):
             self.settings = settings
             self.selected_path = selected_path
             self.current_path = current_path
+            self.back_keys_entry.set_text(self.settings.back_keys)
             for name, spin in self.setting_spins.items():
                 value = getattr(self.settings, name)
                 if value is None:
@@ -1582,6 +1604,13 @@ class Configurator(Gtk.Application):
         self.settings.always_center_mode = self.always_center_mode_check.get_active()
         self.set_status("Unsaved changes")
 
+    def on_back_keys_changed(self, entry):
+        if self.restoring_undo:
+            return
+        self.push_undo()
+        self.settings.back_keys = entry.get_text()
+        self.set_status("Unsaved changes")
+
     def on_close_submenu_on_center_click_changed(self, _check):
         if self.restoring_undo:
             return
@@ -1899,6 +1928,7 @@ class Configurator(Gtk.Application):
 
     def on_save(self, _button):
         try:
+            validate_activation_keys(self.settings.back_keys, "back-keys")
             validate_editable_tree(self.settings.root)
             text = serialize_config(self.settings)
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -1928,12 +1958,32 @@ def validate_editable_tree(item, root=True, location="menu"):
         raise ValueError(f"{location}: label cannot be empty")
     if not root and not item.is_submenu and not item.command:
         raise ValueError(f"{location}: command cannot be empty")
+    if not root:
+        validate_activation_keys(item.keys, f"{location}.keys")
+    assigned = {}
     for index, child in enumerate(item.items):
+        for key in (character.lower() for character in child.keys):
+            if key in assigned:
+                raise ValueError(
+                    f"{location}.items[{assigned[key]}] and "
+                    f"{location}.items[{index}] both use key {key!r}"
+                )
+            assigned[key] = index
         validate_editable_tree(
             child,
             root=False,
             location=f"{location}.items[{index}]",
         )
+
+
+def validate_activation_keys(value, location):
+    if any(character.isspace() or not character.isprintable() for character in value):
+        raise ValueError(
+            f"{location} must contain only visible non-whitespace characters"
+        )
+    normalized = [character.lower() for character in value]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{location} contains duplicate keys")
 
 
 def toml_number(value):
@@ -1949,6 +1999,8 @@ def serialize_config(settings):
     )
     lines.append(f"center-mode = {str(settings.center_mode).lower()}")
     lines.append(f"always-center-mode = {str(settings.always_center_mode).lower()}")
+    if settings.back_keys:
+        lines.append(f"back-keys = {json.dumps(settings.back_keys)}")
     lines.append(
         "close-submenu-on-center-click = "
         f"{str(settings.close_submenu_on_center_click).lower()}"
@@ -1967,6 +2019,8 @@ def serialize_config(settings):
 
     def append_item(item, header):
         lines.extend(("", header, f"label = {json.dumps(item.label)}"))
+        if item.keys:
+            lines.append(f"keys = {json.dumps(item.keys)}")
         if item.command is not None:
             lines.append(f"command = {json.dumps(item.command)}")
         if item.icon_theme and item.icon:

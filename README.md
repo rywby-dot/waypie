@@ -148,6 +148,22 @@ to Kando's Anchored Mode: opening or closing a submenu moves the surrounding
 items, history circles, and connectors while the current menu center stays
 fixed.
 
+Items can also be selected directly from the keyboard. Set `keys` on an action
+or submenu; every Unicode character in the string is an independent activation
+key, and letters are matched case-insensitively. Digits and symbols are also
+supported. Only children of the currently open menu participate, so a key
+assigned to the submenu itself never acts as a return key after that submenu
+has opened. `back-keys` returns to the parent, or closes the root menu. If an
+item and `back-keys` share a character, the current item takes priority.
+
+```toml
+back-keys = "qй"
+
+[[menu.items]]
+label = "Applications"
+keys = "aф1"
+```
+
 ## Selection and navigation
 
 The visible circles are indicators rather than conventional button hitboxes.

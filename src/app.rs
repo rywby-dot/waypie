@@ -49,8 +49,8 @@ use wayland_protocols_wlr::input_inhibitor::v1::client::{
 use crate::{
     animation::Spring,
     appearance::{node_size, node_style},
-    config::{Config, item_at_path},
-    geometry::{Point, angular_distance, direction_angle},
+    config::{Config, item_at_path, key_matches},
+    geometry::{Point, angular_distance, direction_angle, radial_position},
     hover::HoverDetector,
     model::{MenuState, Target},
     render::{Renderer, Scene},
@@ -250,6 +250,7 @@ pub struct App {
     hover_detector: HoverDetector,
     pointer_position: Option<Point>,
     keyboard_turbo_active: bool,
+    keyboard_modifiers: Modifiers,
     pointer_hold: Option<PointerHold>,
     input_inhibitor: Option<ZwlrInputInhibitorV1>,
     animator: Animator,
@@ -303,6 +304,7 @@ impl App {
             hover_detector: HoverDetector::default(),
             pointer_position: None,
             keyboard_turbo_active: false,
+            keyboard_modifiers: Modifiers::default(),
             pointer_hold: None,
             input_inhibitor: None,
             animator: Animator::default(),
@@ -387,6 +389,7 @@ impl App {
         self.pending_activation = activation_token;
         self.pointer_position = None;
         self.keyboard_turbo_active = false;
+        self.keyboard_modifiers = Modifiers::default();
         self.pointer_hold = None;
         self.animator.clear();
         self.closing_until = None;
@@ -907,15 +910,72 @@ impl App {
                 self.return_to(depth, position, index);
             }
             Target::Item(item_index) => {
-                let item = self.state.current(config).items[item_index].clone();
-                if item.is_submenu() {
-                    self.open_submenu(item_index, position, index);
-                } else if !submenu_only && let Some(command) = item.command {
-                    launch(&command);
-                    let key = NodeKey::Action(self.state.path().to_vec(), item_index);
-                    self.begin_hide(Some((key, position)));
-                }
+                self.activate_item(item_index, position, index, submenu_only);
             }
+        }
+    }
+
+    fn activate_item(
+        &mut self,
+        item_index: usize,
+        position: Point,
+        layer_index: usize,
+        submenu_only: bool,
+    ) {
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
+        let Some(item) = self.state.current(config).items.get(item_index).cloned() else {
+            return;
+        };
+        if item.is_submenu() {
+            self.open_submenu(item_index, position, layer_index);
+        } else if !submenu_only && let Some(command) = item.command {
+            launch(&command);
+            let key = NodeKey::Action(self.state.path().to_vec(), item_index);
+            self.begin_hide(Some((key, position)));
+        }
+    }
+
+    fn activate_quick_key(&mut self, input: &str) {
+        if self.keyboard_modifiers.ctrl
+            || self.keyboard_modifiers.alt
+            || self.keyboard_modifiers.logo
+        {
+            return;
+        }
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
+        let item_index = self
+            .state
+            .current(config)
+            .items
+            .iter()
+            .position(|item| key_matches(&item.keys, input));
+        if let Some(item_index) = item_index {
+            let Some(layer_index) = self.active_layer else {
+                return;
+            };
+            let Some(center) = self.state.centers().last().copied() else {
+                return;
+            };
+            let item = &self.state.current(config).items[item_index];
+            let position = radial_position(center, item.angle.unwrap_or(0.0), config.menu_radius);
+            self.keyboard_turbo_active = false;
+            self.activate_item(item_index, position, layer_index, false);
+            return;
+        }
+        if !key_matches(&config.back_keys, input) {
+            return;
+        }
+        self.keyboard_turbo_active = false;
+        if self.state.path().is_empty() {
+            self.hide();
+        } else if let (Some(layer_index), Some(position)) =
+            (self.active_layer, self.state.centers().last().copied())
+        {
+            self.return_to(self.state.path().len() - 1, position, layer_index);
         }
     }
 
@@ -1301,6 +1361,8 @@ impl KeyboardHandler for App {
     ) {
         if event.keysym == Keysym::Escape {
             self.hide();
+        } else if let Some(input) = event.utf8.as_deref() {
+            self.activate_quick_key(input);
         }
     }
     fn release_key(
@@ -1322,6 +1384,7 @@ impl KeyboardHandler for App {
         _: u32,
     ) {
         let was_active = self.keyboard_turbo_active;
+        self.keyboard_modifiers = modifiers;
         let held = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.logo;
         self.keyboard_turbo_active = self
             .config

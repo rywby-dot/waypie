@@ -46,6 +46,7 @@ mod tests {
     fn item(submenu: bool) -> Item {
         Item {
             label: String::new(),
+            keys: String::new(),
             command: (!submenu).then(String::new),
             angle: None,
             icon_theme: None,

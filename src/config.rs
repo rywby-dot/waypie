@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -18,6 +18,8 @@ pub struct Config {
     #[serde(default)]
     pub always_center_mode: bool,
     #[serde(default)]
+    pub back_keys: String,
+    #[serde(default)]
     pub hover_mode: bool,
     #[serde(default)]
     pub turbo_mode: bool,
@@ -34,6 +36,8 @@ pub struct Config {
 pub struct Item {
     #[serde(default)]
     pub label: String,
+    #[serde(default)]
+    pub keys: String,
     pub command: Option<String>,
     pub angle: Option<f64>,
     #[serde(rename = "icon-theme")]
@@ -87,6 +91,7 @@ impl Config {
         if !self.minimum_edge_distance.is_finite() || self.minimum_edge_distance < 0.0 {
             bail!("minimum-edge-distance cannot be negative");
         }
+        validate_keys(&self.back_keys, "back-keys")?;
         validate_item(&self.menu, "menu", true)
     }
 }
@@ -104,10 +109,46 @@ fn validate_item(item: &Item, path: &str, root: bool) -> Result<()> {
     if item.icon_theme.is_some() != item.icon.is_some() {
         bail!("{path}.icon-theme and .icon must be used together");
     }
+    validate_keys(&item.keys, &format!("{path}.keys"))?;
+    let mut assigned = HashMap::new();
     for (index, child) in item.items.iter().enumerate() {
+        for key in normalized_keys(&child.keys) {
+            if let Some(previous) = assigned.insert(key.clone(), index) {
+                bail!("{path}.items[{previous}] and {path}.items[{index}] both use key {key:?}");
+            }
+        }
         validate_item(child, &format!("{path}.items[{index}]"), false)?;
     }
     Ok(())
+}
+
+fn validate_keys(keys: &str, path: &str) -> Result<()> {
+    if keys.chars().any(char::is_whitespace) || keys.chars().any(char::is_control) {
+        bail!("{path} must contain only visible non-whitespace characters");
+    }
+    let mut seen = HashMap::new();
+    for key in normalized_keys(keys) {
+        if seen.insert(key.clone(), ()).is_some() {
+            bail!("{path} contains duplicate key {key:?}");
+        }
+    }
+    Ok(())
+}
+
+fn normalized_keys(keys: &str) -> impl Iterator<Item = String> + '_ {
+    keys.chars().map(|key| key.to_lowercase().collect())
+}
+
+pub fn key_matches(keys: &str, input: &str) -> bool {
+    let mut characters = input.chars();
+    let Some(character) = characters.next() else {
+        return false;
+    };
+    if characters.next().is_some() {
+        return false;
+    }
+    let normalized: String = character.to_lowercase().collect();
+    normalized_keys(keys).any(|key| key == normalized)
 }
 
 pub fn resolve_angles(item: &mut Item, root: bool) {
@@ -185,12 +226,14 @@ mod tests {
     fn empty_submenu_gets_opposite_return_angle() {
         let mut root = Item {
             label: "Root".into(),
+            keys: String::new(),
             command: None,
             angle: None,
             icon_theme: None,
             icon: None,
             items: vec![Item {
                 label: "Empty".into(),
+                keys: String::new(),
                 command: None,
                 angle: Some(90.0),
                 icon_theme: None,
@@ -224,5 +267,22 @@ mod tests {
         assert!(enabled.hold_to_turbo);
         assert!(enabled.always_center_mode);
         assert!(enabled.opens_in_output_center());
+    }
+
+    #[test]
+    fn quick_keys_support_unicode_case_digits_and_symbols() {
+        assert!(key_matches("фA7?", "Ф"));
+        assert!(key_matches("фA7?", "a"));
+        assert!(key_matches("фA7?", "7"));
+        assert!(key_matches("фA7?", "?"));
+        assert!(!key_matches("фA7?", "x"));
+        assert!(!key_matches("фA7?", "aa"));
+    }
+
+    #[test]
+    fn sibling_quick_key_conflicts_are_rejected_case_insensitively() {
+        let source = "[menu]\nlabel='Root'\n[[menu.items]]\nlabel='One'\nkeys='ж'\ncommand='true'\n[[menu.items]]\nlabel='Two'\nkeys='Ж'\ncommand='true'";
+        let config: Config = toml::from_str(source).unwrap();
+        assert!(config.validate().is_err());
     }
 }

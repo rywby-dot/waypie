@@ -17,6 +17,7 @@ ICON_EXTENSIONS = {".svg", ".png", ".webp", ".jpg", ".jpeg", ".gif"}
 @dataclass
 class Item:
     label: str
+    keys: str = ""
     command: str | None = None
     angle: float | None = None
     return_angle: float | None = None
@@ -36,6 +37,7 @@ class Settings:
     minimum_edge_distance: float
     center_mode: bool
     always_center_mode: bool
+    back_keys: str
     close_submenu_on_center_click: bool
     hover_mode: bool
     turbo_mode: bool
@@ -96,6 +98,7 @@ def load_config():
         source.get("always-center-mode", False),
         "always-center-mode",
     )
+    back_keys = parse_keys(source.get("back-keys", ""), "back-keys")
     close_submenu_on_center_click = boolean(
         source.get("close-submenu-on-center-click", False),
         "close-submenu-on-center-click",
@@ -127,6 +130,7 @@ def load_config():
         minimum_edge_distance,
         center_mode,
         always_center_mode,
+        back_keys,
         close_submenu_on_center_click,
         hover_mode,
         turbo_mode,
@@ -144,6 +148,7 @@ def parse_item(source, location, root=False):
         raise SystemExit(f"waypie: {location} must be a table")
 
     label = source.get("label", "")
+    keys = parse_keys(source.get("keys", ""), f"{location}.keys")
     command = source.get("command")
     children = source.get("items", [])
     if not isinstance(label, str):
@@ -170,17 +175,45 @@ def parse_item(source, location, root=False):
         raise SystemExit(
             f"waypie: {location}.icon-theme and .icon must be used together"
         )
+    parsed_children = [
+        parse_item(child, f"{location}.items[{index}]")
+        for index, child in enumerate(children)
+    ]
+    assigned = {}
+    for index, child in enumerate(parsed_children):
+        for key in normalized_keys(child.keys):
+            if key in assigned:
+                raise SystemExit(
+                    f"waypie: {location}.items[{assigned[key]}] and "
+                    f"{location}.items[{index}] both use key {key!r}"
+                )
+            assigned[key] = index
     return Item(
         label=label,
+        keys=keys,
         command=command,
         angle=angle,
         icon_theme=icon_theme,
         icon=icon,
-        items=[
-            parse_item(child, f"{location}.items[{index}]")
-            for index, child in enumerate(children)
-        ],
+        items=parsed_children,
     )
+
+
+def normalized_keys(keys):
+    return [character.lower() for character in keys]
+
+
+def parse_keys(value, location):
+    if not isinstance(value, str):
+        raise SystemExit(f"waypie: {location} must be text")
+    if any(character.isspace() or not character.isprintable() for character in value):
+        raise SystemExit(
+            f"waypie: {location} must contain only visible non-whitespace characters"
+        )
+    normalized = normalized_keys(value)
+    if len(normalized) != len(set(normalized)):
+        raise SystemExit(f"waypie: {location} contains duplicate keys")
+    return value
 
 
 def nonnegative_number(value, location):

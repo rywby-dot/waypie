@@ -180,6 +180,7 @@ mod tests {
     fn item(label: &str, angle: f64) -> Item {
         Item {
             label: label.into(),
+            keys: String::new(),
             command: Some("true".into()),
             angle: Some(angle),
             icon_theme: None,
@@ -196,6 +197,7 @@ mod tests {
             minimum_edge_distance: 0.0,
             center_mode: false,
             always_center_mode: false,
+            back_keys: String::new(),
             hover_mode: false,
             turbo_mode: false,
             hold_to_turbo: false,
@@ -203,6 +205,7 @@ mod tests {
             close_submenu_on_center_click: false,
             menu: Item {
                 label: "Root".into(),
+                keys: String::new(),
                 command: None,
                 angle: None,
                 icon_theme: None,

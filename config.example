@@ -3,6 +3,7 @@ center-hitbox-size = 160
 minimum-edge-distance = 200
 center-mode = false
 always-center-mode = false
+back-keys = "qй"
 close-submenu-on-center-click = false
 hover-mode = false
 turbo-mode = true
@@ -19,12 +20,14 @@ icon = "roamresearch.svg"
 
 [[menu.items]]
 label = "Scripts"
+keys = "sы1"
 icon-theme = "simple-icons"
 icon = "scrollreveal.svg"
 angle = 288
 
 [[menu.items.items]]
 label = "Driftwm Config"
+keys = "cс!"
 command = "footclient env QUIET_START=1 zsh -ic 'nvim ~/.config/driftwm/config.toml; unset QUIET_START'"
 icon-theme = "tabler-icons"
 icon = "filled/adjustments-horizontal.svg"

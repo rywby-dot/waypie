@@ -129,6 +129,28 @@ class EmptySubmenuTests(unittest.TestCase):
                 "menu.items[0]",
             )
 
+    def test_unicode_quick_keys_are_preserved(self):
+        item = parse_item(
+            {"label": "Action", "command": "true", "keys": "фA7?"},
+            "menu.items[0]",
+        )
+
+        self.assertEqual(item.keys, "фA7?")
+
+    def test_sibling_quick_key_conflicts_ignore_case(self):
+        with self.assertRaises(SystemExit):
+            parse_item(
+                {
+                    "label": "Root",
+                    "items": [
+                        {"label": "One", "command": "true", "keys": "ж"},
+                        {"label": "Two", "command": "true", "keys": "Ж"},
+                    ],
+                },
+                "menu",
+                root=True,
+            )
+
 
 class WrappedTextTests(unittest.TestCase):
     def test_words_are_kept_together_when_possible(self):
