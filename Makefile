@@ -63,8 +63,8 @@ install-runtime: build
 
 install-configurator:
 	@if $(PIPX) list --short | awk '{ print $$1 }' | grep -qx waypie; then \
-		echo "Updating the Waypie configurator with pipx"; \
-		$(PIPX) upgrade waypie; \
+		echo "Updating the Waypie configurator from this checkout with pipx"; \
+		$(PIPX) runpip waypie install --force-reinstall "$(CURDIR)"; \
 	else \
 		echo "Installing the Waypie configurator with pipx"; \
 		$(PIPX) install .; \

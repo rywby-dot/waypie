@@ -2,6 +2,7 @@ menu-radius = 120
 center-hitbox-size = 160
 minimum-edge-distance = 200
 center-mode = false
+always-center-mode = false
 close-submenu-on-center-click = false
 hover-mode = false
 turbo-mode = true

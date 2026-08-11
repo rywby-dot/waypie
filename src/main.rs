@@ -19,6 +19,7 @@ use smithay_client_toolkit::{
     shm::Shm,
 };
 use wayland_client::{Connection, globals::registry_queue_init};
+use wayland_protocols_wlr::input_inhibitor::v1::client::zwlr_input_inhibit_manager_v1::ZwlrInputInhibitManagerV1;
 use waypie::app::App;
 
 fn main() {
@@ -78,6 +79,9 @@ fn run() -> Result<()> {
     let output_state = OutputState::new(&globals, &qh);
     let activation = ActivationState::bind(&globals, &qh).ok();
     let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
+    let input_inhibit_manager = globals
+        .bind::<ZwlrInputInhibitManagerV1, _, _>(&qh, 1..=1, ())
+        .ok();
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let handle = event_loop.handle();
@@ -105,6 +109,7 @@ fn run() -> Result<()> {
         shm,
         activation,
         viewporter,
+        input_inhibit_manager,
         qh,
     );
     let show_on_startup = arguments.is_empty() || arguments == ["--show"];

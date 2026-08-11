@@ -35,6 +35,7 @@ class Settings:
     center_hitbox_size: float | None
     minimum_edge_distance: float
     center_mode: bool
+    always_center_mode: bool
     close_submenu_on_center_click: bool
     hover_mode: bool
     turbo_mode: bool
@@ -91,6 +92,10 @@ def load_config():
         "minimum-edge-distance",
     )
     center_mode = boolean(source.get("center-mode", False), "center-mode")
+    always_center_mode = boolean(
+        source.get("always-center-mode", False),
+        "always-center-mode",
+    )
     close_submenu_on_center_click = boolean(
         source.get("close-submenu-on-center-click", False),
         "close-submenu-on-center-click",
@@ -121,6 +126,7 @@ def load_config():
         center_hitbox_size,
         minimum_edge_distance,
         center_mode,
+        always_center_mode,
         close_submenu_on_center_click,
         hover_mode,
         turbo_mode,

@@ -16,6 +16,8 @@ pub struct Config {
     #[serde(default)]
     pub center_mode: bool,
     #[serde(default)]
+    pub always_center_mode: bool,
+    #[serde(default)]
     pub hover_mode: bool,
     #[serde(default)]
     pub turbo_mode: bool,
@@ -58,6 +60,10 @@ fn default_menu_radius() -> f64 {
 }
 
 impl Config {
+    pub fn opens_in_output_center(&self) -> bool {
+        self.center_mode || self.always_center_mode
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let source =
             fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
@@ -207,12 +213,16 @@ mod tests {
     fn travel_item_animation_is_optional_and_can_be_enabled() {
         let disabled: Config = toml::from_str("[menu]\nlabel = 'Root'").unwrap();
         let enabled: Config = toml::from_str(
-            "travel-item-animation = true\nhold-to-turbo = true\n[menu]\nlabel = 'Root'",
+            "travel-item-animation = true\nhold-to-turbo = true\nalways-center-mode = true\n[menu]\nlabel = 'Root'",
         )
         .unwrap();
         assert!(!disabled.travel_item_animation);
         assert!(!disabled.hold_to_turbo);
+        assert!(!disabled.always_center_mode);
+        assert!(!disabled.opens_in_output_center());
         assert!(enabled.travel_item_animation);
         assert!(enabled.hold_to_turbo);
+        assert!(enabled.always_center_mode);
+        assert!(enabled.opens_in_output_center());
     }
 }

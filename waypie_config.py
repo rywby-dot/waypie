@@ -73,6 +73,7 @@ class Configurator(Gtk.Application):
         self.alignment_check = None
         self.show_icons_check = None
         self.center_mode_check = None
+        self.always_center_mode_check = None
         self.close_submenu_on_center_click_check = None
         self.hover_mode_check = None
         self.turbo_mode_check = None
@@ -207,6 +208,7 @@ class Configurator(Gtk.Application):
             Gtk.SpinButton.new_with_range(0, 359, 1),
         )
         self.angle_spin.set_digits(0)
+        self.disable_spin_scroll(self.angle_spin)
         self.icon_button = Gtk.Button(label="Choose icon…")
         self.icon_button.connect("clicked", self.on_choose_icon)
         self.add_property(properties, "Icon", self.icon_button)
@@ -254,6 +256,7 @@ class Configurator(Gtk.Application):
             spin = Gtk.SpinButton.new_with_range(lower, upper, 1)
             spin.set_digits(0)
             spin.set_value(value)
+            self.disable_spin_scroll(spin)
             spin.connect("value-changed", self.on_config_setting_changed, name)
             self.setting_spins[name] = spin
             self.add_property(properties, label, spin)
@@ -261,6 +264,15 @@ class Configurator(Gtk.Application):
         self.center_mode_check.set_active(self.settings.center_mode)
         self.center_mode_check.connect("toggled", self.on_center_mode_changed)
         properties.append(self.center_mode_check)
+        self.always_center_mode_check = Gtk.CheckButton(label="Always center mode")
+        self.always_center_mode_check.set_active(self.settings.always_center_mode)
+        self.always_center_mode_check.set_tooltip_text(
+            "Open in the output center and keep every active submenu anchored there."
+        )
+        self.always_center_mode_check.connect(
+            "toggled", self.on_always_center_mode_changed
+        )
+        properties.append(self.always_center_mode_check)
         self.close_submenu_on_center_click_check = Gtk.CheckButton(
             label="Close on click"
         )
@@ -331,6 +343,13 @@ class Configurator(Gtk.Application):
         self.rebuild_tree()
         self.sync_fields()
         self.window.present()
+
+    @staticmethod
+    def disable_spin_scroll(spin):
+        scroll = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
+        scroll.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        scroll.connect("scroll", lambda *_args: True)
+        spin.add_controller(scroll)
 
     @staticmethod
     def add_property(container, label, widget):
@@ -575,6 +594,10 @@ class Configurator(Gtk.Application):
                 (self.alignment_check, self.settings.auto_alignment),
                 (self.show_icons_check, self.settings.configurator_show_icons),
                 (self.center_mode_check, self.settings.center_mode),
+                (
+                    self.always_center_mode_check,
+                    self.settings.always_center_mode,
+                ),
                 (
                     self.close_submenu_on_center_click_check,
                     self.settings.close_submenu_on_center_click,
@@ -1552,6 +1575,13 @@ class Configurator(Gtk.Application):
         self.settings.center_mode = self.center_mode_check.get_active()
         self.set_status("Unsaved changes")
 
+    def on_always_center_mode_changed(self, _check):
+        if self.restoring_undo:
+            return
+        self.push_undo()
+        self.settings.always_center_mode = self.always_center_mode_check.get_active()
+        self.set_status("Unsaved changes")
+
     def on_close_submenu_on_center_click_changed(self, _check):
         if self.restoring_undo:
             return
@@ -1918,6 +1948,7 @@ def serialize_config(settings):
         f"minimum-edge-distance = {toml_number(settings.minimum_edge_distance)}"
     )
     lines.append(f"center-mode = {str(settings.center_mode).lower()}")
+    lines.append(f"always-center-mode = {str(settings.always_center_mode).lower()}")
     lines.append(
         "close-submenu-on-center-click = "
         f"{str(settings.close_submenu_on_center_click).lower()}"

@@ -41,6 +41,10 @@ use wayland_client::{
     Connection, Dispatch, QueueHandle,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_surface},
 };
+use wayland_protocols_wlr::input_inhibitor::v1::client::{
+    zwlr_input_inhibit_manager_v1::ZwlrInputInhibitManagerV1,
+    zwlr_input_inhibitor_v1::ZwlrInputInhibitorV1,
+};
 
 use crate::{
     animation::Spring,
@@ -224,6 +228,7 @@ pub struct App {
     pub shm: Shm,
     pub activation: Option<ActivationState>,
     pub viewporter: Option<WpViewporter>,
+    pub input_inhibit_manager: Option<ZwlrInputInhibitManagerV1>,
     pub qh: QueueHandle<Self>,
     pub exit: bool,
     pub reopen_requested: bool,
@@ -246,6 +251,7 @@ pub struct App {
     pointer_position: Option<Point>,
     keyboard_turbo_active: bool,
     pointer_hold: Option<PointerHold>,
+    input_inhibitor: Option<ZwlrInputInhibitorV1>,
     animator: Animator,
     closing_until: Option<Instant>,
 }
@@ -261,6 +267,7 @@ impl App {
         shm: Shm,
         activation: Option<ActivationState>,
         viewporter: Option<WpViewporter>,
+        input_inhibit_manager: Option<ZwlrInputInhibitManagerV1>,
         qh: QueueHandle<Self>,
     ) -> Self {
         let config_dir = dirs::config_dir()
@@ -275,6 +282,7 @@ impl App {
             shm,
             activation,
             viewporter,
+            input_inhibit_manager,
             qh,
             exit: false,
             reopen_requested: false,
@@ -296,6 +304,7 @@ impl App {
             pointer_position: None,
             keyboard_turbo_active: false,
             pointer_hold: None,
+            input_inhibitor: None,
             animator: Animator::default(),
             closing_until: None,
         }
@@ -316,7 +325,7 @@ impl App {
         let center_mode = self
             .config
             .as_ref()
-            .is_some_and(|config| config.center_mode);
+            .is_some_and(Config::opens_in_output_center);
         if center_mode {
             if self.layers.iter().any(|layer| layer.output.is_none()) {
                 return;
@@ -383,13 +392,17 @@ impl App {
         self.closing_until = None;
         self.active_layer = None;
         self.visible = true;
+        self.input_inhibitor = self
+            .input_inhibit_manager
+            .as_ref()
+            .map(|manager| manager.get_inhibitor(&self.qh, ()));
         self.prepare_layers();
         if self.layers.is_empty() {
             bail!("no Wayland outputs are available");
         }
         for index in 0..self.layers.len() {
             let surface = &self.layers[index].surface;
-            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+            surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
             surface.set_input_region(None);
             surface.commit();
         }
@@ -431,6 +444,7 @@ impl App {
             return;
         }
         self.pointer_hold = None;
+        self.release_input_inhibitor();
         self.visible = false;
         for index in 0..self.layers.len() {
             let surface = &self.layers[index].surface;
@@ -513,10 +527,25 @@ impl App {
         }
     }
 
+    fn refresh_full_input_region(&self, index: usize) {
+        let Some(layer) = self.layers.get(index) else {
+            return;
+        };
+        if layer.width == 0 || layer.height == 0 {
+            return;
+        }
+        let region = self.compositor.wl_compositor().create_region(&self.qh, ());
+        region.add(0, 0, layer.width as i32, layer.height as i32);
+        layer.surface.set_input_region(Some(&region));
+        layer.surface.commit();
+        region.destroy();
+    }
+
     fn select_output(&mut self, index: usize, pointer: Point) {
         if self.active_layer.is_some() || index >= self.layers.len() {
             return;
         }
+        self.release_input_inhibitor();
         for candidate in 0..self.layers.len() {
             let surface = &self.layers[candidate].surface;
             if candidate == index {
@@ -538,7 +567,7 @@ impl App {
         let Some(config) = self.config.as_ref() else {
             return;
         };
-        let center = if config.center_mode {
+        let center = if config.opens_in_output_center() {
             Point {
                 x: self.layers[index].width as f64 / 2.0,
                 y: self.layers[index].height as f64 / 2.0,
@@ -557,6 +586,12 @@ impl App {
         self.hover_detector.reset(Some(center));
         self.sync_visual(false);
         self.draw();
+    }
+
+    fn release_input_inhibitor(&mut self) {
+        if let Some(inhibitor) = self.input_inhibitor.take() {
+            inhibitor.destroy();
+        }
     }
 
     fn center_hitbox(&self) -> f64 {
@@ -713,7 +748,7 @@ impl App {
             return;
         };
         if self.state.centers().is_empty() {
-            let center = if config.center_mode {
+            let center = if config.opens_in_output_center() {
                 Point {
                     x: self.layers[index].width as f64 / 2.0,
                     y: self.layers[index].height as f64 / 2.0,
@@ -1109,12 +1144,13 @@ impl LayerShellHandler for App {
             self.draw();
         } else {
             self.attach_transparent(index);
+            self.refresh_full_input_region(index);
             if self.visible
                 && self.layers[index].output.is_none()
                 && self
                     .config
                     .as_ref()
-                    .is_some_and(|config| config.center_mode)
+                    .is_some_and(Config::opens_in_output_center)
             {
                 self.select_output(
                     index,
@@ -1197,10 +1233,19 @@ impl PointerHandler for App {
                 x: event.position.0,
                 y: event.position.1,
             };
-            if matches!(event.kind, PointerEventKind::Enter { .. }) {
-                if let Some(pointer) = self.pointer.as_ref() {
-                    let _ = pointer.set_cursor(conn, CursorIcon::Default);
-                }
+            if matches!(event.kind, PointerEventKind::Enter { .. })
+                && let Some(pointer) = self.pointer.as_ref()
+            {
+                let _ = pointer.set_cursor(conn, CursorIcon::Default);
+            }
+            if self.active_layer.is_none()
+                && matches!(
+                    event.kind,
+                    PointerEventKind::Enter { .. }
+                        | PointerEventKind::Motion { .. }
+                        | PointerEventKind::Press { .. }
+                )
+            {
                 self.select_output(index, position);
             }
             if self.active_layer != Some(index) {
@@ -1377,6 +1422,8 @@ delegate_pointer!(App);
 delegate_layer!(App);
 delegate_registry!(App);
 wayland_client::delegate_noop!(App: ignore wl_region::WlRegion);
+wayland_client::delegate_noop!(App: ignore ZwlrInputInhibitManagerV1);
+wayland_client::delegate_noop!(App: ignore ZwlrInputInhibitorV1);
 
 impl ProvidesRegistryState for App {
     fn registry(&mut self) -> &mut RegistryState {

@@ -116,9 +116,14 @@ impl MenuState {
         let Some(parent) = self.centers.last().copied() else {
             return false;
         };
-        let child = clamp_center(at, width, height, config.minimum_edge_distance);
+        let child = if config.always_center_mode {
+            parent
+        } else {
+            clamp_center(at, width, height, config.minimum_edge_distance)
+        };
+        let link_target = if config.always_center_mode { at } else { child };
         self.link_lengths
-            .push(parent.distance(child).max(config.menu_radius));
+            .push(parent.distance(link_target).max(config.menu_radius));
         self.path.push(index);
         self.centers.push(child);
         self.align_history(config);
@@ -138,13 +143,18 @@ impl MenuState {
         if depth >= self.path.len() {
             return false;
         }
+        let anchored_center = self.centers.last().copied();
         self.path.truncate(depth);
         self.centers.truncate(depth + 1);
         self.link_lengths.truncate(depth);
         let Some(center) = self.centers.last_mut() else {
             return false;
         };
-        *center = clamp_center(at, width, height, config.minimum_edge_distance);
+        *center = if config.always_center_mode {
+            anchored_center.unwrap_or(at)
+        } else {
+            clamp_center(at, width, height, config.minimum_edge_distance)
+        };
         self.align_history(config);
         self.pointer = Some(at);
         self.active = None;
@@ -185,6 +195,7 @@ mod tests {
             center_hitbox_size: Some(40.0),
             minimum_edge_distance: 0.0,
             center_mode: false,
+            always_center_mode: false,
             hover_mode: false,
             turbo_mode: false,
             hold_to_turbo: false,
@@ -245,5 +256,31 @@ mod tests {
         let mut state = MenuState::default();
 
         assert!(!state.open_submenu(0, Point { x: 100.0, y: 100.0 }, &config, 300, 300,));
+    }
+
+    #[test]
+    fn always_center_mode_keeps_the_active_menu_at_the_root_center() {
+        let mut config = config();
+        config.always_center_mode = true;
+        config.menu.items[0].command = None;
+        config.menu.items[0].items = vec![item("Nested", 90.0)];
+        config.menu.items[0].return_angle = Some(180.0);
+        config.menu.items[0].items[0].command = None;
+        config.menu.items[0].items[0].items = vec![item("Action", 0.0)];
+        config.menu.items[0].items[0].return_angle = Some(270.0);
+
+        let anchor = Point { x: 150.0, y: 150.0 };
+        let mut state = MenuState::default();
+        state.place_root(anchor, &config, 300, 300);
+        assert!(state.open_submenu(0, Point { x: 150.0, y: 20.0 }, &config, 300, 300));
+        assert_eq!(state.centers().last(), Some(&anchor));
+        assert_ne!(state.centers()[0], anchor);
+
+        assert!(state.open_submenu(0, Point { x: 280.0, y: 150.0 }, &config, 300, 300));
+        assert_eq!(state.centers().last(), Some(&anchor));
+        assert!(state.return_to(1, state.centers()[1], &config, 300, 300));
+        assert_eq!(state.centers().last(), Some(&anchor));
+        assert!(state.return_to(0, state.centers()[0], &config, 300, 300));
+        assert_eq!(state.centers(), &[anchor]);
     }
 }

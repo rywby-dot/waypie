@@ -142,6 +142,12 @@ reported by the compositor. Some compositors do not provide this position until
 the pointer moves. Enable **Center mode** if the menu must always appear
 immediately in the center of the active output.
 
+Enable **Always center mode** (`always-center-mode`) to additionally keep the
+active menu anchored at that output center while navigating. This corresponds
+to Kando's Anchored Mode: opening or closing a submenu moves the surrounding
+items, history circles, and connectors while the current menu center stays
+fixed.
+
 ## Selection and navigation
 
 The visible circles are indicators rather than conventional button hitboxes.
