@@ -130,15 +130,46 @@ class Configurator(Gtk.Application):
         root.set_margin_end(8)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        for label, shortcut, callback in (
-            ("Add command", "Ctrl+Q", self.on_add_command),
-            ("Add submenu", "Ctrl+X", self.on_add_submenu),
-            ("Delete", "Ctrl+D", self.on_delete),
-            ("Center layout", "Ctrl+A", self.on_center_layout),
-            ("Center all layouts", "Ctrl+Shift+A", self.on_center_all_layouts),
-            ("Save", "Ctrl+S", self.on_save),
+        for label, shortcut, tooltip, callback in (
+            (
+                "Add command",
+                "Ctrl+Q",
+                "Add a new runnable action to the currently open menu.",
+                self.on_add_command,
+            ),
+            (
+                "Add submenu",
+                "Ctrl+X",
+                "Add a new nested menu to the currently open menu.",
+                self.on_add_submenu,
+            ),
+            (
+                "Delete",
+                "Ctrl+D",
+                "Remove the selected action or submenu and everything inside it.",
+                self.on_delete,
+            ),
+            (
+                "Center layout",
+                "Ctrl+A",
+                "Evenly space the circles in the currently open menu.",
+                self.on_center_layout,
+            ),
+            (
+                "Center all layouts",
+                "Ctrl+Shift+A",
+                "Evenly space circles in every menu, starting at the root.",
+                self.on_center_all_layouts,
+            ),
+            (
+                "Save",
+                "Ctrl+S",
+                "Write all changes to the Waypie configuration file.",
+                self.on_save,
+            ),
         ):
             button = Gtk.Button()
+            button.set_tooltip_text(tooltip)
             button_content = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL,
                 spacing=1,
@@ -149,14 +180,24 @@ class Configurator(Gtk.Application):
             button.connect("clicked", callback)
             toolbar.append(button)
         self.preserve_check = Gtk.CheckButton(label="Preserve proportions")
+        self.preserve_check.set_tooltip_text(
+            "Keep all circles evenly spaced when one circle is moved. "
+            "Drag a circle through the center to change its order."
+        )
         self.preserve_check.set_active(self.settings.preserve_proportions)
         self.preserve_check.connect("toggled", self.on_layout_option_changed)
         toolbar.append(self.preserve_check)
         self.alignment_check = Gtk.CheckButton(label="Auto alignment")
+        self.alignment_check.set_tooltip_text(
+            "Snap the rotation of a circle group to 5-degree steps."
+        )
         self.alignment_check.set_active(self.settings.auto_alignment)
         self.alignment_check.connect("toggled", self.on_layout_option_changed)
         toolbar.append(self.alignment_check)
         self.show_icons_check = Gtk.CheckButton(label="Show icons")
+        self.show_icons_check.set_tooltip_text(
+            "Show assigned icons in the configurator preview; otherwise show labels."
+        )
         self.show_icons_check.set_active(self.settings.configurator_show_icons)
         self.show_icons_check.connect("toggled", self.on_show_icons_changed)
         toolbar.append(self.show_icons_check)
@@ -164,6 +205,9 @@ class Configurator(Gtk.Application):
         self.status.set_text("Saved")
         self.status.set_width_chars(8)
         self.status.set_size_request(70, -1)
+        self.status.set_tooltip_text(
+            "Saved means the file is up to date; Unsaved means changes still need saving."
+        )
         toolbar.append(self.status)
         root.append(toolbar)
 
@@ -171,6 +215,9 @@ class Configurator(Gtk.Application):
         content.set_vexpand(True)
 
         self.tree = Gtk.ListBox()
+        self.tree.set_tooltip_text(
+            "Select an action or submenu to edit it; activate a submenu to open it."
+        )
         self.tree.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.tree.connect("row-selected", self.on_tree_selected)
         self.tree.connect("row-activated", self.on_tree_activated)
@@ -181,6 +228,10 @@ class Configurator(Gtk.Application):
         content.append(tree_scroll)
 
         self.canvas = Gtk.DrawingArea()
+        self.canvas.set_tooltip_text(
+            "Click a circle to select it, click a submenu to open it, or drag a circle "
+            "to change its angle."
+        )
         self.canvas.set_hexpand(True)
         self.canvas.set_vexpand(True)
         self.canvas.set_draw_func(self.draw_preview)
@@ -208,19 +259,31 @@ class Configurator(Gtk.Application):
         item_title.add_css_class("heading")
         properties.append(item_title)
         self.label_entry = self.add_property(properties, "Label", Gtk.Entry())
+        self.label_entry.set_tooltip_text(
+            "Name shown for this action or menu when no icon replaces it."
+        )
         self.keys_entry = self.add_property(properties, "Activation keys", Gtk.Entry())
         self.keys_entry.set_tooltip_text(
             "Each Unicode character, digit, or symbol activates this item separately."
         )
         self.command_entry = self.add_property(properties, "Command", Gtk.Entry())
+        self.command_entry.set_tooltip_text(
+            "Shell command executed when this action is selected. Submenus do not use it."
+        )
         self.angle_spin = self.add_property(
             properties,
             "Angle (degrees)",
             Gtk.SpinButton.new_with_range(0, 359, 1),
         )
         self.angle_spin.set_digits(0)
+        self.angle_spin.set_tooltip_text(
+            "Direction of this circle: 0° is up and angles increase clockwise."
+        )
         self.disable_spin_scroll(self.angle_spin)
         self.icon_button = Gtk.Button(label="Choose icon…")
+        self.icon_button.set_tooltip_text(
+            "Choose, replace, or remove the icon displayed for this action or menu."
+        )
         self.icon_button.connect("clicked", self.on_choose_icon)
         self.add_property(properties, "Icon", self.icon_button)
         hint = Gtk.Label(
@@ -237,13 +300,14 @@ class Configurator(Gtk.Application):
         settings_title = Gtk.Label(label="Config settings", xalign=0)
         settings_title.add_css_class("heading")
         properties.append(settings_title)
-        for name, label, lower, upper, value in (
+        for name, label, lower, upper, value, tooltip in (
             (
                 "menu_radius",
                 "menu-radius",
                 1,
                 8192,
                 self.settings.menu_radius,
+                "Distance in pixels from the active menu center to its circles.",
             ),
             (
                 "center_hitbox_size",
@@ -255,6 +319,7 @@ class Configurator(Gtk.Application):
                     if self.settings.center_hitbox_size is not None
                     else computed_style(self.styles, ("circle",))["width"]
                 ),
+                "Diameter of the central click area; set it to 0 to disable that area.",
             ),
             (
                 "minimum_edge_distance",
@@ -262,23 +327,28 @@ class Configurator(Gtk.Application):
                 0,
                 8192,
                 self.settings.minimum_edge_distance,
+                "Minimum distance between an active menu center and the screen edge.",
             ),
         ):
             spin = Gtk.SpinButton.new_with_range(lower, upper, 1)
             spin.set_digits(0)
             spin.set_value(value)
+            spin.set_tooltip_text(tooltip)
             self.disable_spin_scroll(spin)
             spin.connect("value-changed", self.on_config_setting_changed, name)
             self.setting_spins[name] = spin
             self.add_property(properties, label, spin)
         self.center_mode_check = Gtk.CheckButton(label="Center mode")
+        self.center_mode_check.set_tooltip_text(
+            "Open the root menu in the center of the current screen instead of at the pointer."
+        )
         self.center_mode_check.set_active(self.settings.center_mode)
         self.center_mode_check.connect("toggled", self.on_center_mode_changed)
         properties.append(self.center_mode_check)
         self.always_center_mode_check = Gtk.CheckButton(label="Always center mode")
         self.always_center_mode_check.set_active(self.settings.always_center_mode)
         self.always_center_mode_check.set_tooltip_text(
-            "Open in the output center and keep every active submenu anchored there."
+            "Open in the screen center and keep every active submenu in that same place."
         )
         self.always_center_mode_check.connect(
             "toggled", self.on_always_center_mode_changed
@@ -291,7 +361,7 @@ class Configurator(Gtk.Application):
         )
         self.back_keys_entry.set_text(self.settings.back_keys)
         self.back_keys_entry.set_tooltip_text(
-            "Each character returns to the parent menu, or closes the root menu."
+            "Press any listed character to return to the parent, or close the root menu."
         )
         self.back_keys_entry.connect("changed", self.on_back_keys_changed)
         self.autogenerate_key_sets_entry = self.add_property(
@@ -302,7 +372,8 @@ class Configurator(Gtk.Application):
         self.autogenerate_key_sets_entry.set_text(self.settings.autogenerate_key_sets)
         self.autogenerate_key_sets_entry.set_placeholder_text("aф rы sв tа gп")
         self.autogenerate_key_sets_entry.set_tooltip_text(
-            "Space-separated key sets for the first, second, and following circles."
+            "Enter one key set per circle position, separated by spaces, for example: "
+            "aф rы sв."
         )
         self.autogenerate_key_sets_entry.connect(
             "changed", self.on_autogenerate_key_sets_changed
@@ -319,6 +390,10 @@ class Configurator(Gtk.Application):
         self.close_submenu_on_center_click_check.set_active(
             self.settings.close_submenu_on_center_click
         )
+        self.close_submenu_on_center_click_check.set_tooltip_text(
+            "Close all of Waypie when a submenu center is clicked; otherwise return "
+            "to its parent."
+        )
         self.close_submenu_on_center_click_check.connect(
             "toggled",
             self.on_close_submenu_on_center_click_changed,
@@ -327,22 +402,23 @@ class Configurator(Gtk.Application):
         self.hover_mode_check = Gtk.CheckButton(label="Hover mode")
         self.hover_mode_check.set_active(self.settings.hover_mode)
         self.hover_mode_check.set_tooltip_text(
-            "Select an item by pausing over it or turning the pointer."
+            "Open a submenu or run an action by pausing over it or turning away from it."
         )
         self.hover_mode_check.connect("toggled", self.on_hover_mode_changed)
         properties.append(self.hover_mode_check)
         self.turbo_mode_check = Gtk.CheckButton(label="Turbo mode")
         self.turbo_mode_check.set_active(self.settings.turbo_mode)
         self.turbo_mode_check.set_tooltip_text(
-            "Hold Super, Alt, Ctrl, or Shift while opening the menu; "
-            "release it to activate the selected item."
+            "Keep the launch modifier held to browse without clicking, then release it "
+            "to select the current item."
         )
         self.turbo_mode_check.connect("toggled", self.on_turbo_mode_changed)
         properties.append(self.turbo_mode_check)
         self.hold_to_turbo_check = Gtk.CheckButton(label="Hold to turbo")
         self.hold_to_turbo_check.set_active(self.settings.hold_to_turbo)
         self.hold_to_turbo_check.set_tooltip_text(
-            "Hold the left mouse button and move to enter Turbo mode."
+            "Hold the left mouse button and move to browse like Turbo mode; release "
+            "to select."
         )
         self.hold_to_turbo_check.connect("toggled", self.on_hold_to_turbo_changed)
         properties.append(self.hold_to_turbo_check)
@@ -351,7 +427,7 @@ class Configurator(Gtk.Application):
         )
         self.travel_item_animation_check.set_active(self.settings.travel_item_animation)
         self.travel_item_animation_check.set_tooltip_text(
-            "Move the selected item to the pointer in Hover and Turbo modes."
+            "In Hover and Turbo modes, make the selected circle travel with the pointer."
         )
         self.travel_item_animation_check.connect(
             "toggled", self.on_travel_item_animation_changed
