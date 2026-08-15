@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from waypie_common import (
     Item,
@@ -8,6 +10,8 @@ from waypie_common import (
     colored_svg_source,
     computed_style,
     fixed_text_geometry,
+    load_config,
+    load_styles,
     menus_breadth_first,
     parse_item,
     parse_key_sets,
@@ -18,6 +22,28 @@ from waypie_common import (
     spring_value,
     wrap_text_to_widths,
 )
+
+
+class AlternatePathTests(unittest.TestCase):
+    def test_loaders_use_the_explicit_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            config_path = directory / "alternate.toml"
+            style_path = directory / "alternate.css"
+            config_path.write_text(
+                'center-hitbox-size = 100\n[menu]\nlabel = "Alternate"\n',
+                encoding="utf-8",
+            )
+            style_path.write_text(
+                "circle { width: 77px; }\n",
+                encoding="utf-8",
+            )
+
+            settings = load_config(config_path)
+            styles = load_styles(style_path)
+
+            self.assertEqual(settings.root.label, "Alternate")
+            self.assertEqual(styles["circle"]["width"], "77px")
 
 
 class FakeSvgPath:

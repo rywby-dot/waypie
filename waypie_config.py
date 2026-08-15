@@ -1,8 +1,10 @@
+import argparse
 import copy
 import json
 import math
 import shutil
 import sys
+from pathlib import Path
 
 import cairo
 import gi
@@ -14,9 +16,9 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
 from waypie_common import (
-    CONFIG_DIR,
     CONFIG_PATH,
     ICON_DIR,
+    STYLE_PATH,
     Item,
     angular_delta,
     angular_distance,
@@ -60,10 +62,11 @@ INDICATOR_CLIP_OVERLAP = 1.0
 
 
 class Configurator(Gtk.Application):
-    def __init__(self, settings, styles):
+    def __init__(self, settings, styles, config_path=CONFIG_PATH):
         super().__init__(application_id="waypie.config")
         self.settings = settings
         self.styles = styles
+        self.config_path = Path(config_path)
         self.window = None
         self.canvas = None
         self.tree = None
@@ -2074,20 +2077,20 @@ class Configurator(Gtk.Application):
             parse_key_sets(self.settings.autogenerate_key_sets)
             validate_editable_tree(self.settings.root)
             text = serialize_config(self.settings)
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            backup = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.bak")
-            if CONFIG_PATH.exists() and not backup.exists():
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            backup = self.config_path.with_name(f"{self.config_path.name}.bak")
+            if self.config_path.exists() and not backup.exists():
                 shutil.copy2(
-                    CONFIG_PATH,
+                    self.config_path,
                     backup,
                 )
-            temporary = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")
+            temporary = self.config_path.with_name(f".{self.config_path.name}.tmp")
             temporary.write_text(text, encoding="utf-8")
-            temporary.replace(CONFIG_PATH)
+            temporary.replace(self.config_path)
         except (OSError, ValueError, SystemExit) as error:
             self.set_status(str(error), error=True)
             return
-        self.set_status(f"Saved {CONFIG_PATH}")
+        self.set_status(f"Saved {self.config_path}")
 
     def set_status(self, message, error=False):
         if message.startswith("Saved"):
@@ -2183,8 +2186,16 @@ def serialize_config(settings):
 
 
 def main():
+    parser = argparse.ArgumentParser(prog="waypie-config")
+    parser.add_argument("-c", dest="config_path", type=Path, default=CONFIG_PATH)
+    parser.add_argument("-s", dest="style_path", type=Path, default=STYLE_PATH)
+    arguments = parser.parse_args()
     try:
-        exit_code = Configurator(load_config(), load_styles()).run([sys.argv[0]])
+        exit_code = Configurator(
+            load_config(arguments.config_path),
+            load_styles(arguments.style_path),
+            arguments.config_path,
+        ).run([sys.argv[0]])
     except KeyboardInterrupt:
         exit_code = 0
     raise SystemExit(exit_code)

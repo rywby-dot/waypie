@@ -316,7 +316,9 @@ pub struct App {
     pointer: Option<ThemedPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     state: MenuState,
-    config_dir: PathBuf,
+    config_path: PathBuf,
+    style_path: PathBuf,
+    icon_root: PathBuf,
     pending_activation: Option<String>,
     hover_detector: HoverDetector,
     pointer_position: Option<Point>,
@@ -342,6 +344,8 @@ impl App {
         activation: Option<ActivationState>,
         viewporter: Option<WpViewporter>,
         input_inhibit_manager: Option<ZwlrInputInhibitManagerV1>,
+        config_path: PathBuf,
+        style_path: PathBuf,
         qh: QueueHandle<Self>,
     ) -> Self {
         let config_dir = dirs::config_dir()
@@ -372,7 +376,9 @@ impl App {
             pointer: None,
             keyboard: None,
             state: MenuState::default(),
-            config_dir,
+            config_path,
+            style_path,
+            icon_root: config_dir.join("icons"),
             pending_activation: None,
             hover_detector: HoverDetector::default(),
             pointer_position: None,
@@ -441,7 +447,7 @@ impl App {
         if self.visible {
             return Ok(());
         }
-        let config = Config::load(&self.config_dir.join("config"))?;
+        let config = Config::load(&self.config_path)?;
         self.config = Some(config);
         self.styles = None;
         self.state.reset();
@@ -478,10 +484,10 @@ impl App {
         if !self.visible {
             return Ok(());
         }
-        let styles = StyleSheet::load(&self.config_dir.join("style.css"))?;
+        let styles = StyleSheet::load(&self.style_path)?;
         let animation_style = styles.animation()?;
         self.animation = AnimationProfile::from(animation_style);
-        self.renderer.configure_fonts(styles.font_families());
+        self.renderer.configure_fonts(styles.font_requests());
         self.renderer.configure_animations(animation_style);
         self.styles = Some(styles);
 
@@ -1232,7 +1238,7 @@ impl App {
                 styles,
                 state: &self.state,
                 nodes: &nodes,
-                icon_root: &self.config_dir.join("icons"),
+                icon_root: &self.icon_root,
             },
         );
         copy_pixmap_to_argb(&pixmap, canvas);

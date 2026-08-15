@@ -201,6 +201,18 @@ or:
 waypie --configure
 ```
 
+To use different files for one invocation, pass `-c` and/or `-s`. The options
+may appear in any order and work both with the menu and the configurator:
+
+```sh
+waypie --show -c /path/to/config -s /path/to/style.css
+waypie --config -s /path/to/style.css -c /path/to/config
+```
+
+`--config` is a short alias for `--configure`. These paths are not saved as new
+defaults: the next regular invocation uses the files in `~/.config/waypie/`
+again. Icons continue to be loaded from `~/.config/waypie/icons/`.
+
 * **Preserve proportions** keeps items evenly distributed when a group is
   rotated. A submenu's return direction occupies one invisible slot.
 * **Auto alignment** snaps the group rotation to a 5-degree grid.

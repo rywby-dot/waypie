@@ -1,5 +1,11 @@
 use std::{
-    env, fs, io::ErrorKind, os::unix::net::UnixDatagram, path::PathBuf, process::Command,
+    env,
+    ffi::OsString,
+    fs,
+    io::ErrorKind,
+    os::unix::net::UnixDatagram,
+    path::{Path, PathBuf},
+    process::Command,
     time::Duration,
 };
 
@@ -29,15 +35,95 @@ fn main() {
     }
 }
 
-fn run() -> Result<()> {
-    let arguments = env::args().skip(1).collect::<Vec<_>>();
-    let valid_arguments = arguments.is_empty()
-        || matches!(arguments.as_slice(), [arg] if arg == "--show" || arg == "--kill" || arg == "--configure");
-    if !valid_arguments {
-        bail!("usage: waypie [--show|--kill|--configure]");
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CliMode {
+    Show,
+    Kill,
+    Configure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Cli {
+    mode: CliMode,
+    config_path: PathBuf,
+    style_path: PathBuf,
+    custom_config: bool,
+    custom_style: bool,
+}
+
+fn default_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("waypie")
+}
+
+fn parse_cli(arguments: impl IntoIterator<Item = OsString>) -> Result<Cli> {
+    let defaults = default_config_dir();
+    let mut mode = None;
+    let mut config_path = None;
+    let mut style_path = None;
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
+        let Some(option) = argument.to_str() else {
+            bail!("invalid non-UTF-8 option: {argument:?}");
+        };
+        let requested_mode = match option {
+            "--show" => Some(CliMode::Show),
+            "--kill" => Some(CliMode::Kill),
+            "--configure" | "--config" => Some(CliMode::Configure),
+            "-c" => {
+                if config_path.is_some() {
+                    bail!("-c may only be specified once");
+                }
+                config_path = Some(PathBuf::from(
+                    arguments.next().context("-c requires a config path")?,
+                ));
+                None
+            }
+            "-s" => {
+                if style_path.is_some() {
+                    bail!("-s may only be specified once");
+                }
+                style_path = Some(PathBuf::from(
+                    arguments.next().context("-s requires a style path")?,
+                ));
+                None
+            }
+            _ => bail!(
+                "unknown argument {option:?}; usage: waypie [--show|--kill|--configure|--config] [-c PATH] [-s PATH]"
+            ),
+        };
+        if let Some(requested_mode) = requested_mode {
+            if let Some(previous) = mode
+                && previous != requested_mode
+            {
+                bail!("only one of --show, --kill, and --configure may be used");
+            }
+            mode = Some(requested_mode);
+        }
     }
-    if arguments == ["--configure"] {
-        let status = Command::new("waypie-config")
+    let custom_config = config_path.is_some();
+    let custom_style = style_path.is_some();
+    Ok(Cli {
+        mode: mode.unwrap_or(CliMode::Show),
+        config_path: config_path.unwrap_or_else(|| defaults.join("config")),
+        style_path: style_path.unwrap_or_else(|| defaults.join("style.css")),
+        custom_config,
+        custom_style,
+    })
+}
+
+fn run() -> Result<()> {
+    let cli = parse_cli(env::args_os().skip(1))?;
+    if cli.mode == CliMode::Configure {
+        let mut command = Command::new("waypie-config");
+        if cli.custom_config {
+            command.arg("-c").arg(&cli.config_path);
+        }
+        if cli.custom_style {
+            command.arg("-s").arg(&cli.style_path);
+        }
+        let status = command
             .status()
             .context("cannot start the Python configurator (waypie-config)")?;
         if !status.success() {
@@ -52,7 +138,7 @@ fn run() -> Result<()> {
         // the compositor's one-shot startup token.
         unsafe { env::remove_var("XDG_ACTIVATION_TOKEN") };
     }
-    let command: &[u8] = if arguments == ["--kill"] {
+    let command: &[u8] = if cli.mode == CliMode::Kill {
         b"quit"
     } else {
         b"show"
@@ -61,7 +147,7 @@ fn run() -> Result<()> {
     if send_command(&socket_path, command).is_ok() {
         return Ok(());
     }
-    if arguments == ["--kill"] {
+    if cli.mode == CliMode::Kill {
         bail!("no running Waypie instance");
     }
     // A datagram path can survive a crash. It is safe to remove only after the
@@ -110,16 +196,15 @@ fn run() -> Result<()> {
         activation,
         viewporter,
         input_inhibit_manager,
+        cli.config_path.clone(),
+        cli.style_path.clone(),
         qh,
     );
-    let show_on_startup = arguments.is_empty() || arguments == ["--show"];
-    if show_on_startup {
-        app.begin_show(activation_token)?;
-        event_queue.roundtrip(&mut app)?;
-        conn.flush()?;
-        app.finish_show()?;
-        conn.flush()?;
-    }
+    app.begin_show(activation_token)?;
+    event_queue.roundtrip(&mut app)?;
+    conn.flush()?;
+    app.finish_show()?;
+    conn.flush()?;
     WaylandSource::new(conn, event_queue).insert(handle.clone())?;
     while !app.exit {
         let timeout = app.needs_tick().then_some(Duration::from_millis(10));
@@ -130,12 +215,20 @@ fn run() -> Result<()> {
     let reopen = app.reopen_requested;
     let _ = fs::remove_file(socket_path);
     if reopen {
-        Command::new(env::current_exe()?).arg("--show").spawn()?;
+        let mut command = Command::new(env::current_exe()?);
+        command.arg("--show");
+        if cli.custom_config {
+            command.arg("-c").arg(&cli.config_path);
+        }
+        if cli.custom_style {
+            command.arg("-s").arg(&cli.style_path);
+        }
+        command.spawn()?;
     }
     Ok(())
 }
 
-fn send_command(path: &std::path::Path, command: &[u8]) -> Result<()> {
+fn send_command(path: &Path, command: &[u8]) -> Result<()> {
     let socket = UnixDatagram::unbound()?;
     socket.send_to(command, path)?;
     Ok(())
@@ -160,10 +253,67 @@ fn bind_control_socket() -> Result<(UnixDatagram, PathBuf)> {
     Ok((socket, path))
 }
 
-fn remove_if_present(path: &std::path::Path) -> Result<()> {
+fn remove_if_present(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn custom_paths_can_appear_in_any_order() {
+        let first = parse_cli(args(&[
+            "-s",
+            "/tmp/custom.css",
+            "--show",
+            "-c",
+            "/tmp/custom.toml",
+        ]))
+        .unwrap();
+        let second = parse_cli(args(&[
+            "-c",
+            "/tmp/custom.toml",
+            "-s",
+            "/tmp/custom.css",
+            "--show",
+        ]))
+        .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.mode, CliMode::Show);
+        assert_eq!(first.config_path, Path::new("/tmp/custom.toml"));
+        assert_eq!(first.style_path, Path::new("/tmp/custom.css"));
+    }
+
+    #[test]
+    fn config_alias_opens_the_configurator_with_custom_paths() {
+        let cli = parse_cli(args(&["--config", "-c", "/tmp/menu", "-s", "/tmp/style"])).unwrap();
+
+        assert_eq!(cli.mode, CliMode::Configure);
+        assert!(cli.custom_config);
+        assert!(cli.custom_style);
+    }
+
+    #[test]
+    fn paths_do_not_change_the_default_mode() {
+        let cli = parse_cli(args(&["-c", "/tmp/menu"])).unwrap();
+        assert_eq!(cli.mode, CliMode::Show);
+        assert_eq!(cli.config_path, Path::new("/tmp/menu"));
+        assert!(!cli.custom_style);
+    }
+
+    #[test]
+    fn missing_paths_and_conflicting_modes_are_rejected() {
+        assert!(parse_cli(args(&["-c"])).is_err());
+        assert!(parse_cli(args(&["--show", "--kill"])).is_err());
     }
 }

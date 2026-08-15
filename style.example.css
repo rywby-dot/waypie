@@ -67,6 +67,7 @@ circle {
   text-opacity: 1;
   font-family: Sans;
   font-size: 14px;
+  font-weight: 400;
 
 /* fill - how icon and text fill the circle */
   text-fill: 100%;
@@ -80,6 +81,7 @@ circle {
 /* Appearance while an item is selected by the pointer. distance moves it radially; follow-distance moves nearby items by a percentage of that distance. */
 circle.active {
   border-color: #f2f2f2;
+  font-weight: 600;
   scale: 1.25;
   distance: 30px;
   follow-distance: 40%;
@@ -98,6 +100,29 @@ circle.submenu {
 }
 
 circle.submenu.active {
+}
+
+/* Shortcut characters shown next to action and submenu item circles. angle is clockwise from the top; distance is measured from the circle edge and may be negative. Add a bare off declaration to hide all item keys. */
+item-key {
+  font-family: Sans;
+  font-weight: 600;
+  font-size: 12px;
+  color: #ffffff;
+  opacity: 0.75;
+  distance: 10px;
+  angle: 0;
+  scale: 1;
+}
+
+/* Shortcut appearance while its item is active. Every property from item-key can be overridden here. */
+item-key.active {
+  font-weight: 700;
+  font-size: 12px;
+  color: #ffd080;
+  opacity: 1;
+  distance: 12px;
+  angle: 0;
+  scale: 1.15;
 }
 
 /* Appearance of the central circle of the currently open menu. */

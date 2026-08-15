@@ -72,12 +72,13 @@ DEFAULT_STYLE = {
 }
 
 
-def load_config():
+def load_config(path=CONFIG_PATH):
+    path = Path(path)
     try:
-        with CONFIG_PATH.open("rb") as file:
+        with path.open("rb") as file:
             source = tomllib.load(file)
     except OSError as error:
-        raise SystemExit(f"waypie: cannot read {CONFIG_PATH}: {error}") from error
+        raise SystemExit(f"waypie: cannot read {path}: {error}") from error
     except tomllib.TOMLDecodeError as error:
         raise SystemExit(f"waypie: invalid config: {error}") from error
 
@@ -339,11 +340,12 @@ def largest_gap_angle(angles, preferred=None):
     )
 
 
-def load_styles():
+def load_styles(path=STYLE_PATH):
+    path = Path(path)
     try:
-        source = STYLE_PATH.read_text(encoding="utf-8")
+        source = path.read_text(encoding="utf-8")
     except OSError as error:
-        raise SystemExit(f"waypie: cannot read {STYLE_PATH}: {error}") from error
+        raise SystemExit(f"waypie: cannot read {path}: {error}") from error
 
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
     rules = {}

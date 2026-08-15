@@ -207,6 +207,14 @@ impl VisualNode {
         self.removing
     }
 
+    pub fn removal_scale(&self) -> f64 {
+        if self.removing && self.from_size > f64::EPSILON {
+            (self.size / self.from_size).max(0.0)
+        } else {
+            1.0
+        }
+    }
+
     pub fn icon_opacity(&self) -> f64 {
         self.icon.value
     }
@@ -1042,6 +1050,37 @@ mod tests {
         assert!(opacity_progress(0.05, true) > 0.2);
         assert_eq!(opacity_progress(1.0, true), 1.0);
         assert!(opacity_progress(0.05, true) > opacity_progress(0.05, false));
+    }
+
+    #[test]
+    fn removal_scale_tracks_the_visible_circle_collapse() {
+        let key = NodeKey::Action(vec![], 0);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![target(
+                key.clone(),
+                NodeRole::Item,
+                Point { x: 200.0, y: 100.0 },
+            )],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+        animator.close(
+            None,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Spring::default(),
+        );
+        let now = Instant::now();
+        let node = animator.nodes.get_mut(&key).unwrap();
+        node.started = now - Duration::from_millis(500);
+        node.sample(now);
+
+        assert!(node.removal_scale() > 0.0);
+        assert!(node.removal_scale() < 1.0);
+        assert!((node.removal_scale() - node.size / node.from_size).abs() < 0.001);
     }
 
     fn target(key: NodeKey, role: NodeRole, position: Point) -> NodeTarget {

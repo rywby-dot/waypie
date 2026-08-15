@@ -42,6 +42,7 @@ pub struct CircleStyle {
     pub distance: Option<f64>,
     pub font_size: f64,
     pub font_family: String,
+    pub font_weight: u16,
     pub follow_distance: f64,
     pub icon_fill: Option<f64>,
     pub icon_size: Option<f64>,
@@ -65,6 +66,7 @@ impl Default for CircleStyle {
             distance: None,
             font_size: 14.0,
             font_family: "Sans".into(),
+            font_weight: 400,
             follow_distance: 0.0,
             icon_fill: None,
             icon_size: None,
@@ -87,6 +89,35 @@ impl CircleStyle {
         match self.border_radius {
             Radius::Pixels(value) => value.min(size / 2.0),
             Radius::Percent(value) => (size * value).min(size / 2.0),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ItemKeyStyle {
+    pub angle: f64,
+    pub color: Color,
+    pub distance: f64,
+    pub enabled: bool,
+    pub font_family: String,
+    pub font_size: f64,
+    pub font_weight: u16,
+    pub opacity: f64,
+    pub scale: f64,
+}
+
+impl Default for ItemKeyStyle {
+    fn default() -> Self {
+        Self {
+            angle: 0.0,
+            color: Color::WHITE,
+            distance: 8.0,
+            enabled: true,
+            font_family: "Sans".into(),
+            font_size: 12.0,
+            font_weight: 600,
+            opacity: 1.0,
+            scale: 1.0,
         }
     }
 }
@@ -176,6 +207,22 @@ impl StyleSheet {
         self.circle(&[selector])
     }
 
+    pub fn item_key(&self, active: bool) -> Result<ItemKeyStyle> {
+        let mut style = ItemKeyStyle::default();
+        for selector in if active {
+            ["item-key", "item-key.active"].as_slice()
+        } else {
+            ["item-key"].as_slice()
+        } {
+            if let Some(properties) = self.rules.get(*selector) {
+                for (name, value) in properties {
+                    apply_item_key_property(&mut style, name, value)?;
+                }
+            }
+        }
+        Ok(style)
+    }
+
     pub fn animation(&self) -> Result<AnimationStyle> {
         let rule = self.rules.get("animation");
         if rule.is_some_and(|properties| properties.contains_key("off")) {
@@ -253,6 +300,56 @@ impl StyleSheet {
         families.into_iter().collect()
     }
 
+    pub fn font_requests(&self) -> Vec<(String, u16)> {
+        let mut requests = BTreeSet::new();
+        let circle_selectors: &[&[&str]] = &[
+            &["circle"],
+            &["circle", "circle.active"],
+            &["circle", "circle.item"],
+            &[
+                "circle",
+                "circle.item",
+                "circle.active",
+                "circle.item.active",
+            ],
+            &["circle", "circle.item", "circle.submenu"],
+            &[
+                "circle",
+                "circle.item",
+                "circle.submenu",
+                "circle.active",
+                "circle.submenu.active",
+            ],
+            &["circle", "circle.center"],
+            &[
+                "circle",
+                "circle.center",
+                "circle.active",
+                "circle.center.active",
+            ],
+            &["circle", "circle.history"],
+            &[
+                "circle",
+                "circle.history",
+                "circle.active",
+                "circle.history.active",
+            ],
+        ];
+        for selectors in circle_selectors {
+            if let Ok(style) = self.circle(selectors) {
+                requests.insert((style.font_family, style.font_weight));
+            }
+        }
+        for active in [false, true] {
+            if let Ok(style) = self.item_key(active)
+                && style.enabled
+            {
+                requests.insert((style.font_family, style.font_weight));
+            }
+        }
+        requests.into_iter().collect()
+    }
+
     pub fn raw(&self, selector: &str, property: &str) -> Option<&str> {
         self.rules
             .get(selector)
@@ -312,6 +409,7 @@ fn apply_circle_property(style: &mut CircleStyle, name: &str, value: &str) -> Re
         "distance" => style.distance = Some(parse_signed_pixels(value, name)?),
         "font-size" => style.font_size = parse_pixels(value, name)?,
         "font-family" => style.font_family = value.trim_matches(['\'', '"']).to_string(),
+        "font-weight" => style.font_weight = parse_font_weight(value)?,
         "follow-distance" => style.follow_distance = parse_percentage(value, name, true)?,
         "icon-fill" => style.icon_fill = Some(parse_percentage(value, name, false)?),
         "icon-size" => style.icon_size = Some(parse_pixels(value, name)?),
@@ -324,6 +422,47 @@ fn apply_circle_property(style: &mut CircleStyle, name: &str, value: &str) -> Re
         _ => {}
     }
     Ok(())
+}
+
+fn apply_item_key_property(style: &mut ItemKeyStyle, name: &str, value: &str) -> Result<()> {
+    match name {
+        "angle" => style.angle = parse_angle(value, name)?,
+        "color" => style.color = parse_color(value, name)?,
+        "distance" => style.distance = parse_signed_pixels(value, name)?,
+        "off" => style.enabled = false,
+        "font-family" => style.font_family = value.trim_matches(['\'', '"']).to_string(),
+        "font-size" => style.font_size = parse_pixels(value, name)?,
+        "font-weight" => style.font_weight = parse_font_weight(value)?,
+        "opacity" => style.opacity = parse_opacity(value, name)?,
+        "scale" => style.scale = parse_positive(value, name)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_angle(value: &str, name: &str) -> Result<f64> {
+    let value = value.trim().strip_suffix("deg").unwrap_or(value.trim());
+    let angle: f64 = value
+        .parse()
+        .with_context(|| format!("invalid {name}: {value}"))?;
+    if !angle.is_finite() || !(0.0..360.0).contains(&angle) {
+        bail!("{name} must be between 0 and 359 degrees");
+    }
+    Ok(angle)
+}
+
+fn parse_font_weight(value: &str) -> Result<u16> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "normal" => Ok(400),
+        "bold" => Ok(700),
+        value => {
+            let weight: u16 = value.parse()?;
+            if !(1..=1000).contains(&weight) {
+                bail!("font-weight must be between 1 and 1000");
+            }
+            Ok(weight)
+        }
+    }
 }
 
 fn parse_color(value: &str, name: &str) -> Result<Color> {
@@ -464,6 +603,57 @@ mod tests {
     }
 
     #[test]
+    fn active_item_key_overrides_all_supported_properties() {
+        let sheet = StyleSheet::parse(
+            "item-key { angle: 359; color: #ff0000; distance: -4px; font-family: Mono; \
+             font-size: 12px; font-weight: 500; opacity: 0.4; scale: 1.1; } \
+             item-key.active { angle: 45deg; color: #00ff00; distance: 8px; \
+             font-size: 15px; font-weight: bold; opacity: 0.9; scale: 1.4; }",
+        );
+        let style = sheet.item_key(true).unwrap();
+
+        assert_eq!(style.angle, 45.0);
+        assert_eq!(style.distance, 8.0);
+        assert_eq!(style.font_family, "Mono");
+        assert_eq!(style.font_size, 15.0);
+        assert_eq!(style.font_weight, 700);
+        assert_eq!(style.opacity, 0.9);
+        assert_eq!(style.scale, 1.4);
+        assert_eq!(style.color.green, 1.0);
+    }
+
+    #[test]
+    fn active_circle_overrides_font_weight_and_requests_both_faces() {
+        let sheet = StyleSheet::parse(
+            "circle { font-family: Inter; font-weight: 400; } \
+             circle.active { font-weight: 700; }",
+        );
+        let normal = sheet.circle(&["circle"]).unwrap();
+        let active = sheet.circle(&["circle", "circle.active"]).unwrap();
+
+        assert_eq!(normal.font_weight, 400);
+        assert_eq!(active.font_weight, 700);
+        assert!(sheet.font_requests().contains(&("Inter".into(), 400)));
+        assert!(sheet.font_requests().contains(&("Inter".into(), 700)));
+    }
+
+    #[test]
+    fn item_key_angle_must_be_less_than_three_sixty() {
+        let sheet = StyleSheet::parse("item-key { angle: 360; }");
+        assert!(sheet.item_key(false).is_err());
+    }
+
+    #[test]
+    fn base_item_key_off_is_inherited_by_the_active_style() {
+        let sheet = StyleSheet::parse(
+            "item-key { off; color: #ff0000; } item-key.active { color: #00ff00; opacity: 1; }",
+        );
+
+        assert!(!sheet.item_key(false).unwrap().enabled);
+        assert!(!sheet.item_key(true).unwrap().enabled);
+    }
+
+    #[test]
     fn return_indicator_overrides_the_base_indicator_style() {
         let sheet = StyleSheet::parse(
             "submenu-indicator { color: #ff0000; opacity: 0.4; width: 20px; } \
@@ -517,6 +707,22 @@ mod tests {
         assert_eq!(
             StyleSheet::parse("circle { width: 70px; }").font_families(),
             vec!["Sans"]
+        );
+    }
+
+    #[test]
+    fn item_key_font_weights_are_requested_without_loading_every_weight() {
+        let sheet = StyleSheet::parse(
+            "circle { font-family: Inter; } item-key { font-family: Mono; font-weight: 500; } \
+             item-key.active { font-weight: 700; }",
+        );
+        assert_eq!(
+            sheet.font_requests(),
+            vec![
+                ("Inter".into(), 400),
+                ("Mono".into(), 500),
+                ("Mono".into(), 700),
+            ]
         );
     }
 
