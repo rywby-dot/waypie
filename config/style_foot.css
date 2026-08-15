@@ -1,52 +1,48 @@
-/* Style.scc. Change manually */
-/* Colors are support RGBA,
-   but it is recommended to change
-   `opacity` instead */
+/* Waypie appearance. Edit this file manually. Colors support RGBA, although
+   separate opacity properties are usually easier to tune. */
 
 
-/* Background of the full-screen Waypie layer. Use transparent to keep the desktop visible. */
+/* Full-screen background. Keep it transparent to leave the desktop unchanged. */
 overlay {
   background-color: transparent;
-/* You can use something like */
+  /* For example, use a low-alpha color to dim the desktop: */
   /* background-color: #00000010; */
-/* to make fade background */
 }
 
 /* Animation physics and durations. Spring animation time is derived from damping-ratio, stiffness, and epsilon. */
 animation {
   /* off */
-/* animation when you hover to item */
+  /* Circle movement and scaling when the focused item changes. */
   hover-damping-ratio: 1;
   hover-stiffness: 1000;
   hover-epsilon: 0.0001;
 
-/* animation for other circles, who follow the cursor */
+  /* Movement of nearby circles as they follow the pointer direction. */
   follow-damping-ratio: 1;
   follow-stiffness: 1000;
   follow-epsilon: 0.0001;
 
-/* animation for menu movements (open submenu for exammple) */
+  /* Movement of menu centers, including submenu navigation. */
   menu-move-damping-ratio: 1;
   menu-move-stiffness: 1000;
   menu-move-epsilon: 0.0001;
 
-/* animation for creation items from submenu */
+  /* Circles growing outward when a menu is opened. */
   item-create-damping-ratio: 1;
   item-create-stiffness: 1000;
   item-create-epsilon: 0.0001;
 
-/* animation when you choose an iteem (before menu close) */
+  /* Selected action travelling to the pointer before the menu closes. */
   action-damping-ratio: 1;
   action-stiffness: 1000;
   action-epsilon: 0.0001;
 
-/* animation for submenu indicator */
+  /* Movement and scaling of submenu indicators. */
   submenu-indicator-damping-ratio: 1;
   submenu-indicator-stiffness: 1000;
   submenu-indicator-epsilon: 0.0001;
 
-/* simple animations with only duration */
-/* for opacity and color changes */
+  /* Timed color, opacity, icon, connector, removal, and closing effects. */
   color-duration: 0ms;
   opacity-duration: 0ms;
   icon-duration: 0ms;
@@ -62,7 +58,7 @@ circle {
   border-color: #5f676a;
   border-width: 2px;
 
-/* 50% for circle, 0% for square */
+  /* 50% makes a circle; 0% makes a square. */
   border-radius: 0%;
 
   color: #ffffff;
@@ -71,7 +67,7 @@ circle {
   font-size: 14px;
   font-weight: 400;
 
-/* fill - how icon and text fill the circle */
+  /* Percentage of the available inner area used by text and icons. */
   text-fill: 100%;
   icon-fill: 57%;
 
@@ -169,8 +165,7 @@ item-key.active {
 }
 
 
-/* CONFIGURATOR SETTINGS */
-/* DO NOT AFFECT ON MENU */
+/* CONFIGURATOR-ONLY SETTINGS. These do not affect the runtime menu. */
 
 
 
