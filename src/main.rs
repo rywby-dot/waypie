@@ -1,9 +1,9 @@
 use std::{
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
     io::ErrorKind,
-    os::unix::net::UnixDatagram,
+    os::unix::{fs::PermissionsExt, net::UnixDatagram},
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
@@ -40,7 +40,22 @@ enum CliMode {
     Show,
     Kill,
     Configure,
+    Help,
 }
+
+const HELP: &str = "\
+Usage: waypie [--show|--kill|--configure|--config] [-c PATH] [-s PATH]
+
+Commands:
+  --show             Open Waypie, or close the currently open instance
+  --kill             Close the currently open instance
+  --configure        Open the graphical configurator
+  --config           Alias for --configure
+  -h, --help         Show this help message
+
+Options:
+  -c PATH            Use this config file for this invocation
+  -s PATH            Use this style file for this invocation";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Cli {
@@ -71,6 +86,7 @@ fn parse_cli(arguments: impl IntoIterator<Item = OsString>) -> Result<Cli> {
             "--show" => Some(CliMode::Show),
             "--kill" => Some(CliMode::Kill),
             "--configure" | "--config" => Some(CliMode::Configure),
+            "-h" | "--help" => Some(CliMode::Help),
             "-c" => {
                 if config_path.is_some() {
                     bail!("-c may only be specified once");
@@ -89,15 +105,13 @@ fn parse_cli(arguments: impl IntoIterator<Item = OsString>) -> Result<Cli> {
                 ));
                 None
             }
-            _ => bail!(
-                "unknown argument {option:?}; usage: waypie [--show|--kill|--configure|--config] [-c PATH] [-s PATH]"
-            ),
+            _ => bail!("unknown argument {option:?}; use waypie --help for usage"),
         };
         if let Some(requested_mode) = requested_mode {
             if let Some(previous) = mode
                 && previous != requested_mode
             {
-                bail!("only one of --show, --kill, and --configure may be used");
+                bail!("only one command may be used at a time");
             }
             mode = Some(requested_mode);
         }
@@ -115,6 +129,10 @@ fn parse_cli(arguments: impl IntoIterator<Item = OsString>) -> Result<Cli> {
 
 fn run() -> Result<()> {
     let cli = parse_cli(env::args_os().skip(1))?;
+    if cli.mode == CliMode::Help {
+        println!("{HELP}");
+        return Ok(());
+    }
     if cli.mode == CliMode::Configure {
         let mut command = Command::new("waypie-config");
         if cli.custom_config {
@@ -240,13 +258,29 @@ fn runtime_socket_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("waypie");
-    let display = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland".into());
-    runtime.join(format!("control-{display}.sock"))
+    let display = env::var_os("WAYLAND_DISPLAY").unwrap_or_else(|| OsString::from("wayland"));
+    runtime_socket_path_for(&runtime, &display)
+}
+
+fn runtime_socket_path_for(runtime: &Path, display: &OsStr) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+
+    // WAYLAND_DISPLAY is normally a short socket name, but it may also be an
+    // absolute path. Hashing it keeps the control socket inside our runtime
+    // directory and below Unix-domain socket path limits.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in display.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    runtime.join(format!("control-{hash:016x}.sock"))
 }
 
 fn bind_control_socket() -> Result<(UnixDatagram, PathBuf)> {
     let path = runtime_socket_path();
-    fs::create_dir_all(path.parent().expect("runtime socket has a parent"))?;
+    let directory = path.parent().expect("runtime socket has a parent");
+    fs::create_dir_all(directory)?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
     let socket =
         UnixDatagram::bind(&path).with_context(|| format!("cannot bind {}", path.display()))?;
     socket.set_nonblocking(true)?;
@@ -315,5 +349,25 @@ mod tests {
     fn missing_paths_and_conflicting_modes_are_rejected() {
         assert!(parse_cli(args(&["-c"])).is_err());
         assert!(parse_cli(args(&["--show", "--kill"])).is_err());
+    }
+
+    #[test]
+    fn help_is_a_real_cli_mode() {
+        assert_eq!(parse_cli(args(&["--help"])).unwrap().mode, CliMode::Help);
+        assert_eq!(parse_cli(args(&["-h"])).unwrap().mode, CliMode::Help);
+    }
+
+    #[test]
+    fn display_paths_cannot_escape_the_runtime_directory() {
+        let runtime = Path::new("/tmp/waypie-test");
+        let path = runtime_socket_path_for(runtime, OsStr::new("../../wayland-1"));
+
+        assert_eq!(path.parent(), Some(runtime));
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("control-")
+        );
     }
 }

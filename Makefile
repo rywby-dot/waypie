@@ -47,9 +47,9 @@ check:
 	$(CARGO) fmt --manifest-path $(RUST_MANIFEST) -- --check
 	$(CARGO) clippy --locked --all-targets --manifest-path $(RUST_MANIFEST) -- -D warnings
 	$(CARGO) test --locked --manifest-path $(RUST_MANIFEST)
-	$(RUFF) format --check waypie_animation.py waypie_config.py waypie_common.py
-	$(RUFF) check waypie_animation.py waypie_config.py waypie_common.py tests
-	$(PYTHON) -m py_compile waypie_animation.py waypie_config.py waypie_common.py
+	$(RUFF) format --check waypie_config.py waypie_common.py
+	$(RUFF) check waypie_config.py waypie_common.py tests
+	$(PYTHON) -m py_compile waypie_config.py waypie_common.py
 	$(PYTHON) -m unittest discover -s tests
 
 install:
@@ -63,8 +63,8 @@ forceinstall:
 	$(MAKE) force-install-config
 
 install-runtime: build
-	$(INSTALL) -d $(BINDIR)
-	$(INSTALL) -m 755 $(RUST_BINARY) $(BINDIR)/waypie
+	$(INSTALL) -d "$(BINDIR)"
+	$(INSTALL) -m 755 "$(RUST_BINARY)" "$(BINDIR)/waypie"
 
 install-configurator:
 	@if $(PIPX) list --short | awk '{ print $$1 }' | grep -qx waypie; then \
@@ -76,7 +76,7 @@ install-configurator:
 	fi
 
 install-config:
-	$(INSTALL) -d $(CONFIG_DIR)
+	$(INSTALL) -d "$(CONFIG_DIR)"
 	@if [ ! -e "$(CONFIG_DIR)/config" ]; then \
 		$(INSTALL) -m 644 "$(DEFAULT_CONFIG)" "$(CONFIG_DIR)/config"; \
 	fi
@@ -93,7 +93,7 @@ install-icons:
 	@$(CP) -R --update=none "$(ICON_SOURCE_DIR)/." "$(CONFIG_DIR)/icons/"
 
 force-install-config:
-	$(INSTALL) -d $(CONFIG_DIR)
+	$(INSTALL) -d "$(CONFIG_DIR)"
 	@if [ -e "$(CONFIG_DIR)/config" ]; then \
 		$(CP) -p -f "$(CONFIG_DIR)/config" "$(CONFIG_DIR)/config.bak"; \
 	fi
@@ -109,7 +109,7 @@ force-install-config:
 	$(MAKE) install-icons
 
 uninstall:
-	rm -f $(BINDIR)/waypie
+	rm -f "$(BINDIR)/waypie"
 	-$(PIPX) uninstall waypie
 
 clean:

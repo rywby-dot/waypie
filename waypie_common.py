@@ -12,6 +12,90 @@ STYLE_PATH = CONFIG_DIR / "style.css"
 ICON_DIR = CONFIG_DIR / "icons"
 ICON_HISTORY_PATH = CONFIG_DIR / ".icon-history.json"
 ICON_EXTENSIONS = {".svg", ".png", ".webp", ".jpg", ".jpeg", ".gif"}
+MAX_ANIMATION_SECONDS = 60 * 60
+CSS_NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+CIRCLE_PROPERTIES = {
+    "background-color",
+    "border-color",
+    "border-width",
+    "border-radius",
+    "color",
+    "cut-indicators",
+    "distance",
+    "font-size",
+    "font-family",
+    "font-weight",
+    "follow-distance",
+    "icon-fill",
+    "icon-size",
+    "opacity",
+    "text-fill",
+    "text-opacity",
+    "protrusion",
+    "scale",
+    "width",
+}
+ITEM_KEY_PROPERTIES = {
+    "angle",
+    "color",
+    "distance",
+    "off",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "opacity",
+    "scale",
+}
+CIRCLE_SELECTORS = {
+    "overlay",
+    "circle",
+    "circle.active",
+    "circle.item",
+    "circle.item.active",
+    "circle.submenu",
+    "circle.submenu.active",
+    "circle.center",
+    "circle.center.active",
+    "circle.history",
+    "circle.history.active",
+    "circle.previous",
+    "connector",
+    "connector.active",
+    "submenu-indicator",
+    "submenu-indicator.active",
+    "submenu-indicator.return",
+    "submenu-indicator.return.active",
+    "parent-link",
+    "configurator-history",
+}
+ANIMATION_PROPERTIES = {
+    "off",
+    "color-duration",
+    "opacity-duration",
+    "icon-duration",
+    "connector-duration",
+    "item-delete-duration",
+    "close-duration",
+    "action-scale",
+    "hover-duration",
+    "follow-duration",
+    "menu-duration",
+    "menu-move-duration",
+    "item-create-duration",
+    "action-duration",
+    "submenu-indicator-duration",
+} | {
+    f"{prefix}-{suffix}"
+    for prefix in (
+        "hover",
+        "follow",
+        "menu-move",
+        "item-create",
+        "action",
+        "submenu-indicator",
+    )
+    for suffix in ("damping-ratio", "stiffness", "epsilon")
+}
 
 
 @dataclass
@@ -60,6 +144,7 @@ DEFAULT_STYLE = {
     "distance": None,
     "font-size": 14.0,
     "font-family": "Sans",
+    "font-weight": 400,
     "follow-distance": 0.0,
     "icon-fill": None,
     "icon-size": None,
@@ -85,6 +170,27 @@ def load_config(path=CONFIG_PATH):
     menu = source.get("menu")
     if not isinstance(menu, dict):
         raise SystemExit("waypie: config requires a [menu] table")
+    known_settings = {
+        "menu-radius",
+        "center-hitbox-size",
+        "minimum-edge-distance",
+        "center-mode",
+        "always-center-mode",
+        "back-keys",
+        "autogenerate-key-sets",
+        "close-submenu-on-center-click",
+        "hover-mode",
+        "turbo-mode",
+        "hold-to-turbo",
+        "travel-item-animation",
+        "preserve-proportions",
+        "auto-alignment",
+        "configurator-show-icons",
+        "menu",
+    }
+    unknown = sorted(set(source) - known_settings)
+    if unknown:
+        raise SystemExit(f"waypie: unknown config setting: {unknown[0]}")
 
     menu_radius = positive_number(source.get("menu-radius", 170), "menu-radius")
     center_hitbox_size = optional_nonnegative(
@@ -153,6 +259,12 @@ def load_config(path=CONFIG_PATH):
 def parse_item(source, location, root=False):
     if not isinstance(source, dict):
         raise SystemExit(f"waypie: {location} must be a table")
+    unknown = sorted(
+        set(source)
+        - {"label", "keys", "command", "angle", "icon-theme", "icon", "items"}
+    )
+    if unknown:
+        raise SystemExit(f"waypie: unknown {location} setting: {unknown[0]}")
 
     label = source.get("label", "")
     keys = parse_keys(source.get("keys", ""), f"{location}.keys")
@@ -308,15 +420,21 @@ def boolean(value, location):
 
 
 def resolve_angles(item, root=False):
-    extra_items = 0 if root else 1
-    count = len(item.items) + extra_items
+    count = len(item.items)
     step = 360 / count if count else 0
     for index, child in enumerate(item.items):
         if child.angle is None:
             child.angle = round(index * step) % 360
         resolve_angles(child)
     if not root and item.is_submenu:
-        item.return_angle = (item.angle + 180) % 360
+        preferred = ((item.angle or 0) + 180) % 360
+        item.return_angle = largest_gap_angle(
+            [child.angle % 360 for child in item.items],
+            preferred,
+        )
+        if item.return_angle is None:
+            item.return_angle = preferred
+        item.return_angle = round(item.return_angle) % 360
 
 
 def largest_gap_angle(angles, preferred=None):
@@ -347,7 +465,32 @@ def load_styles(path=STYLE_PATH):
     except OSError as error:
         raise SystemExit(f"waypie: cannot read {path}: {error}") from error
 
+    comments = source
+    while True:
+        start = comments.find("/*")
+        if start < 0:
+            break
+        if "*/" in comments[:start]:
+            raise SystemExit("waypie: style contains an unmatched comment terminator")
+        end = comments.find("*/", start + 2)
+        if end < 0:
+            raise SystemExit("waypie: style contains an unclosed comment")
+        comments = comments[end + 2 :]
+    if "*/" in comments:
+        raise SystemExit("waypie: style contains an unmatched comment terminator")
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    depth = 0
+    for character in source:
+        if character == "{":
+            if depth:
+                raise SystemExit("waypie: nested style blocks are not supported")
+            depth = 1
+        elif character == "}":
+            if not depth:
+                raise SystemExit("waypie: style contains an unmatched closing brace")
+            depth = 0
+    if depth:
+        raise SystemExit("waypie: style contains an unclosed block")
     rules = {}
     for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
         properties = {}
@@ -357,7 +500,14 @@ def load_styles(path=STYLE_PATH):
             for line in statement.splitlines()
         ):
             properties["off"] = "true"
+        declarations = "\n".join(
+            line for line in declarations.splitlines() if line.strip().lower() != "off"
+        )
         for declaration in declarations.split(";"):
+            if declaration.strip() and ":" not in declaration:
+                raise SystemExit(
+                    f"waypie: invalid style declaration: {declaration.strip()}"
+                )
             if ":" not in declaration:
                 continue
             name, value = declaration.split(":", 1)
@@ -371,7 +521,48 @@ def load_styles(path=STYLE_PATH):
     for name in ("width",):
         if base_circle[name] is None:
             raise SystemExit(f"waypie: style.css requires circle {{ {name}: ...; }}")
+    validate_styles(rules)
     return rules
+
+
+def validate_styles(rules):
+    for selector in rules:
+        if selector == "animation":
+            unknown = set(rules[selector]) - ANIMATION_PROPERTIES
+            if unknown:
+                raise SystemExit(f"waypie: unknown animation property: {min(unknown)}")
+            for name in (
+                "color-duration",
+                "opacity-duration",
+                "icon-duration",
+                "connector-duration",
+                "item-delete-duration",
+                "close-duration",
+            ):
+                animation_duration(rules, name)
+            for prefix in (
+                "hover",
+                "follow",
+                "menu-move",
+                "item-create",
+                "action",
+                "submenu-indicator",
+            ):
+                spring_duration(rules, prefix)
+            animation_number(rules, "action-scale", 1.3)
+        elif selector in {"item-key", "item-key.active"}:
+            unknown = set(rules[selector]) - ITEM_KEY_PROPERTIES
+            if unknown:
+                raise SystemExit(f"waypie: unknown {selector} property: {min(unknown)}")
+            computed_item_key_style(rules, selector == "item-key.active")
+        else:
+            if selector not in CIRCLE_SELECTORS:
+                raise SystemExit(f"waypie: unknown style selector: {selector}")
+            unknown = set(rules[selector]) - CIRCLE_PROPERTIES
+            if unknown:
+                raise SystemExit(f"waypie: unknown {selector} property: {min(unknown)}")
+            style = computed_style(rules, (selector,))
+            resolve_radius(style["border-radius"], style["width"] or 1.0)
 
 
 def computed_style(rules, selectors):
@@ -409,6 +600,51 @@ def computed_style(rules, selectors):
                 style[name] = value
             elif name == "font-family":
                 style[name] = value.strip("\"'")
+            elif name == "font-weight":
+                style[name] = parse_font_weight(value)
+    return style
+
+
+def computed_item_key_style(rules, active=False):
+    style = {
+        "angle": 0.0,
+        "color": (1.0, 1.0, 1.0, 1.0),
+        "distance": 8.0,
+        "enabled": True,
+        "font-family": "Sans",
+        "font-size": 12.0,
+        "font-weight": 600,
+        "opacity": 1.0,
+        "scale": 1.0,
+    }
+    selectors = ("item-key", "item-key.active") if active else ("item-key",)
+    for selector in selectors:
+        for name, value in rules.get(selector, {}).items():
+            if name == "angle":
+                angle = value.strip().removesuffix("deg").strip()
+                try:
+                    angle = float(angle)
+                except ValueError:
+                    raise SystemExit(f"waypie: invalid angle: {value}") from None
+                if not math.isfinite(angle) or not 0 <= angle < 360:
+                    raise SystemExit("waypie: angle must be between 0 and 359 degrees")
+                style[name] = angle
+            elif name == "color":
+                style[name] = parse_color(value, name)
+            elif name == "distance":
+                style[name] = parse_signed_pixels(value, name)
+            elif name == "off":
+                style["enabled"] = False
+            elif name == "font-family":
+                style[name] = value.strip("\"'")
+            elif name == "font-size":
+                style[name] = parse_pixels(value, name)
+            elif name == "font-weight":
+                style[name] = parse_font_weight(value)
+            elif name == "opacity":
+                style[name] = parse_opacity(value)
+            elif name == "scale":
+                style[name] = positive_number_string(value, name)
     return style
 
 
@@ -527,24 +763,34 @@ def icon_path(theme, icon):
 
 
 def parse_pixels(value, name):
-    match = re.fullmatch(r"(-?(?:\d+(?:\.\d*)?|\.\d+))(?:px)?", value)
+    match = re.fullmatch(rf"({CSS_NUMBER})(?:px)?", value)
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
-    return max(0.0, float(match.group(1)))
+    number = float(match.group(1))
+    if not math.isfinite(number):
+        raise SystemExit(f"waypie: invalid {name}: {value}")
+    return max(0.0, number)
 
 
 def parse_signed_pixels(value, name):
-    match = re.fullmatch(r"(-?(?:\d+(?:\.\d*)?|\.\d+))(?:px)?", value)
+    match = re.fullmatch(rf"({CSS_NUMBER})(?:px)?", value)
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
-    return float(match.group(1))
+    number = float(match.group(1))
+    if not math.isfinite(number):
+        raise SystemExit(f"waypie: invalid {name}: {value}")
+    return number
 
 
 def parse_percentage(value, name, bounded=True):
-    match = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)%", value)
+    match = re.fullmatch(rf"({CSS_NUMBER})%", value)
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
     percentage = float(match.group(1))
+    if not math.isfinite(percentage):
+        raise SystemExit(f"waypie: invalid {name}: {value}")
+    if percentage < 0:
+        raise SystemExit(f"waypie: {name} cannot be negative")
     if bounded and percentage > 100:
         raise SystemExit(f"waypie: {name} must be between 0% and 100%")
     return percentage / 100
@@ -566,8 +812,11 @@ def parse_color(value, name):
         parts = [part.strip() for part in match.group(1).split(",")]
         if len(parts) in (3, 4):
             try:
-                rgb = [max(0, min(255, float(part))) / 255 for part in parts[:3]]
-                alpha = max(0.0, min(1.0, float(parts[3]))) if len(parts) == 4 else 1.0
+                channels = [float(part) for part in parts]
+                if any(not math.isfinite(channel) for channel in channels):
+                    raise ValueError
+                rgb = [max(0, min(255, channel)) / 255 for channel in channels[:3]]
+                alpha = max(0.0, min(1.0, channels[3])) if len(parts) == 4 else 1.0
                 return *rgb, alpha
             except ValueError:
                 pass
@@ -594,6 +843,21 @@ def positive_number_string(value, name):
     return number
 
 
+def parse_font_weight(value):
+    normalized = value.strip().lower()
+    if normalized == "normal":
+        return 400
+    if normalized == "bold":
+        return 700
+    try:
+        weight = int(normalized)
+    except ValueError:
+        raise SystemExit(f"waypie: invalid font-weight: {value}") from None
+    if not 1 <= weight <= 1000:
+        raise SystemExit("waypie: font-weight must be between 1 and 1000")
+    return weight
+
+
 def animation_duration(rules, name, fallback_name=None):
     if animations_off(rules):
         return 0.0
@@ -602,12 +866,17 @@ def animation_duration(rules, name, fallback_name=None):
     if value is None and fallback_name is not None:
         value = animation.get(fallback_name)
     value = (value or "0ms").strip().lower()
-    match = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)(ms|s)", value)
+    match = re.fullmatch(rf"({CSS_NUMBER})\s*(ms|s)", value)
     if not match:
         raise SystemExit(f"waypie: invalid {name}: {value}")
     duration, unit = match.groups()
     seconds = float(duration)
-    return seconds / 1000 if unit == "ms" else seconds
+    if seconds < 0:
+        raise SystemExit(f"waypie: invalid {name}: {value}")
+    seconds = seconds / 1000 if unit == "ms" else seconds
+    if not math.isfinite(seconds) or seconds > MAX_ANIMATION_SECONDS:
+        raise SystemExit(f"waypie: {name} cannot exceed one hour")
+    return seconds
 
 
 def spring_duration(rules, prefix):
@@ -645,7 +914,14 @@ def spring_duration(rules, prefix):
             low = middle
         else:
             high = middle
-    return high / math.sqrt(stiffness)
+    duration = high / math.sqrt(stiffness)
+    if not math.isfinite(duration):
+        raise SystemExit(
+            f"waypie: {prefix} spring parameters produce an unsupported duration"
+        )
+    if duration > MAX_ANIMATION_SECONDS:
+        raise SystemExit(f"waypie: {prefix} spring duration cannot exceed one hour")
+    return duration
 
 
 def spring_value(rules, prefix, progress):
@@ -693,7 +969,9 @@ def resolve_radius(value, size):
     value = value.strip().lower()
     if value.endswith("%"):
         try:
-            return min(size / 2, max(0, size * float(value[:-1]) / 100))
+            percentage = float(value[:-1])
+            if math.isfinite(percentage):
+                return min(size / 2, max(0, size * percentage / 100))
         except ValueError:
             pass
     return min(size / 2, parse_pixels(value, "border-radius"))
@@ -702,6 +980,32 @@ def resolve_radius(value, size):
 def set_source_color(context, color, opacity):
     red, green, blue, alpha = color
     context.set_source_rgba(red, green, blue, alpha * opacity)
+
+
+def draw_connector(context, start, end, style, opacity=1.0):
+    width = style.get("width")
+    if width is None or width <= 0 or opacity <= 0:
+        return
+    delta_x = end[0] - start[0]
+    delta_y = end[1] - start[1]
+    length = math.hypot(delta_x, delta_y)
+    start_radius = start[2] / 2
+    end_radius = end[2] / 2
+    if length <= start_radius + end_radius or length <= 0:
+        return
+    direction_x = delta_x / length
+    direction_y = delta_y / length
+    context.set_line_width(width)
+    set_source_color(context, style["color"], style["opacity"] * opacity)
+    context.move_to(
+        start[0] + direction_x * start_radius,
+        start[1] + direction_y * start_radius,
+    )
+    context.line_to(
+        end[0] - direction_x * end_radius,
+        end[1] - direction_y * end_radius,
+    )
+    context.stroke()
 
 
 def rounded_rectangle(context, x, y, width, height, radius):
@@ -794,7 +1098,7 @@ def draw_wrapped_text(
     context.select_font_face(
         style["font-family"],
         0,
-        0,
+        1 if style["font-weight"] >= 600 else 0,
     )
     context.set_font_size(style["font-size"])
     font_ascent, font_descent, font_height, _max_x, _max_y = context.font_extents()

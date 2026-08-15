@@ -4,6 +4,7 @@ import json
 import math
 import shutil
 import sys
+from collections import OrderedDict
 from pathlib import Path
 
 import cairo
@@ -28,6 +29,7 @@ from waypie_common import (
     computed_style,
     content_opacity,
     direction_angle,
+    draw_connector,
     draw_wrapped_text,
     fixed_text_geometry,
     icon_path,
@@ -59,6 +61,7 @@ DEFAULT_PARENT_LINK = {
 DEFAULT_HISTORY = {"opacity": "0.35", "scale": "2"}
 ALL_ICON_THEMES = "__waypie_all_icon_themes__"
 INDICATOR_CLIP_OVERLAP = 1.0
+ICON_CACHE_LIMIT = 256
 
 
 class Configurator(Gtk.Application):
@@ -111,7 +114,7 @@ class Configurator(Gtk.Application):
         self.preview_departures = []
         self.preview_tick = None
         self.preview_hover_target = None
-        self.icon_cache = {}
+        self.icon_cache = OrderedDict()
         self.rebuilding_tree = False
         self.restoring_undo = False
         self.undo_history = []
@@ -320,7 +323,7 @@ class Configurator(Gtk.Application):
                 (
                     self.settings.center_hitbox_size
                     if self.settings.center_hitbox_size is not None
-                    else computed_style(self.styles, ("circle",))["width"]
+                    else self.default_center_hitbox_size()
                 ),
                 "Diameter of the central click area; set it to 0 to disable that area.",
             ),
@@ -476,6 +479,10 @@ class Configurator(Gtk.Application):
         container.append(Gtk.Label(label=label, xalign=0))
         container.append(widget)
         return widget
+
+    def default_center_hitbox_size(self):
+        style = computed_style(self.styles, ("circle", "circle.center"))
+        return style["width"] * style["scale"]
 
     def item_at(self, path):
         item = self.settings.root
@@ -644,7 +651,7 @@ class Configurator(Gtk.Application):
 
     def on_shortcut_pressed(self, _controller, keyval, _keycode, state):
         focus = self.window.get_focus()
-        if self.is_editable_widget(focus):
+        if self.is_editable_widget(focus) or self.drag_index is not None:
             return False
         control = bool(state & Gdk.ModifierType.CONTROL_MASK)
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
@@ -718,7 +725,7 @@ class Configurator(Gtk.Application):
             for name, spin in self.setting_spins.items():
                 value = getattr(self.settings, name)
                 if value is None:
-                    value = computed_style(self.styles, ("circle",))["width"]
+                    value = self.default_center_hitbox_size()
                 spin.set_value(value)
             for check, value in (
                 (self.preserve_check, self.settings.preserve_proportions),
@@ -1023,6 +1030,7 @@ class Configurator(Gtk.Application):
 
     def draw_preview_departures(self, context):
         now = GLib.get_monotonic_time() / 1_000_000
+        had_departures = bool(self.preview_departures)
         remaining = []
         for departure in self.preview_departures:
             duration = departure["duration"]
@@ -1053,6 +1061,28 @@ class Configurator(Gtk.Application):
             if progress < 1:
                 remaining.append(departure)
         self.preview_departures = remaining
+        if had_departures and not remaining:
+            self.prune_preview_animation_caches()
+
+    def prune_preview_animation_caches(self):
+        live_ids = {id(menu) for menu in menus_breadth_first(self.settings.root)}
+        live_ids.update(
+            id(item)
+            for menu in menus_breadth_first(self.settings.root)
+            for item in menu.items
+        )
+        live_ids.update(id(departure["item"]) for departure in self.preview_departures)
+        for animations in (
+            self.preview_animations,
+            self.preview_color_animations,
+            self.preview_opacity_animations,
+        ):
+            for key in list(animations):
+                object_ids = [part for part in key if isinstance(part, int)]
+                if object_ids and not any(
+                    object_id in live_ids for object_id in object_ids
+                ):
+                    del animations[key]
 
     def on_preview_animation_frame(self, _canvas, _frame_clock):
         now = GLib.get_monotonic_time() / 1_000_000
@@ -1166,16 +1196,14 @@ class Configurator(Gtk.Application):
             )
             connector = computed_style(self.styles, ("connector",))
             if connector["width"]:
-                context.set_line_width(connector["width"])
-                for _index, _item, _style, x, y, _size, opacity in parent_circles:
-                    set_source_color(
+                for _index, _item, _style, x, y, size, opacity in parent_circles:
+                    draw_connector(
                         context,
-                        connector["color"],
-                        connector["opacity"] * min(parent_geometry[3], opacity),
+                        parent_geometry[:3],
+                        (x, y, size),
+                        connector,
+                        min(parent_geometry[3], opacity),
                     )
-                    context.move_to(*parent_geometry[:2])
-                    context.line_to(x, y)
-                    context.stroke()
             self.draw_preview_item(
                 context,
                 *parent_geometry[:3],
@@ -1257,16 +1285,14 @@ class Configurator(Gtk.Application):
 
         connector = computed_style(self.styles, ("connector",))
         if connector["width"]:
-            context.set_line_width(connector["width"])
-            for _index, _item, _style, x, y, _size, opacity in circles:
-                set_source_color(
+            for _index, _item, _style, x, y, size, opacity in circles:
+                draw_connector(
                     context,
-                    connector["color"],
-                    connector["opacity"] * min(center_geometry[3], opacity),
+                    center_geometry[:3],
+                    (x, y, size),
+                    connector,
+                    min(center_geometry[3], opacity),
                 )
-                context.move_to(*center_geometry[:2])
-                context.line_to(x, y)
-                context.stroke()
 
         self.draw_preview_item(
             context,
@@ -1400,6 +1426,7 @@ class Configurator(Gtk.Application):
         key = (str(path), path.stat().st_mtime_ns, size, color)
         pixbuf = self.icon_cache.get(key)
         if pixbuf is not None:
+            self.icon_cache.move_to_end(key)
             return pixbuf
         if path.suffix.lower() == ".svg":
             source = colored_svg_source(path, color)
@@ -1416,6 +1443,8 @@ class Configurator(Gtk.Application):
                 True,
             )
         self.icon_cache[key] = pixbuf
+        while len(self.icon_cache) > ICON_CACHE_LIMIT:
+            self.icon_cache.popitem(last=False)
         return pixbuf
 
     def draw_preview_submenu_indicators(
@@ -2037,6 +2066,8 @@ class Configurator(Gtk.Application):
             )
             for theme, icon in visible:
                 path = icon_path(theme, icon)
+                if path is None:
+                    continue
                 button = Gtk.Button(tooltip_text=f"{theme}: {icon}")
                 try:
                     pixbuf = self.load_icon_pixbuf(path, 56, icon_style["color"])
@@ -2095,8 +2126,16 @@ class Configurator(Gtk.Application):
     def set_status(self, message, error=False):
         if message.startswith("Saved"):
             self.status.set_text("Saved")
+            self.status.set_tooltip_text(
+                "Saved means the file is up to date; Unsaved means changes still need saving."
+            )
+        elif error:
+            self.status.set_tooltip_text(message)
         elif not error and not message.startswith("Editing:"):
             self.status.set_text("Unsaved")
+            self.status.set_tooltip_text(
+                "Saved means the file is up to date; Unsaved means changes still need saving."
+            )
 
 
 def validate_editable_tree(item, root=True, location="menu"):
@@ -2186,9 +2225,26 @@ def serialize_config(settings):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="waypie-config")
-    parser.add_argument("-c", dest="config_path", type=Path, default=CONFIG_PATH)
-    parser.add_argument("-s", dest="style_path", type=Path, default=STYLE_PATH)
+    parser = argparse.ArgumentParser(
+        prog="waypie-config",
+        description="Edit a Waypie menu configuration.",
+    )
+    parser.add_argument(
+        "-c",
+        dest="config_path",
+        type=Path,
+        default=CONFIG_PATH,
+        metavar="PATH",
+        help="configuration file to edit for this invocation",
+    )
+    parser.add_argument(
+        "-s",
+        dest="style_path",
+        type=Path,
+        default=STYLE_PATH,
+        metavar="PATH",
+        help="style file used by the preview for this invocation",
+    )
     arguments = parser.parse_args()
     try:
         exit_code = Configurator(

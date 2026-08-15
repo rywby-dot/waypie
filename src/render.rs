@@ -1236,14 +1236,18 @@ impl Renderer {
         let final_circle_size = style.width.unwrap_or(circle_size) * style.scale;
         let source_size = (scaled_size(final_circle_size).ceil() * 2.0).max(2.0) as u32;
         let rgba = [
-            (style.color.red * 255.0) as u8,
-            (style.color.green * 255.0) as u8,
-            (style.color.blue * 255.0) as u8,
+            (style.color.red * 255.0).round() as u8,
+            (style.color.green * 255.0).round() as u8,
+            (style.color.blue * 255.0).round() as u8,
             255,
         ];
         let key = (path.clone(), source_size, rgba);
         if !self.icons.contains_key(&key) {
-            let loaded = if path.extension().is_some_and(|extension| extension == "svg") {
+            let loaded = if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+            {
                 load_svg(&path, source_size, rgba)
             } else {
                 load_raster(&path, source_size)
@@ -1483,7 +1487,7 @@ fn load_svg(path: &Path, size: u32, color: [u8; 4]) -> Option<Pixmap> {
     let replacement = format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
     if source.contains("currentColor") {
         source = source.replace("currentColor", &replacement);
-    } else if !source.contains("fill=\"") && !source.contains("stroke=\"") {
+    } else if !has_explicit_svg_paint(&source) {
         source = source.replacen("<svg", &format!("<svg fill=\"{replacement}\""), 1);
     }
     let tree =
@@ -1498,6 +1502,19 @@ fn load_svg(path: &Path, size: u32, color: [u8; 4]) -> Option<Pixmap> {
     );
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     Some(pixmap)
+}
+
+fn has_explicit_svg_paint(source: &str) -> bool {
+    let compact = source
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    ["fill", "stroke"].iter().any(|attribute| {
+        ["'#", "\"#", "'rgb", "\"rgb", "'hsl", "\"hsl"]
+            .iter()
+            .any(|value| compact.contains(&format!("{attribute}={value}")))
+    })
 }
 
 fn padded_pixmap(source: &Pixmap) -> Option<Pixmap> {
@@ -1540,6 +1557,13 @@ mod tests {
             visible_label(ItemContent::Label("Hovered"), "Center", true),
             Some("Hovered")
         );
+    }
+
+    #[test]
+    fn svg_paint_detection_supports_single_quotes_and_spacing() {
+        assert!(has_explicit_svg_paint("<path fill = '#123456'/>"));
+        assert!(has_explicit_svg_paint("<path stroke='rgb(1, 2, 3)'/>"));
+        assert!(!has_explicit_svg_paint("<path fill='none'/>"));
     }
 
     #[test]

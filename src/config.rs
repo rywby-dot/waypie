@@ -7,6 +7,7 @@ use crate::geometry::angular_distance;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_menu_radius")]
     pub menu_radius: f64,
@@ -20,6 +21,8 @@ pub struct Config {
     #[serde(default)]
     pub back_keys: String,
     #[serde(default)]
+    pub autogenerate_key_sets: String,
+    #[serde(default)]
     pub hover_mode: bool,
     #[serde(default)]
     pub turbo_mode: bool,
@@ -29,10 +32,17 @@ pub struct Config {
     pub travel_item_animation: bool,
     #[serde(default)]
     pub close_submenu_on_center_click: bool,
+    #[serde(default)]
+    pub preserve_proportions: bool,
+    #[serde(default)]
+    pub auto_alignment: bool,
+    #[serde(default)]
+    pub configurator_show_icons: bool,
     pub menu: Item,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Item {
     #[serde(default)]
     pub label: String,
@@ -108,6 +118,11 @@ fn validate_item(item: &Item, path: &str, root: bool) -> Result<()> {
     }
     if item.icon_theme.is_some() != item.icon.is_some() {
         bail!("{path}.icon-theme and .icon must be used together");
+    }
+    if item.icon_theme.as_deref().is_some_and(str::is_empty)
+        || item.icon.as_deref().is_some_and(str::is_empty)
+    {
+        bail!("{path}.icon-theme and .icon cannot be empty");
     }
     validate_keys(&item.keys, &format!("{path}.keys"))?;
     let mut assigned = HashMap::new();
@@ -290,5 +305,16 @@ mod tests {
         let source = "[menu]\nlabel='Root'\n[[menu.items]]\nlabel='One'\nkeys='ж'\ncommand='true'\n[[menu.items]]\nlabel='Two'\nkeys='Ж'\ncommand='true'";
         let config: Config = toml::from_str(source).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn unknown_config_and_item_fields_are_rejected() {
+        assert!(toml::from_str::<Config>("typo-mode = true\n[menu]\nlabel = 'Root'").is_err());
+        assert!(
+            toml::from_str::<Config>(
+                "[menu]\nlabel = 'Root'\n[[menu.items]]\nlabel = 'Action'\ncommand = 'true'\nagnle = 90"
+            )
+            .is_err()
+        );
     }
 }

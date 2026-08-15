@@ -1,9 +1,20 @@
 [package]
 name = "waypie"
-version = "1.1.1"
+version = "2.0.0"
 edition = "2024"
 license = "MIT"
 description = "A lightweight Kando-like radial menu for Wayland"
+repository = "https://github.com/rywby-dot/waypie"
+include = [
+    "src/**",
+    "config/config",
+    "config/style.css",
+    "config/style_foot.css",
+    "Cargo.toml",
+    "Cargo.lock",
+    "LICENSE",
+    "README.md",
+]
 
 [dependencies]
 anyhow = "1"

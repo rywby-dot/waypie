@@ -8,6 +8,40 @@ use std::{
 use crate::animation::Spring;
 use anyhow::{Context, Result, bail};
 
+const MAX_ANIMATION_DURATION: Duration = Duration::from_secs(60 * 60);
+const CIRCLE_PROPERTIES: &[&str] = &[
+    "background-color",
+    "border-color",
+    "border-width",
+    "border-radius",
+    "color",
+    "cut-indicators",
+    "distance",
+    "font-size",
+    "font-family",
+    "font-weight",
+    "follow-distance",
+    "icon-fill",
+    "icon-size",
+    "opacity",
+    "text-fill",
+    "text-opacity",
+    "protrusion",
+    "scale",
+    "width",
+];
+const ITEM_KEY_PROPERTIES: &[&str] = &[
+    "angle",
+    "color",
+    "distance",
+    "off",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "opacity",
+    "scale",
+];
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
     pub red: f32,
@@ -155,11 +189,51 @@ impl StyleSheet {
     pub fn load(path: &Path) -> Result<Self> {
         let source =
             fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+        validate_style_syntax(&source)?;
         let sheet = Self::parse(&source);
+        sheet.validate()?;
         if sheet.circle(&["circle"])?.width.is_none() {
             bail!("style.css requires circle {{ width: ...; }}");
         }
         Ok(sheet)
+    }
+
+    fn validate(&self) -> Result<()> {
+        for (selector, properties) in &self.rules {
+            if selector == "animation" {
+                for name in properties.keys() {
+                    if !is_animation_property(name) {
+                        bail!("unknown animation property: {name}");
+                    }
+                }
+                self.animation()
+                    .with_context(|| format!("invalid {selector} style"))?;
+                continue;
+            }
+            if selector == "item-key" || selector == "item-key.active" {
+                let mut style = ItemKeyStyle::default();
+                for (name, value) in properties {
+                    if !ITEM_KEY_PROPERTIES.contains(&name.as_str()) {
+                        bail!("unknown {selector} property: {name}");
+                    }
+                    apply_item_key_property(&mut style, name, value)
+                        .with_context(|| format!("invalid {selector}.{name}"))?;
+                }
+                continue;
+            }
+            if !is_circle_selector(selector) {
+                bail!("unknown style selector: {selector}");
+            }
+            let mut style = CircleStyle::default();
+            for (name, value) in properties {
+                if !CIRCLE_PROPERTIES.contains(&name.as_str()) {
+                    bail!("unknown {selector} property: {name}");
+                }
+                apply_circle_property(&mut style, name, value)
+                    .with_context(|| format!("invalid {selector}.{name}"))?;
+            }
+        }
+        Ok(())
     }
 
     pub fn parse(source: &str) -> Self {
@@ -262,11 +336,18 @@ impl StyleSheet {
             if epsilon >= 1.0 {
                 bail!("{prefix}-epsilon must be less than 1");
             }
-            Ok(Spring {
+            let spring = Spring {
                 damping_ratio,
                 stiffness: number(&format!("{prefix}-stiffness"), 1000.0)?,
                 epsilon,
-            })
+            };
+            if spring.checked_duration().is_none() {
+                bail!("{prefix} spring parameters produce an unsupported duration");
+            }
+            if spring.duration() > MAX_ANIMATION_DURATION {
+                bail!("{prefix} spring duration cannot exceed one hour");
+            }
+            Ok(spring)
         };
         Ok(AnimationStyle {
             off: false,
@@ -358,26 +439,136 @@ impl StyleSheet {
     }
 }
 
+fn is_circle_selector(selector: &str) -> bool {
+    matches!(
+        selector,
+        "overlay"
+            | "circle"
+            | "circle.active"
+            | "circle.item"
+            | "circle.item.active"
+            | "circle.submenu"
+            | "circle.submenu.active"
+            | "circle.center"
+            | "circle.center.active"
+            | "circle.history"
+            | "circle.history.active"
+            | "circle.previous"
+            | "connector"
+            | "connector.active"
+            | "submenu-indicator"
+            | "submenu-indicator.active"
+            | "submenu-indicator.return"
+            | "submenu-indicator.return.active"
+            | "parent-link"
+            | "configurator-history"
+    )
+}
+
+fn is_animation_property(name: &str) -> bool {
+    matches!(
+        name,
+        "off"
+            | "color-duration"
+            | "opacity-duration"
+            | "icon-duration"
+            | "connector-duration"
+            | "item-delete-duration"
+            | "close-duration"
+            | "action-scale"
+            | "hover-duration"
+            | "follow-duration"
+            | "menu-duration"
+            | "menu-move-duration"
+            | "item-create-duration"
+            | "action-duration"
+            | "submenu-indicator-duration"
+    ) || [
+        "hover",
+        "follow",
+        "menu-move",
+        "item-create",
+        "action",
+        "submenu-indicator",
+    ]
+    .iter()
+    .any(|prefix| {
+        name.strip_prefix(prefix)
+            .and_then(|suffix| suffix.strip_prefix('-'))
+            .is_some_and(|suffix| matches!(suffix, "damping-ratio" | "stiffness" | "epsilon"))
+    })
+}
+
 fn strip_comments(source: &str) -> String {
     let mut output = String::with_capacity(source.len());
-    let bytes = source.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes.get(index..index + 2) == Some(b"/*") {
-            index += 2;
-            while index < bytes.len() && bytes.get(index..index + 2) != Some(b"*/") {
-                index += 1;
-            }
-            index = (index + 2).min(bytes.len());
-        } else {
-            output.push(bytes[index] as char);
-            index += 1;
-        }
+    let mut rest = source;
+    while let Some(start) = rest.find("/*") {
+        output.push_str(&rest[..start]);
+        let comment = &rest[start + 2..];
+        let Some(end) = comment.find("*/") else {
+            return output;
+        };
+        rest = &comment[end + 2..];
     }
+    output.push_str(rest);
     output
 }
 
+fn validate_style_syntax(source: &str) -> Result<()> {
+    let mut comments = source;
+    while let Some(start) = comments.find("/*") {
+        if comments[..start].contains("*/") {
+            bail!("style contains an unmatched comment terminator");
+        }
+        let after_start = &comments[start + 2..];
+        let Some(end) = after_start.find("*/") else {
+            bail!("style contains an unclosed comment");
+        };
+        comments = &after_start[end + 2..];
+    }
+    if comments.contains("*/") {
+        bail!("style contains an unmatched comment terminator");
+    }
+    let source = strip_comments(source);
+    let mut depth = 0_u8;
+    for character in source.chars() {
+        match character {
+            '{' if depth == 0 => depth = 1,
+            '{' => bail!("nested style blocks are not supported"),
+            '}' if depth == 1 => depth = 0,
+            '}' => bail!("style contains an unmatched closing brace"),
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        bail!("style contains an unclosed block");
+    }
+    for block in source
+        .split('{')
+        .skip(1)
+        .filter_map(|part| part.split_once('}'))
+    {
+        let declarations = block
+            .0
+            .lines()
+            .filter(|line| !line.trim().eq_ignore_ascii_case("off"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for declaration in declarations.split(';').map(str::trim) {
+            if !declaration.is_empty() && !declaration.contains(':') {
+                bail!("invalid style declaration: {declaration}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_declarations(source: &str) -> HashMap<String, String> {
+    let source = source
+        .lines()
+        .filter(|line| !line.trim().eq_ignore_ascii_case("off"))
+        .collect::<Vec<_>>()
+        .join("\n");
     source
         .split(';')
         .filter_map(|declaration| declaration.split_once(':'))
@@ -496,6 +687,9 @@ fn parse_color(value: &str, name: &str) -> Result<Color> {
             .map(str::parse::<f32>)
             .collect::<std::result::Result<Vec<_>, _>>()?;
         if values.len() == 3 || values.len() == 4 {
+            if values.iter().any(|value| !value.is_finite()) {
+                bail!("invalid {name}: {value}");
+            }
             return Ok(Color {
                 red: values[0].clamp(0.0, 255.0) / 255.0,
                 green: values[1].clamp(0.0, 255.0) / 255.0,
@@ -509,9 +703,11 @@ fn parse_color(value: &str, name: &str) -> Result<Color> {
 
 fn parse_radius(value: &str) -> Result<Radius> {
     if let Some(percent) = value.trim().strip_suffix('%') {
-        return Ok(Radius::Percent(
-            percent.trim().parse::<f64>()?.max(0.0) / 100.0,
-        ));
+        let percent = percent.trim().parse::<f64>()?;
+        if !percent.is_finite() {
+            bail!("invalid border-radius: {value}");
+        }
+        return Ok(Radius::Percent(percent.max(0.0) / 100.0));
     }
     Ok(Radius::Pixels(parse_pixels(value, "border-radius")?))
 }
@@ -559,13 +755,24 @@ fn parse_positive(value: &str, name: &str) -> Result<f64> {
 }
 
 fn parse_duration(value: &str, name: &str) -> Result<Duration> {
-    let value = value.trim();
-    let milliseconds = value
-        .strip_suffix("ms")
-        .ok_or_else(|| anyhow::anyhow!("{name} must use ms"))?
-        .trim()
-        .parse::<u64>()?;
-    Ok(Duration::from_millis(milliseconds))
+    let value = value.trim().to_ascii_lowercase();
+    let (number, multiplier) = if let Some(number) = value.strip_suffix("ms") {
+        (number, 0.001)
+    } else if let Some(number) = value.strip_suffix('s') {
+        (number, 1.0)
+    } else {
+        bail!("{name} must use ms or s");
+    };
+    let seconds = number.trim().parse::<f64>()? * multiplier;
+    if !seconds.is_finite() || seconds < 0.0 {
+        bail!("{name} must be a finite non-negative duration");
+    }
+    let duration =
+        Duration::try_from_secs_f64(seconds).with_context(|| format!("invalid {name}: {value}"))?;
+    if duration > MAX_ANIMATION_DURATION {
+        bail!("{name} cannot exceed one hour");
+    }
+    Ok(duration)
 }
 
 #[cfg(test)]
@@ -596,6 +803,69 @@ mod tests {
     fn alpha_hex_is_supported() {
         let color = parse_color("#242424cc", "color").unwrap();
         assert!((color.alpha - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn comments_do_not_corrupt_unicode_values() {
+        let sheet = StyleSheet::parse("/* кириллица */ circle { font-family: 'Тест'; }");
+        assert_eq!(sheet.circle(&["circle"]).unwrap().font_family, "Тест");
+    }
+
+    #[test]
+    fn non_finite_function_colors_are_rejected() {
+        assert!(parse_color("rgb(NaN, 0, 0)", "color").is_err());
+        assert!(parse_color("rgba(0, 0, 0, inf)", "color").is_err());
+    }
+
+    #[test]
+    fn specialized_rules_are_validated_before_rendering() {
+        assert!(
+            StyleSheet::parse("circle.active { opacity: 2; }")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            StyleSheet::parse("item-key.active { angle: 360; }")
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn malformed_style_structure_is_rejected() {
+        assert!(validate_style_syntax("circle { width: 70px;").is_err());
+        assert!(validate_style_syntax("circle { width 70px; }").is_err());
+    }
+
+    #[test]
+    fn unknown_selectors_and_properties_are_rejected() {
+        assert!(
+            StyleSheet::parse("circle { opacitty: 1; }")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            StyleSheet::parse("circle.typo { opacity: 1; }")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            StyleSheet::parse("animation { hover-stifness: 1000; }")
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn durations_support_seconds_and_fractional_milliseconds() {
+        assert_eq!(
+            parse_duration("0.5s", "icon-duration").unwrap(),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            parse_duration("1.5ms", "icon-duration").unwrap(),
+            Duration::from_micros(1500)
+        );
     }
 
     #[test]
@@ -659,6 +929,16 @@ mod tests {
 
         assert!(!sheet.item_key(false).unwrap().enabled);
         assert!(!sheet.item_key(true).unwrap().enabled);
+    }
+
+    #[test]
+    fn bare_off_does_not_consume_the_following_property() {
+        let sheet = StyleSheet::parse("item-key {\n off\n font-weight: 450; opacity: 0.6; }");
+        let style = sheet.item_key(false).unwrap();
+
+        assert!(!style.enabled);
+        assert_eq!(style.font_weight, 450);
+        assert_eq!(style.opacity, 0.6);
     }
 
     #[test]

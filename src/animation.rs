@@ -19,9 +19,13 @@ impl Default for Spring {
 
 impl Spring {
     pub fn duration(self) -> Duration {
-        Duration::from_secs_f64(
-            settling_window(self.damping_ratio, self.epsilon) / self.stiffness.sqrt(),
-        )
+        self.checked_duration()
+            .expect("spring parameters must produce a finite duration")
+    }
+
+    pub fn checked_duration(self) -> Option<Duration> {
+        let seconds = settling_window(self.damping_ratio, self.epsilon) / self.stiffness.sqrt();
+        Duration::try_from_secs_f64(seconds).ok()
     }
 
     pub fn sample(self, progress: f64) -> f64 {
@@ -121,5 +125,15 @@ mod tests {
         };
         let ratio = normal.duration().as_secs_f64() / stiff.duration().as_secs_f64();
         assert!((ratio - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn extremely_small_stiffness_is_detected_without_panicking() {
+        let spring = Spring {
+            stiffness: f64::MIN_POSITIVE,
+            ..Spring::default()
+        };
+
+        assert_eq!(spring.checked_duration(), None);
     }
 }

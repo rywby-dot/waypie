@@ -276,8 +276,13 @@ impl PointerHold {
 
 impl RenderBuffers {
     fn new(width: u32, height: u32, shm: &Shm) -> Option<Self> {
-        let frame_size = width as usize * height as usize * 4;
-        let mut pool = SlotPool::new(frame_size * 2, shm).ok()?;
+        let width_i32 = i32::try_from(width).ok()?;
+        i32::try_from(height).ok()?;
+        width_i32.checked_mul(4)?;
+        let frame_size = (width as usize)
+            .checked_mul(height as usize)?
+            .checked_mul(4)?;
+        let mut pool = SlotPool::new(frame_size.checked_mul(2)?, shm).ok()?;
         let first = pool.new_slot(frame_size).ok()?;
         let second = pool.new_slot(frame_size).ok()?;
         Some(Self {
@@ -607,8 +612,12 @@ impl App {
         if layer.width == 0 || layer.height == 0 {
             return;
         }
+        let (Ok(width), Ok(height)) = (i32::try_from(layer.width), i32::try_from(layer.height))
+        else {
+            return;
+        };
         let region = self.compositor.wl_compositor().create_region(&self.qh, ());
-        region.add(0, 0, layer.width as i32, layer.height as i32);
+        region.add(0, 0, width, height);
         layer.surface.set_input_region(Some(&region));
         layer.surface.commit();
         region.destroy();
@@ -1270,17 +1279,30 @@ impl App {
         if width == 0 || height == 0 {
             return;
         }
+        let (Ok(destination_width), Ok(destination_height)) =
+            (i32::try_from(width), i32::try_from(height))
+        else {
+            return;
+        };
         let use_viewport = layer.viewport.is_some();
-        let buffer_width = if use_viewport { 1 } else { width };
-        let buffer_height = if use_viewport { 1 } else { height };
-        let needed = buffer_width as usize * buffer_height as usize * 4;
+        let buffer_width = if use_viewport { 1 } else { destination_width };
+        let buffer_height = if use_viewport { 1 } else { destination_height };
+        let Some(stride) = buffer_width.checked_mul(4) else {
+            return;
+        };
+        let Some(needed) = (buffer_width as usize)
+            .checked_mul(buffer_height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+        else {
+            return;
+        };
         let Ok(mut pool) = SlotPool::new(needed, &self.shm) else {
             return;
         };
         let Ok((buffer, canvas)) = pool.create_buffer(
-            buffer_width as i32,
-            buffer_height as i32,
-            buffer_width as i32 * 4,
+            buffer_width,
+            buffer_height,
+            stride,
             wl_shm::Format::Argb8888,
         ) else {
             return;
@@ -1288,11 +1310,11 @@ impl App {
         canvas.fill(0);
         let surface = &self.layers[index].surface;
         if let Some(viewport) = self.layers[index].viewport.as_ref() {
-            viewport.set_destination(width as i32, height as i32);
+            viewport.set_destination(destination_width, destination_height);
         }
         surface
             .wl_surface()
-            .damage_buffer(0, 0, width as i32, height as i32);
+            .damage_buffer(0, 0, destination_width, destination_height);
         if buffer.attach_to(surface.wl_surface()).is_ok() {
             surface.commit();
         }

@@ -8,11 +8,13 @@ from waypie_common import (
     animations_off,
     autogenerate_keys,
     colored_svg_source,
+    computed_item_key_style,
     computed_style,
     fixed_text_geometry,
     load_config,
     load_styles,
     menus_breadth_first,
+    parse_color,
     parse_item,
     parse_key_sets,
     resolve_angles,
@@ -45,6 +47,17 @@ class AlternatePathTests(unittest.TestCase):
             self.assertEqual(settings.root.label, "Alternate")
             self.assertEqual(styles["circle"]["width"], "77px")
 
+    def test_unknown_config_fields_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config"
+            path.write_text(
+                "typo-mode = true\n[menu]\nlabel = 'Root'\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit):
+                load_config(path)
+
 
 class FakeSvgPath:
     def __init__(self, source):
@@ -69,6 +82,91 @@ class AnimationStyleTests(unittest.TestCase):
         self.assertEqual(animation_duration(rules, "color-duration"), 0)
         self.assertEqual(spring_duration(rules, "hover"), 0)
         self.assertEqual(spring_value(rules, "hover", 0.5), 1)
+
+
+class StyleValidationTests(unittest.TestCase):
+    def test_bundled_styles_are_valid_for_the_configurator(self):
+        root = Path(__file__).resolve().parents[1]
+        load_styles(root / "config/style.css")
+        load_styles(root / "config/style_foot.css")
+
+    def test_circle_font_weight_supports_names_and_numbers(self):
+        rules = {
+            "circle": {"font-weight": "normal"},
+            "circle.active": {"font-weight": "750"},
+        }
+
+        self.assertEqual(computed_style(rules, ("circle",))["font-weight"], 400)
+        self.assertEqual(
+            computed_style(rules, ("circle", "circle.active"))["font-weight"],
+            750,
+        )
+
+    def test_item_key_font_weight_is_validated(self):
+        rules = {
+            "item-key": {"font-weight": "500"},
+            "item-key.active": {"font-weight": "bold"},
+        }
+
+        self.assertEqual(computed_item_key_style(rules)["font-weight"], 500)
+        self.assertEqual(computed_item_key_style(rules, True)["font-weight"], 700)
+
+    def test_bare_off_keeps_the_following_item_key_property(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "style.css"
+            path.write_text(
+                "circle { width: 70px; } item-key {\n off\n font-weight: 450; }",
+                encoding="utf-8",
+            )
+
+            rules = load_styles(path)
+
+        style = computed_item_key_style(rules)
+        self.assertFalse(style["enabled"])
+        self.assertEqual(style["font-weight"], 450)
+
+    def test_non_finite_function_colors_are_rejected(self):
+        with self.assertRaises(SystemExit):
+            parse_color("rgb(nan, 0, 0)", "color")
+
+    def test_scientific_css_numbers_match_the_runtime_parser(self):
+        style = computed_style(
+            {"circle": {"width": "7e1px", "text-fill": "1.25e2%"}},
+            ("circle",),
+        )
+
+        self.assertEqual(style["width"], 70)
+        self.assertEqual(style["text-fill"], 1.25)
+
+    def test_invalid_active_rule_is_rejected_when_styles_are_loaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "style.css"
+            path.write_text(
+                "circle { width: 70px; } circle.active { opacity: 2; }",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit):
+                load_styles(path)
+
+    def test_malformed_style_syntax_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "style.css"
+            path.write_text("circle { width 70px; }", encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                load_styles(path)
+
+    def test_unknown_style_property_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "style.css"
+            path.write_text(
+                "circle { width: 70px; opacitty: 1; }",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit):
+                load_styles(path)
 
 
 class ScaledIconSizeTests(unittest.TestCase):
@@ -212,11 +310,28 @@ class QuickKeyGenerationTests(unittest.TestCase):
 
         autogenerate_keys(root, "1 2 3")
 
-        self.assertEqual(submenu.return_angle, 270)
+        self.assertEqual(submenu.return_angle, 100)
         self.assertEqual(
             {item.label: item.keys for item in submenu.items},
-            {"First": "1", "Second": "2", "Third": "3"},
+            {"Third": "1", "First": "2", "Second": "3"},
         )
+
+    def test_missing_submenu_angles_match_runtime_distribution(self):
+        submenu = Item(
+            "Submenu",
+            angle=90,
+            items=[
+                Item("First", command="true"),
+                Item("Second", command="true"),
+                Item("Third", command="true"),
+            ],
+        )
+        root = Item("Root", items=[submenu])
+
+        resolve_angles(root, root=True)
+
+        self.assertEqual([item.angle for item in submenu.items], [0, 120, 240])
+        self.assertEqual(submenu.return_angle, 300)
 
     def test_missing_sets_clear_unassigned_circle_keys(self):
         root = Item(

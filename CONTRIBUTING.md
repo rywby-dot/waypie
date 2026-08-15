@@ -7,8 +7,8 @@ The runtime lives in the root Cargo crate (`Cargo.toml` and `src/`) and is
 entirely written in Rust. Python is used only by the GTK configurator:
 
 - `waypie_config.py` — configurator UI and editing logic;
-- `waypie_common.py` — configurator model, TOML, CSS, icon, and drawing helpers;
-- `waypie_animation.py` — configurator preview animations.
+- `waypie_common.py` — configurator model, TOML, CSS, icon, animation, and
+  drawing helpers.
 
 ## Pull requests
 
