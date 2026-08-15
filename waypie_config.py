@@ -91,6 +91,7 @@ class Configurator(Gtk.Application):
         self.turbo_mode_check = None
         self.hold_to_turbo_check = None
         self.travel_item_animation_check = None
+        self.properties_scroll = None
         self.setting_spins = {}
         self.selected_path = ()
         self.current_path = ()
@@ -119,6 +120,7 @@ class Configurator(Gtk.Application):
         self.restoring_undo = False
         self.undo_history = []
         self.drag_undo_recorded = False
+        self.item_clipboard = None
 
     def do_activate(self):
         if self.window is not None:
@@ -145,7 +147,7 @@ class Configurator(Gtk.Application):
             ),
             (
                 "Add submenu",
-                "Ctrl+X",
+                "Ctrl+W",
                 "Add a new nested menu to the currently open menu.",
                 self.on_add_submenu,
             ),
@@ -303,9 +305,51 @@ class Configurator(Gtk.Application):
         properties.append(hint)
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         properties.append(separator)
-        settings_title = Gtk.Label(label="Config settings", xalign=0)
-        settings_title.add_css_class("heading")
-        properties.append(settings_title)
+
+        shortcuts_title = Gtk.Label(label="Keyboard shortcuts", xalign=0)
+        shortcuts_title.add_css_class("heading")
+        properties.append(shortcuts_title)
+        self.back_keys_entry = self.add_property(
+            properties,
+            "Back / close keys",
+            Gtk.Entry(),
+        )
+        self.back_keys_entry.set_text(self.settings.back_keys)
+        self.back_keys_entry.set_tooltip_text(
+            "Press any listed character to return to the parent, or close the root menu."
+        )
+        self.back_keys_entry.connect("changed", self.on_back_keys_changed)
+        self.autogenerate_key_sets_entry = self.add_property(
+            properties,
+            "Autogenerate key sets",
+            Gtk.Entry(),
+        )
+        self.autogenerate_key_sets_entry.set_text(self.settings.autogenerate_key_sets)
+        self.autogenerate_key_sets_entry.set_placeholder_text("aф rы sв tа gп")
+        self.autogenerate_key_sets_entry.set_tooltip_text(
+            "Enter one key set per circle position, separated by spaces, for example: "
+            "aф rы sв."
+        )
+        self.autogenerate_key_sets_entry.connect(
+            "changed", self.on_autogenerate_key_sets_changed
+        )
+        autogenerate_button = Gtk.Button(label="Autogenerate")
+        autogenerate_button.set_tooltip_text(
+            "Assign the saved key sets to every menu in clockwise order."
+        )
+        autogenerate_button.connect("clicked", self.on_autogenerate_keys)
+        properties.append(autogenerate_button)
+
+        menu_settings_expander = Gtk.Expander(label="Menu settings")
+        menu_settings_expander.set_tooltip_text(
+            "Show or hide geometry and runtime behavior settings."
+        )
+        menu_settings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        menu_settings.set_margin_top(8)
+        menu_settings.set_margin_start(12)
+        menu_settings_expander.set_child(menu_settings)
+        properties.append(menu_settings_expander)
+
         for name, label, lower, upper, value, tooltip in (
             (
                 "menu_radius",
@@ -343,14 +387,14 @@ class Configurator(Gtk.Application):
             self.disable_spin_scroll(spin)
             spin.connect("value-changed", self.on_config_setting_changed, name)
             self.setting_spins[name] = spin
-            self.add_property(properties, label, spin)
+            self.add_property(menu_settings, label, spin)
         self.center_mode_check = Gtk.CheckButton(label="Center mode")
         self.center_mode_check.set_tooltip_text(
             "Open the root menu in the center of the current screen instead of at the pointer."
         )
         self.center_mode_check.set_active(self.settings.center_mode)
         self.center_mode_check.connect("toggled", self.on_center_mode_changed)
-        properties.append(self.center_mode_check)
+        menu_settings.append(self.center_mode_check)
         self.always_center_mode_check = Gtk.CheckButton(label="Always center mode")
         self.always_center_mode_check.set_active(self.settings.always_center_mode)
         self.always_center_mode_check.set_tooltip_text(
@@ -359,37 +403,7 @@ class Configurator(Gtk.Application):
         self.always_center_mode_check.connect(
             "toggled", self.on_always_center_mode_changed
         )
-        properties.append(self.always_center_mode_check)
-        self.back_keys_entry = self.add_property(
-            properties,
-            "Back / close keys",
-            Gtk.Entry(),
-        )
-        self.back_keys_entry.set_text(self.settings.back_keys)
-        self.back_keys_entry.set_tooltip_text(
-            "Press any listed character to return to the parent, or close the root menu."
-        )
-        self.back_keys_entry.connect("changed", self.on_back_keys_changed)
-        self.autogenerate_key_sets_entry = self.add_property(
-            properties,
-            "Autogenerate key sets",
-            Gtk.Entry(),
-        )
-        self.autogenerate_key_sets_entry.set_text(self.settings.autogenerate_key_sets)
-        self.autogenerate_key_sets_entry.set_placeholder_text("aф rы sв tа gп")
-        self.autogenerate_key_sets_entry.set_tooltip_text(
-            "Enter one key set per circle position, separated by spaces, for example: "
-            "aф rы sв."
-        )
-        self.autogenerate_key_sets_entry.connect(
-            "changed", self.on_autogenerate_key_sets_changed
-        )
-        autogenerate_button = Gtk.Button(label="Autogenerate")
-        autogenerate_button.set_tooltip_text(
-            "Assign the saved key sets to every menu in clockwise order."
-        )
-        autogenerate_button.connect("clicked", self.on_autogenerate_keys)
-        properties.append(autogenerate_button)
+        menu_settings.append(self.always_center_mode_check)
         self.close_submenu_on_center_click_check = Gtk.CheckButton(
             label="Close on click"
         )
@@ -404,14 +418,14 @@ class Configurator(Gtk.Application):
             "toggled",
             self.on_close_submenu_on_center_click_changed,
         )
-        properties.append(self.close_submenu_on_center_click_check)
+        menu_settings.append(self.close_submenu_on_center_click_check)
         self.hover_mode_check = Gtk.CheckButton(label="Hover mode")
         self.hover_mode_check.set_active(self.settings.hover_mode)
         self.hover_mode_check.set_tooltip_text(
             "Open a submenu or run an action by pausing over it or turning away from it."
         )
         self.hover_mode_check.connect("toggled", self.on_hover_mode_changed)
-        properties.append(self.hover_mode_check)
+        menu_settings.append(self.hover_mode_check)
         self.turbo_mode_check = Gtk.CheckButton(label="Turbo mode")
         self.turbo_mode_check.set_active(self.settings.turbo_mode)
         self.turbo_mode_check.set_tooltip_text(
@@ -419,7 +433,7 @@ class Configurator(Gtk.Application):
             "to select the current item."
         )
         self.turbo_mode_check.connect("toggled", self.on_turbo_mode_changed)
-        properties.append(self.turbo_mode_check)
+        menu_settings.append(self.turbo_mode_check)
         self.hold_to_turbo_check = Gtk.CheckButton(label="Hold to turbo")
         self.hold_to_turbo_check.set_active(self.settings.hold_to_turbo)
         self.hold_to_turbo_check.set_tooltip_text(
@@ -427,7 +441,7 @@ class Configurator(Gtk.Application):
             "to select."
         )
         self.hold_to_turbo_check.connect("toggled", self.on_hold_to_turbo_changed)
-        properties.append(self.hold_to_turbo_check)
+        menu_settings.append(self.hold_to_turbo_check)
         self.travel_item_animation_check = Gtk.CheckButton(
             label="Travel item animation"
         )
@@ -438,14 +452,20 @@ class Configurator(Gtk.Application):
         self.travel_item_animation_check.connect(
             "toggled", self.on_travel_item_animation_changed
         )
-        properties.append(self.travel_item_animation_check)
-        properties_scroll = Gtk.ScrolledWindow()
-        properties_scroll.set_policy(
+        menu_settings.append(self.travel_item_animation_check)
+        self.properties_scroll = Gtk.ScrolledWindow()
+        self.properties_scroll.set_policy(
             Gtk.PolicyType.NEVER,
             Gtk.PolicyType.AUTOMATIC,
         )
-        properties_scroll.set_child(properties)
-        content.append(properties_scroll)
+        self.properties_scroll.set_child(properties)
+        properties_scroll_controller = Gtk.EventControllerScroll.new(
+            Gtk.EventControllerScrollFlags.VERTICAL
+        )
+        properties_scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        properties_scroll_controller.connect("scroll", self.on_properties_scroll)
+        self.properties_scroll.add_controller(properties_scroll_controller)
+        content.append(self.properties_scroll)
         root.append(content)
 
         self.label_entry.connect("changed", self.on_property_changed)
@@ -473,6 +493,26 @@ class Configurator(Gtk.Application):
         scroll.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         scroll.connect("scroll", lambda *_args: True)
         spin.add_controller(scroll)
+
+    def on_properties_scroll(self, _controller, _delta_x, delta_y):
+        if not delta_y:
+            return False
+        adjustment = self.properties_scroll.get_vadjustment()
+        step = max(adjustment.get_step_increment(), 40)
+        maximum = max(
+            adjustment.get_lower(),
+            adjustment.get_upper() - adjustment.get_page_size(),
+        )
+        adjustment.set_value(
+            min(
+                maximum,
+                max(
+                    adjustment.get_lower(),
+                    adjustment.get_value() + delta_y * step,
+                ),
+            )
+        )
+        return True
 
     @staticmethod
     def add_property(container, label, widget):
@@ -627,6 +667,37 @@ class Configurator(Gtk.Application):
         self.current_path = parent_path
         self.after_structure_change()
 
+    def on_copy(self):
+        if not self.selected_path:
+            self.set_status("The root menu cannot be copied", error=True)
+            return
+        self.item_clipboard = copy.deepcopy(self.item_at(self.selected_path))
+
+    def on_cut(self):
+        if not self.selected_path:
+            self.set_status("The root menu cannot be cut", error=True)
+            return
+        self.item_clipboard = copy.deepcopy(self.item_at(self.selected_path))
+        self.on_delete(None)
+
+    def on_paste(self):
+        if self.item_clipboard is None:
+            return
+        self.push_undo()
+        menu = self.item_at(self.current_path)
+        item = copy.deepcopy(self.item_clipboard)
+        assigned_keys = {
+            character.lower() for child in menu.items for character in child.keys
+        }
+        if any(character.lower() in assigned_keys for character in item.keys):
+            item.keys = ""
+        angle = largest_gap_angle([child.angle % 360 for child in menu.items])
+        angle = item.angle if angle is None else angle
+        self.set_item_angle(item, round(angle or 0) % 360)
+        menu.items.append(item)
+        self.selected_path = (*self.current_path, len(menu.items) - 1)
+        self.after_structure_change()
+
     def open_submenu(self, path):
         item = self.item_at(path)
         if not item.is_submenu:
@@ -660,8 +731,14 @@ class Configurator(Gtk.Application):
             self.on_delete(None)
         elif control and keyval == Gdk.KEY_q:
             self.on_add_command(None)
-        elif control and keyval == Gdk.KEY_x:
+        elif control and keyval == Gdk.KEY_w:
             self.on_add_submenu(None)
+        elif control and keyval == Gdk.KEY_c:
+            self.on_copy()
+        elif control and keyval == Gdk.KEY_x:
+            self.on_cut()
+        elif control and keyval == Gdk.KEY_v:
+            self.on_paste()
         elif control and keyval == Gdk.KEY_s:
             self.on_save(None)
         elif control and shift and keyval == Gdk.KEY_a:
