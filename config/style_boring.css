@@ -1,0 +1,191 @@
+/* Calm default theme: neutral colors, solid circles, and moderate motion. */
+
+/* Keep the desktop visible behind the menu. */
+overlay {
+  background-color: transparent;
+}
+
+/* Responsive springs without pronounced bouncing. */
+animation {
+  hover-damping-ratio: 0.95;
+  hover-stiffness: 1050;
+  hover-epsilon: 0.0005;
+
+  follow-damping-ratio: 1;
+  follow-stiffness: 950;
+  follow-epsilon: 0.0005;
+
+  menu-move-damping-ratio: 0.9;
+  menu-move-stiffness: 850;
+  menu-move-epsilon: 0.0005;
+
+  item-create-damping-ratio: 0.92;
+  item-create-stiffness: 950;
+  item-create-epsilon: 0.0005;
+
+  action-damping-ratio: 0.92;
+  action-stiffness: 950;
+  action-epsilon: 0.0005;
+
+  submenu-indicator-damping-ratio: 0.95;
+  submenu-indicator-stiffness: 1000;
+  submenu-indicator-epsilon: 0.0005;
+
+  color-duration: 140ms;
+  opacity-duration: 160ms;
+  icon-duration: 140ms;
+  connector-duration: 150ms;
+  item-delete-duration: 180ms;
+  close-duration: 180ms;
+  action-scale: 1.2;
+}
+
+/* Solid neutral circles with a restrained border. */
+circle {
+  background-color: #25282d;
+  border-color: #747b86;
+  border-width: 2px;
+  border-radius: 50%;
+  color: #f1f3f5;
+  text-opacity: 1;
+  font-family: Sans;
+  font-size: 14px;
+  font-weight: 450;
+  text-fill: 96%;
+  icon-fill: 57%;
+  opacity: 1;
+  width: 70px;
+  scale: 1;
+}
+
+/* Focus is clear without a bright accent color. */
+circle.active {
+  background-color: #383d45;
+  border-color: #a8b0bc;
+  color: #ffffff;
+  scale: 1.18;
+  distance: 18px;
+  follow-distance: 18%;
+  opacity: 1;
+}
+
+/* Ordinary command circles. */
+circle.item {
+}
+
+circle.item.active {
+}
+
+/* Submenus share the same circle style. */
+circle.submenu {
+}
+
+circle.submenu.active {
+}
+
+/* The current menu center is moderately larger. */
+circle.center {
+  background-color: #202328;
+  border-color: #858d99;
+  scale: 1.32;
+}
+
+circle.center.active {
+  background-color: #383d45;
+  border-color: #b7bec8;
+  scale: 1.4;
+}
+
+/* Previous menus remain fully opaque and slightly smaller. */
+circle.history {
+  background-color: #202328;
+  border-color: #686f79;
+  opacity: 1;
+  scale: 0.88;
+}
+
+circle.history.active {
+  background-color: #383d45;
+  border-color: #a8b0bc;
+  scale: 0.98;
+}
+
+/* Neutral solid connectors. */
+connector {
+  color: #747b86;
+  opacity: 1;
+  width: 5px;
+}
+
+connector.active {
+  color: #a8b0bc;
+  opacity: 1;
+  width: 7px;
+}
+
+/* Submenu directions use small gray dots. */
+submenu-indicator {
+  color: #747b86;
+  opacity: 1;
+  width: 22px;
+  protrusion: 8px;
+  cut-indicators: true;
+}
+
+submenu-indicator.active {
+  color: #a8b0bc;
+  opacity: 1;
+  width: 26px;
+  protrusion: 9px;
+}
+
+/* Return-circle indicators use the same neutral palette. */
+submenu-indicator.return {
+  color: #747b86;
+  opacity: 1;
+  width: 20px;
+}
+
+submenu-indicator.return.active {
+  color: #a8b0bc;
+  opacity: 1;
+  width: 24px;
+}
+
+/* Shortcut labels sit just outside the bottom edge. */
+item-key {
+  font-family: Sans;
+  font-weight: 500;
+  font-size: 12px;
+  color: #c2c7cf;
+  opacity: 1;
+  distance: 8;
+  angle: 180;
+  scale: 1;
+}
+
+item-key.active {
+  color: #ffffff;
+  opacity: 1;
+  scale: 1.12;
+  font-weight: 650;
+}
+
+/* Configurator-only return direction. */
+parent-link {
+  color: #747b86;
+  opacity: 1;
+  width: 10px;
+}
+
+/* Configurator-only previous-menu preview. */
+configurator-history {
+  opacity: 1;
+  scale: 1.6;
+}
+
+/* Configurator-only previous circles. */
+circle.previous {
+  background-color: #202328;
+  opacity: 1;
+}

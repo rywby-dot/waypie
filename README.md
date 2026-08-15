@@ -80,11 +80,10 @@ git pull
 make install
 ```
 
-Existing `config`, `style.css`, `style_foot.css`, and icon files are preserved.
+Existing configuration, style, and icon files are preserved.
 
-To deliberately replace the configuration and both style files with the
-repository defaults,
-run:
+To deliberately replace the configuration and bundled style files with the
+repository defaults, run:
 
 ```sh
 make forceinstall
@@ -270,11 +269,11 @@ animation {
 }
 ```
 
-An alternative bundled style is installed as
-`~/.config/waypie/style_foot.css`. It can be tried for one invocation with:
+Bundled alternatives are installed as `style_foot.css`, `style_neon.css`,
+`style_kando.css`, and `style_boring.css`. Try any of them for one invocation:
 
 ```sh
-waypie -s ~/.config/waypie/style_foot.css
+waypie -s ~/.config/waypie/style_neon.css
 ```
 
 The graphical configurator reads this file for its preview but never modifies

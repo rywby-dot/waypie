@@ -13,9 +13,9 @@ CP ?= cp
 RUST_MANIFEST := Cargo.toml
 RUST_BINARY := target/release/waypie
 CONFIG_SOURCE_DIR := config
-DEFAULT_CONFIG := $(CONFIG_SOURCE_DIR)/config
-DEFAULT_STYLE := $(CONFIG_SOURCE_DIR)/style.css
-FOOT_STYLE := $(CONFIG_SOURCE_DIR)/style_foot.css
+CONFIG_FILES := $(notdir $(wildcard $(CONFIG_SOURCE_DIR)/config*))
+STYLE_FILES := $(notdir $(wildcard $(CONFIG_SOURCE_DIR)/style*.css))
+BUNDLED_CONFIG_FILES := $(CONFIG_FILES) $(STYLE_FILES)
 ICON_SOURCE_DIR := $(CONFIG_SOURCE_DIR)/icons
 
 .PHONY: all help build check install forceinstall install-runtime install-configurator install-config install-icons force-install-config uninstall clean
@@ -77,15 +77,11 @@ install-configurator:
 
 install-config:
 	$(INSTALL) -d "$(CONFIG_DIR)"
-	@if [ ! -e "$(CONFIG_DIR)/config" ]; then \
-		$(INSTALL) -m 644 "$(DEFAULT_CONFIG)" "$(CONFIG_DIR)/config"; \
-	fi
-	@if [ ! -e "$(CONFIG_DIR)/style.css" ]; then \
-		$(INSTALL) -m 644 "$(DEFAULT_STYLE)" "$(CONFIG_DIR)/style.css"; \
-	fi
-	@if [ ! -e "$(CONFIG_DIR)/style_foot.css" ]; then \
-		$(INSTALL) -m 644 "$(FOOT_STYLE)" "$(CONFIG_DIR)/style_foot.css"; \
-	fi
+	@for file in $(BUNDLED_CONFIG_FILES); do \
+		if [ ! -e "$(CONFIG_DIR)/$$file" ]; then \
+			$(INSTALL) -m 644 "$(CONFIG_SOURCE_DIR)/$$file" "$(CONFIG_DIR)/$$file"; \
+		fi; \
+	done
 	$(MAKE) install-icons
 
 install-icons:
@@ -94,18 +90,14 @@ install-icons:
 
 force-install-config:
 	$(INSTALL) -d "$(CONFIG_DIR)"
-	@if [ -e "$(CONFIG_DIR)/config" ]; then \
-		$(CP) -p -f "$(CONFIG_DIR)/config" "$(CONFIG_DIR)/config.bak"; \
-	fi
-	@if [ -e "$(CONFIG_DIR)/style.css" ]; then \
-		$(CP) -p -f "$(CONFIG_DIR)/style.css" "$(CONFIG_DIR)/style.css.bak"; \
-	fi
-	@if [ -e "$(CONFIG_DIR)/style_foot.css" ]; then \
-		$(CP) -p -f "$(CONFIG_DIR)/style_foot.css" "$(CONFIG_DIR)/style_foot.css.bak"; \
-	fi
-	$(INSTALL) -m 644 "$(DEFAULT_CONFIG)" "$(CONFIG_DIR)/config"
-	$(INSTALL) -m 644 "$(DEFAULT_STYLE)" "$(CONFIG_DIR)/style.css"
-	$(INSTALL) -m 644 "$(FOOT_STYLE)" "$(CONFIG_DIR)/style_foot.css"
+	@for file in $(BUNDLED_CONFIG_FILES); do \
+		if [ -e "$(CONFIG_DIR)/$$file" ]; then \
+			$(CP) -p -f "$(CONFIG_DIR)/$$file" "$(CONFIG_DIR)/$$file.bak"; \
+		fi; \
+	done
+	@for file in $(BUNDLED_CONFIG_FILES); do \
+		$(INSTALL) -m 644 "$(CONFIG_SOURCE_DIR)/$$file" "$(CONFIG_DIR)/$$file"; \
+	done
 	$(MAKE) install-icons
 
 uninstall:

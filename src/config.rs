@@ -239,8 +239,23 @@ mod tests {
 
     #[test]
     fn bundled_config_is_valid() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/config");
-        Config::load(&path).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut paths: Vec<_> = fs::read_dir(root.join("config"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("config"))
+            })
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty());
+        for path in paths {
+            Config::load(&path).unwrap();
+        }
     }
 
     #[test]

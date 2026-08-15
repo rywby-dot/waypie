@@ -27,6 +27,15 @@ from waypie_common import (
 
 
 class AlternatePathTests(unittest.TestCase):
+    def test_bundled_configs_are_valid_for_the_configurator(self):
+        root = Path(__file__).resolve().parents[1]
+        configs = sorted(
+            path for path in (root / "config").glob("config*") if path.is_file()
+        )
+        self.assertTrue(configs)
+        for path in configs:
+            load_config(path)
+
     def test_loaders_use_the_explicit_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -87,8 +96,10 @@ class AnimationStyleTests(unittest.TestCase):
 class StyleValidationTests(unittest.TestCase):
     def test_bundled_styles_are_valid_for_the_configurator(self):
         root = Path(__file__).resolve().parents[1]
-        load_styles(root / "config/style.css")
-        load_styles(root / "config/style_foot.css")
+        styles = sorted((root / "config").glob("style*.css"))
+        self.assertTrue(styles)
+        for path in styles:
+            load_styles(path)
 
     def test_circle_font_weight_supports_names_and_numbers(self):
         rules = {

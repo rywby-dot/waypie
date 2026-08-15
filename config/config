@@ -3,8 +3,8 @@ center-hitbox-size = 159
 minimum-edge-distance = 200
 center-mode = false
 always-center-mode = false
-back-keys = "q0"
-autogenerate-key-sets = "1q 2w 3e 4r 5t 6y 7u 8i 9o"
+back-keys = "q"
+autogenerate-key-sets = "1 2 3 4 5 6 7 8 9"
 close-submenu-on-center-click = false
 hover-mode = false
 turbo-mode = true
@@ -16,110 +16,19 @@ configurator-show-icons = true
 
 [menu]
 label = "Waypie"
-icon-theme = "simple-icons"
-icon = "roamresearch.svg"
-
-[[menu.items]]
-label = "Scripts"
-keys = "5t"
-icon-theme = "simple-icons"
-icon = "scrollreveal.svg"
-angle = 288
-
-[[menu.items.items]]
-label = "Waypie Config"
-keys = "4r"
-command = "xdg-open \"$HOME/.config/waypie/config\""
-icon-theme = "tabler-icons"
-icon = "filled/adjustments-horizontal.svg"
-angle = 36
-
-[[menu.items.items]]
-label = "Fetch"
-keys = "1q"
-command = "foot -a foot-ff sh -c 'fastfetch -c screenfetch.jsonc && sleep 9999'"
-icon-theme = "tabler-icons"
-icon = "outline/info-circle.svg"
-angle = 180
-
-[[menu.items.items]]
-label = "Hypr Picker"
-keys = "3e"
-command = "sleep 0.5; hyprpicker -a"
-icon-theme = "tabler-icons"
-icon = "outline/color-picker.svg"
-angle = 324
-
-[[menu.items.items]]
-label = "New menu"
-keys = "2w"
-angle = 252
-
-[[menu.items.items.items]]
-label = "Nothing"
-keys = "1q"
-command = "sleep 0.5 && waypie -s \"$HOME/.config/waypie/style_foot.css\""
-angle = 192
-
-[[menu.items.items.items]]
-label = "Test"
-keys = "2w"
-icon-theme = "simple-icons"
-icon = "1001tracklists.svg"
-angle = 312
-
-[[menu.items.items.items.items]]
-label = "NO"
-keys = "3e"
-command = "true"
-angle = 312
-
-[[menu.items.items.items.items]]
-label = "NO"
-keys = "2w"
-angle = 252
-
-[[menu.items.items.items.items.items]]
-label = "ok"
-keys = "1q"
-angle = 252
-
-[[menu.items.items.items.items.items.items]]
-label = "RICKROLL"
-keys = "1q"
-command = "xdg-open https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-icon-theme = "simple-icons"
-icon = "youtube.svg"
-angle = 252
-
-[[menu.items.items.items.items]]
-label = "NO"
-keys = "5t"
-command = "true"
-angle = 72
-
-[[menu.items.items.items.items]]
-label = "NO"
-keys = "1q"
-command = "true"
-angle = 192
-
-[[menu.items.items.items.items]]
-label = "NO"
-keys = "4r"
-command = "true"
-angle = 12
+icon-theme = "rywby-icons"
+icon = "waypie.svg"
 
 [[menu.items]]
 label = "Apps"
-keys = "2w"
+keys = "2"
 icon-theme = "tabler-icons"
 icon = "outline/grid-dots.svg"
 angle = 72
 
 [[menu.items.items]]
 label = "Libre Office"
-keys = "4r"
+keys = "4"
 command = "gtk-launch libreoffice-startcenter"
 icon-theme = "simple-icons"
 icon = "libreoffice.svg"
@@ -127,7 +36,7 @@ angle = 72
 
 [[menu.items.items]]
 label = "Only Office"
-keys = "5t"
+keys = "5"
 command = "gtk-launch org.onlyoffice.desktopeditors"
 icon-theme = "simple-icons"
 icon = "onlyoffice.svg"
@@ -135,7 +44,7 @@ angle = 117
 
 [[menu.items.items]]
 label = "Kdenlive"
-keys = "7u"
+keys = "7"
 command = "gtk-launch org.kde.kdenlive"
 icon-theme = "simple-icons"
 icon = "kdenlive.svg"
@@ -143,7 +52,7 @@ angle = 207
 
 [[menu.items.items]]
 label = "Vencord"
-keys = "2w"
+keys = "2"
 command = "gtk-launch dev.vencord.Vesktop || flatpak run dev.vencord.Vesktop"
 icon-theme = "simple-icons"
 icon = "vencord.svg"
@@ -151,15 +60,15 @@ angle = 342
 
 [[menu.items.items]]
 label = "Steam"
-keys = "3e"
+keys = "3"
 command = "gtk-launch steam || gtk-launch com.valvesoftware.Steam"
 icon-theme = "simple-icons"
 icon = "steam.svg"
 angle = 27
 
 [[menu.items.items]]
-label = "Telegram"
-keys = "1q"
+label = "Telegram Desktop"
+keys = "1"
 command = "gtk-launch org.telegram.desktop"
 icon-theme = "simple-icons"
 icon = "telegram.svg"
@@ -167,7 +76,7 @@ angle = 297
 
 [[menu.items.items]]
 label = "Gimp"
-keys = "6y"
+keys = "6"
 command = "gtk-launch gimp"
 icon-theme = "simple-icons"
 icon = "gimp.svg"
@@ -175,107 +84,129 @@ angle = 162
 
 [[menu.items]]
 label = "Links"
-keys = "3e"
+keys = "3"
 icon-theme = "tabler-icons"
 icon = "filled/link.svg"
 angle = 144
 
 [[menu.items.items]]
 label = "Firefox"
-keys = "2w"
+keys = "2"
 command = "gtk-launch firefox"
 icon-theme = "simple-icons"
 icon = "firefoxbrowser.svg"
-angle = 108
+angle = 54
 
 [[menu.items.items]]
 label = "YouTube"
-keys = "4r"
+keys = "7"
 command = "xdg-open https://www.youtube.com/@rywbyfpv"
 icon-theme = "simple-icons"
 icon = "youtube.svg"
-angle = 252
+angle = 279
 
 [[menu.items.items]]
 label = "Chromium"
-keys = "1q"
+keys = "1"
 command = "gtk-launch chromium"
 icon-theme = "simple-icons"
 icon = "googlechrome.svg"
-angle = 36
+angle = 9
 
 [[menu.items.items]]
 label = "GitHub"
-keys = "3e"
+keys = "6"
 command = "xdg-open https://github.com/rywby-dot/waypie"
 icon-theme = "simple-icons"
 icon = "github.svg"
-angle = 180
+angle = 234
+
+[[menu.items.items]]
+label = "Telegram"
+keys = "5"
+command = "xdg-open https://t.me/rywby"
+icon-theme = "tabler-icons"
+icon = "outline/brand-telegram.svg"
+angle = 189
+
+[[menu.items.items]]
+label = "Reddit"
+keys = "3"
+command = "xdg-open https://www.reddit.com/user/rywby/"
+icon-theme = "simple-icons"
+icon = "reddit.svg"
+angle = 99
+
+[[menu.items.items]]
+label = "Kando"
+keys = "4"
+command = "xdg-open https://kando.menu/intro/"
+icon-theme = "tabler-icons"
+icon = "filled/chart-pie-2.svg"
+angle = 144
 
 [[menu.items]]
 label = "Utilities"
-keys = "4r"
+keys = "4"
 icon-theme = "simple-icons"
 icon = "polkadot.svg"
 angle = 216
 
 [[menu.items.items]]
 label = "Nwg Look"
-keys = "1q"
+keys = "2"
 command = "gtk-launch nwg-look"
 icon-theme = "simple-icons"
 icon = "gtk.svg"
-angle = 126
+angle = 216
 
 [[menu.items.items]]
 label = "Kvantum Manager"
-keys = "3e"
+keys = "3"
 command = "gtk-launch kvantummanager"
 icon-theme = "simple-icons"
 icon = "qt.svg"
 angle = 306
 
 [[menu.items.items]]
-label = "Obs"
-keys = "2w"
-command = "gtk-launch com.obsproject.Studio || flatpak run com.obsproject.Studio"
-icon-theme = "simple-icons"
-icon = "obsstudio.svg"
-angle = 216
-
-[[menu.items.items]]
 label = "Screen Record"
-keys = "4r"
+keys = "1"
 icon-theme = "tabler-icons"
 icon = "outline/screen-share.svg"
-angle = 36
+angle = 126
 
 [[menu.items.items.items]]
 label = "Start"
-keys = "1q"
+keys = "3"
 command = "mkdir -p \"$HOME/Videos\" && wf-recorder -f \"$HOME/Videos/recording-$(date +%Y-%m-%d_%H-%M-%S).mp4\""
 icon-theme = "tabler-icons"
 icon = "filled/player-record.svg"
-angle = 90
+angle = 216
 
 [[menu.items.items.items]]
 label = "Stop"
-keys = "2w"
+keys = "1"
 command = "pkill -INT -x wf-recorder"
 icon-theme = "tabler-icons"
 icon = "outline/hand-stop.svg"
-angle = 270
+angle = 36
+
+[[menu.items.items.items]]
+label = "Obs"
+keys = "2"
+command = "gtk-launch com.obsproject.Studio || flatpak run com.obsproject.Studio"
+angle = 126
 
 [[menu.items]]
 label = "System"
-keys = "1q"
+keys = "1"
 icon-theme = "tabler-icons"
 icon = "outline/folder-symlink.svg"
 angle = 0
 
 [[menu.items.items]]
 label = "Config"
-keys = "1q"
+keys = "1"
 command = "waypie-config"
 icon-theme = "tabler-icons"
 icon = "filled/settings.svg"
@@ -283,14 +214,14 @@ angle = 252
 
 [[menu.items.items]]
 label = "Power"
-keys = "4r"
+keys = "4"
 icon-theme = "tabler-icons"
 icon = "outline/battery-vertical-exclamation.svg"
 angle = 108
 
 [[menu.items.items.items]]
 label = "Reboot"
-keys = "1q"
+keys = "1"
 command = "loginctl reboot"
 icon-theme = "tabler-icons"
 icon = "outline/reload.svg"
@@ -298,15 +229,15 @@ angle = 18
 
 [[menu.items.items.items]]
 label = "Quit"
-keys = "2w"
-command = "([ -n \"$XDG_SESSION_ID\" ] && loginctl terminate-session \"$XDG_SESSION_ID\") || (command -v driftwm >/dev/null 2>&1 && driftwm msg action quit) || (command -v swaymsg >/dev/null 2>&1 && swaymsg exit) || (command -v niri >/dev/null 2>&1 && niri msg action quit) || (command -v hyprctl >/dev/null 2>&1 && hyprctl dispatch exit) || (command -v riverctl >/dev/null 2>&1 && riverctl exit)"
+keys = "2"
+command = "loginctl terminate-session $USER"
 icon-theme = "tabler-icons"
 icon = "outline/door-exit.svg"
 angle = 108
 
 [[menu.items.items.items]]
 label = "Power Off"
-keys = "3e"
+keys = "3"
 command = "loginctl poweroff"
 icon-theme = "tabler-icons"
 icon = "outline/power.svg"
@@ -314,7 +245,7 @@ angle = 198
 
 [[menu.items.items]]
 label = "Sleep"
-keys = "3e"
+keys = "3"
 command = "loginctl suspend"
 icon-theme = "tabler-icons"
 icon = "outline/zzz.svg"
@@ -322,8 +253,164 @@ angle = 36
 
 [[menu.items.items]]
 label = "Lock"
-keys = "2w"
+keys = "2"
 command = "(command -v swaylock >/dev/null 2>&1 && swaylock -f -c 000000) || (command -v gtklock >/dev/null 2>&1 && gtklock) || (command -v waylock >/dev/null 2>&1 && waylock) || loginctl lock-session \"$XDG_SESSION_ID\""
 icon-theme = "tabler-icons"
 icon = "outline/lock.svg"
 angle = 324
+
+[[menu.items]]
+label = "Scripts"
+keys = "5"
+icon-theme = "simple-icons"
+icon = "scrollreveal.svg"
+angle = 288
+
+[[menu.items.items]]
+label = "Waypie Style"
+keys = "4"
+command = "xdg-open \"$HOME/.config/waypie/config\""
+icon-theme = "tabler-icons"
+icon = "outline/brush.svg"
+angle = 36
+
+[[menu.items.items]]
+label = "Hypr Picker"
+keys = "3"
+command = "sleep 0.5; hyprpicker -a"
+icon-theme = "tabler-icons"
+icon = "outline/color-picker.svg"
+angle = 324
+
+[[menu.items.items]]
+label = "Other Stuff"
+keys = "2"
+angle = 252
+
+[[menu.items.items.items]]
+label = "Sway Style"
+keys = "1"
+command = "sleep 0.5 && waypie -s \"$HOME/.config/waypie/style_foot.css\""
+angle = 134
+
+[[menu.items.items.items]]
+label = "Test"
+keys = "5"
+icon-theme = "simple-icons"
+icon = "1001tracklists.svg"
+angle = 14
+
+[[menu.items.items.items.items]]
+label = "NO"
+keys = "1"
+angle = 314
+
+[[menu.items.items.items.items.items]]
+label = "ok"
+keys = "1"
+angle = 222
+
+[[menu.items.items.items.items.items.items]]
+label = "RICKROLL"
+keys = "1"
+command = "xdg-open https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+icon-theme = "rywby-icons"
+icon = "harold-pain_1.svg"
+angle = 152
+
+[[menu.items.items.items.items]]
+label = "NO"
+keys = "2"
+command = "true"
+icon-theme = "rywby-icons"
+icon = "rickroll-never-gonna_1.svg"
+angle = 74
+
+[[menu.items.items.items]]
+label = "Neon Style"
+keys = "4"
+command = "sleep 0.5 && waypie -s \"$HOME/.config/waypie/style_neon.css\""
+angle = 314
+
+[[menu.items.items.items]]
+label = "Boring Style"
+keys = "3"
+command = "sleep 0.5 && waypie -s \"$HOME/.config/waypie/style_boring.css\""
+angle = 254
+
+[[menu.items.items.items]]
+label = "Kando Style"
+keys = "2"
+command = "sleep 0.5 && waypie -s \"$HOME/.config/waypie/style_kando.css\""
+angle = 194
+
+[[menu.items.items]]
+label = "Terminals"
+keys = "1"
+icon-theme = "tabler-icons"
+icon = "outline/terminal-2.svg"
+angle = 180
+
+[[menu.items.items.items]]
+label = "Foot"
+keys = "7"
+command = "foot"
+icon-theme = "tabler-icons"
+icon = "outline/footsteps.svg"
+angle = 280
+
+[[menu.items.items.items]]
+label = "Footclient"
+keys = "8"
+command = "footclient"
+icon-theme = "tabler-icons"
+icon = "outline/footsteps.svg"
+angle = 320
+
+[[menu.items.items.items]]
+label = "Kitty Client"
+keys = "1"
+command = "kitty -1"
+icon-theme = "tabler-icons"
+icon = "outline/cat.svg"
+angle = 40
+
+[[menu.items.items.items]]
+label = "Alacritty"
+keys = "3"
+command = "alacritty"
+icon-theme = "simple-icons"
+icon = "alacritty.svg"
+angle = 120
+
+[[menu.items.items.items]]
+label = "St"
+keys = "5"
+command = "st"
+icon-theme = "tabler-icons"
+icon = "outline/terminal.svg"
+angle = 200
+
+[[menu.items.items.items]]
+label = "Ghostty"
+keys = "6"
+command = "ghostty"
+icon-theme = "simple-icons"
+icon = "ghostty.svg"
+angle = 240
+
+[[menu.items.items.items]]
+label = "Wezterm"
+keys = "4"
+command = "wezterm"
+icon-theme = "simple-icons"
+icon = "wezterm.svg"
+angle = 160
+
+[[menu.items.items.items]]
+label = "Kitty"
+keys = "2"
+command = "kitty"
+icon-theme = "tabler-icons"
+icon = "outline/cat.svg"
+angle = 80

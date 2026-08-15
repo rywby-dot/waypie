@@ -340,15 +340,56 @@ class Configurator(Gtk.Application):
         autogenerate_button.connect("clicked", self.on_autogenerate_keys)
         properties.append(autogenerate_button)
 
-        menu_settings_expander = Gtk.Expander(label="Menu settings")
-        menu_settings_expander.set_tooltip_text(
-            "Show or hide geometry and runtime behavior settings."
+        menu_settings_button = Gtk.ToggleButton()
+        menu_settings_button.set_hexpand(True)
+        menu_settings_button.set_tooltip_text(
+            "Open geometry and runtime behavior settings."
         )
+        menu_settings_header = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=12,
+        )
+        menu_settings_header.set_margin_top(5)
+        menu_settings_header.set_margin_bottom(5)
+        menu_settings_text = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=2,
+        )
+        menu_settings_text.set_hexpand(True)
+        menu_settings_title = Gtk.Label(label="Menu settings", xalign=0)
+        menu_settings_title.add_css_class("heading")
+        menu_settings_hint = Gtk.Label(label="Click to expand", xalign=0)
+        menu_settings_hint.add_css_class("dim-label")
+        menu_settings_text.append(menu_settings_title)
+        menu_settings_text.append(menu_settings_hint)
+        menu_settings_arrow = Gtk.Image.new_from_icon_name("pan-down-symbolic")
+        menu_settings_header.append(menu_settings_text)
+        menu_settings_header.append(menu_settings_arrow)
+        menu_settings_button.set_child(menu_settings_header)
+        properties.append(menu_settings_button)
+
         menu_settings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         menu_settings.set_margin_top(8)
         menu_settings.set_margin_start(12)
-        menu_settings_expander.set_child(menu_settings)
-        properties.append(menu_settings_expander)
+        menu_settings.set_margin_end(12)
+        menu_settings_revealer = Gtk.Revealer()
+        menu_settings_revealer.set_transition_type(
+            Gtk.RevealerTransitionType.SLIDE_DOWN
+        )
+        menu_settings_revealer.set_child(menu_settings)
+        properties.append(menu_settings_revealer)
+
+        def toggle_menu_settings(button):
+            expanded = button.get_active()
+            menu_settings_revealer.set_reveal_child(expanded)
+            menu_settings_hint.set_text(
+                "Click to collapse" if expanded else "Click to expand"
+            )
+            menu_settings_arrow.set_from_icon_name(
+                "pan-up-symbolic" if expanded else "pan-down-symbolic"
+            )
+
+        menu_settings_button.connect("toggled", toggle_menu_settings)
 
         for name, label, lower, upper, value, tooltip in (
             (

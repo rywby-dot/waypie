@@ -1,0 +1,179 @@
+/* Kando-inspired theme: small soft circles, a large center, and pink focus. */
+
+/* Keep the desktop visible behind the menu. */
+overlay {
+  background-color: transparent;
+}
+
+/* Smooth springs with the slight overshoot used by Kando's default theme. */
+animation {
+  hover-damping-ratio: 0.78;
+  hover-stiffness: 650;
+  hover-epsilon: 0.0002;
+
+  follow-damping-ratio: 0.9;
+  follow-stiffness: 720;
+  follow-epsilon: 0.0002;
+
+  menu-move-damping-ratio: 0.72;
+  menu-move-stiffness: 520;
+  menu-move-epsilon: 0.0002;
+
+  item-create-damping-ratio: 0.78;
+  item-create-stiffness: 650;
+  item-create-epsilon: 0.0002;
+
+  action-damping-ratio: 0.8;
+  action-stiffness: 680;
+  action-epsilon: 0.0002;
+
+  submenu-indicator-damping-ratio: 0.8;
+  submenu-indicator-stiffness: 700;
+  submenu-indicator-epsilon: 0.0002;
+
+  color-duration: 250ms;
+  opacity-duration: 250ms;
+  icon-duration: 200ms;
+  connector-duration: 250ms;
+  item-delete-duration: 250ms;
+  close-duration: 250ms;
+  action-scale: 1.15;
+}
+
+/* Kando's children are small white circles with a fine neutral border. */
+circle {
+  background-color: #f5f2f6;
+  border-color: #d8d1dc;
+  border-width: 1px;
+  border-radius: 50%;
+  color: #443b49;
+  text-opacity: 1;
+  font-family: Sans;
+  font-size: 13px;
+  font-weight: 500;
+  text-fill: 92%;
+  icon-fill: 58%;
+  opacity: 1;
+  width: 52px;
+  scale: 1;
+}
+
+/* Pink marks the item under the pointer. */
+circle.active {
+  background-color: #f2a7c1;
+  border-color: #e486a8;
+  color: #3d2932;
+  scale: 1.15;
+  distance: 5px;
+  follow-distance: 16%;
+  opacity: 1;
+}
+
+/* Ordinary actions keep the shared appearance. */
+circle.item {
+}
+
+circle.item.active {
+}
+
+/* Submenus differ only through their child indicators. */
+circle.submenu {
+}
+
+circle.submenu.active {
+}
+
+/* Kando's center is approximately twice the diameter of its children. */
+circle.center {
+  background-color: #f8f6f9;
+  border-color: #d8d1dc;
+  font-size: 14px;
+  scale: 1.92;
+}
+
+circle.center.active {
+  background-color: #f2a7c1;
+  border-color: #e486a8;
+  scale: 2.05;
+}
+
+/* Navigation history stays quiet behind the current menu. */
+circle.history {
+  background-color: #f5f2f6;
+  border-color: #d8d1dc;
+  opacity: 0.8;
+  scale: 0.92;
+}
+
+circle.history.active {
+  background-color: #f2a7c1;
+  border-color: #e486a8;
+  opacity: 1;
+  scale: 1.05;
+}
+
+/* Broad soft connectors match Kando's default proportions. */
+connector {
+  color: #d8d1dc;
+  opacity: 0.75;
+  width: 8px;
+}
+
+connector.active {
+  color: #e486a8;
+  opacity: 1;
+  width: 9px;
+}
+
+/* Small dots reproduce Kando's grandchild indicators. */
+submenu-indicator {
+  color: #d8d1dc;
+  opacity: 1;
+  width: 14px;
+  protrusion: 8px;
+  cut-indicators: false;
+}
+
+submenu-indicator.active {
+  color: #e486a8;
+  opacity: 1;
+  width: 16px;
+  protrusion: 9px;
+}
+
+/* Return-circle indicators use the same soft palette. */
+submenu-indicator.return {
+  color: #d8d1dc;
+  opacity: 1;
+  width: 14px;
+}
+
+submenu-indicator.return.active {
+  color: #e486a8;
+  opacity: 1;
+  width: 16px;
+}
+
+/* Kando does not place shortcut labels next to its circles. */
+item-key {
+  off
+}
+
+/* Configurator-only return direction. */
+parent-link {
+  color: #d8d1dc;
+  opacity: 0.7;
+  width: 10px;
+}
+
+/* Configurator-only previous-menu preview. */
+configurator-history {
+  opacity: 0.38;
+  scale: 1.6;
+}
+
+/* Configurator-only previous circles. */
+circle.previous {
+  background-color: #f5f2f6;
+  opacity: 1;
+}

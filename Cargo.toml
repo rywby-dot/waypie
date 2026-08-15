@@ -7,9 +7,8 @@ description = "A lightweight Kando-like radial menu for Wayland"
 repository = "https://github.com/rywby-dot/waypie"
 include = [
     "src/**",
-    "config/config",
-    "config/style.css",
-    "config/style_foot.css",
+    "config/config*",
+    "config/style*.css",
     "Cargo.toml",
     "Cargo.lock",
     "LICENSE",

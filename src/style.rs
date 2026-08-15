@@ -782,8 +782,21 @@ mod tests {
     #[test]
     fn bundled_styles_are_valid() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        for path in ["config/style.css", "config/style_foot.css"] {
-            StyleSheet::load(&root.join(path)).unwrap();
+        let mut paths: Vec<_> = fs::read_dir(root.join("config"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("style") && name.ends_with(".css"))
+            })
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty());
+        for path in paths {
+            StyleSheet::load(&path).unwrap();
         }
     }
 

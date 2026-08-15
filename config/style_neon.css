@@ -1,0 +1,196 @@
+/* Neon Miami theme: hard edges, saturated colors, and fast motion. */
+
+/* Keep the desktop visible behind the menu. */
+overlay {
+  background-color: transparent;
+}
+
+/* Fast springs and short visual transitions. */
+animation {
+  hover-damping-ratio: 0.72;
+  hover-stiffness: 2400;
+  hover-epsilon: 0.001;
+
+  follow-damping-ratio: 0.8;
+  follow-stiffness: 1800;
+  follow-epsilon: 0.001;
+
+  menu-move-damping-ratio: 0.72;
+  menu-move-stiffness: 1600;
+  menu-move-epsilon: 0.001;
+
+  item-create-damping-ratio: 0.68;
+  item-create-stiffness: 2200;
+  item-create-epsilon: 0.001;
+
+  action-damping-ratio: 0.72;
+  action-stiffness: 1900;
+  action-epsilon: 0.001;
+
+  submenu-indicator-damping-ratio: 0.75;
+  submenu-indicator-stiffness: 2200;
+  submenu-indicator-epsilon: 0.001;
+
+  color-duration: 70ms;
+  opacity-duration: 90ms;
+  icon-duration: 70ms;
+  connector-duration: 80ms;
+  item-delete-duration: 100ms;
+  close-duration: 100ms;
+  action-scale: 1.25;
+}
+
+/* Bright, solid rounded squares with heavy outlines and text. */
+circle {
+  background-color: #160022;
+  border-color: #00ffff;
+  border-width: 6px;
+  border-radius: 30%;
+  color: #ffff00;
+  text-opacity: 1;
+  font-family: Sans;
+  font-size: 14px;
+  font-weight: 800;
+  text-fill: 92%;
+  icon-fill: 55%;
+  opacity: 1;
+  width: 72px;
+  scale: 1;
+}
+
+/* Focused circles jump outward and swap to hot pink. */
+circle.active {
+  background-color: #ff00ff;
+  border-color: #ffff00;
+  color: #09000f;
+  scale: 1.2;
+  distance: 22px;
+  follow-distance: 20%;
+  opacity: 1;
+}
+
+/* Ordinary command circles. */
+circle.item {
+  border-color: #00ffff;
+}
+
+circle.item.active {
+  border-color: #ffff00;
+}
+
+/* Submenu circles use pink before selection. */
+circle.submenu {
+  border-color: #ff00ff;
+}
+
+circle.submenu.active {
+  border-color: #00ffff;
+}
+
+/* The active menu center is larger and yellow-framed. */
+circle.center {
+  background-color: #100018;
+  border-color: #ffff00;
+  scale: 1.38;
+}
+
+circle.center.active {
+  background-color: #00ffff;
+  border-color: #ff00ff;
+  color: #09000f;
+  scale: 1.45;
+}
+
+/* Previous menus stay solid but slightly smaller. */
+circle.history {
+  background-color: #100018;
+  border-color: #ff00ff;
+  opacity: 1;
+  scale: 0.9;
+}
+
+circle.history.active {
+  background-color: #ff00ff;
+  border-color: #ffff00;
+  scale: 1;
+}
+
+/* Thick cyan connectors turn yellow when selected. */
+connector {
+  color: #00ffff;
+  opacity: 1;
+  width: 7px;
+}
+
+connector.active {
+  color: #ffff00;
+  opacity: 1;
+  width: 10px;
+}
+
+/* Child directions are shown as solid neon dots. */
+submenu-indicator {
+  color: #ff00ff;
+  opacity: 1;
+  width: 24px;
+  protrusion: 9px;
+  cut-indicators: false;
+}
+
+submenu-indicator.active {
+  color: #00ffff;
+  opacity: 1;
+  width: 29px;
+  protrusion: 11px;
+}
+
+/* Indicators on return circles use yellow. */
+submenu-indicator.return {
+  color: #ffff00;
+  opacity: 1;
+  width: 22px;
+}
+
+submenu-indicator.return.active {
+  color: #00ffff;
+  opacity: 1;
+  width: 27px;
+}
+
+/* Shortcut keys sit inside the lower part of each square. */
+item-key {
+  font-family: Sans;
+  font-weight: 900;
+  font-size: 12px;
+  color: #ffff00;
+  opacity: 1;
+  distance: -18;
+  angle: 180;
+  scale: 1;
+}
+
+item-key.active {
+  color: #00ffff;
+  opacity: 1;
+  scale: 1.1;
+  font-weight: 900;
+}
+
+/* Configurator-only return direction. */
+parent-link {
+  color: #00ffff;
+  opacity: 1;
+  width: 12px;
+}
+
+/* Configurator-only previous-menu preview. */
+configurator-history {
+  opacity: 1;
+  scale: 1.6;
+}
+
+/* Configurator-only previous circles. */
+circle.previous {
+  background-color: #160022;
+  opacity: 1;
+}
