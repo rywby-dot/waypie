@@ -1,5 +1,7 @@
 /* Style.scc. Change manually */
-/* Colors are support RGBA */
+/* Colors are support RGBA,
+   but it is recommended to change
+   `opacity` instead */
 
 
 /* Background of the full-screen Waypie layer. Use transparent to keep the desktop visible. */
@@ -45,23 +47,23 @@ animation {
 
 /* simple animations with only duration */
 /* for opacity and color changes */
-  color-duration: 300ms;
-  opacity-duration: 300ms;
-  icon-duration: 180ms;
-  connector-duration: 180ms;
-  item-delete-duration: 220ms;
-  close-duration: 220ms;
-  action-scale: 1.3;
+  color-duration: 0ms;
+  opacity-duration: 0ms;
+  icon-duration: 0ms;
+  connector-duration: 0ms;
+  item-delete-duration: 0ms;
+  close-duration: 0ms;
+  action-scale: 1;
 }
 
 /* Default appearance inherited by all circles unless a more specific block overrides it. */
 circle {
   background-color: #242424;
-  border-color: #ff8c00;
-  border-width: 3px;
+  border-color: #5f676a;
+  border-width: 2px;
 
 /* 50% for circle, 0% for square */
-  border-radius: 50%;
+  border-radius: 0%;
 
   color: #ffffff;
   text-opacity: 1;
@@ -73,19 +75,18 @@ circle {
   text-fill: 100%;
   icon-fill: 57%;
 
-  opacity: 0.8;
+  opacity: 1;
   width: 70px;
   scale: 1;
 }
 
 /* Appearance while an item is selected by the pointer. distance moves it radially; follow-distance moves nearby items by a percentage of that distance. */
 circle.active {
-  border-color: #f2f2f2;
-  font-weight: 600;
+  border-color: #285577;
   scale: 1.25;
-  distance: 30px;
-  follow-distance: 40%;
-  opacity: 0.95;
+  distance: 0px;
+  follow-distance: 0%;
+  opacity: 1;
 }
 
 /* Appearance of ordinary circles that run commands. */
@@ -102,41 +103,17 @@ circle.submenu {
 circle.submenu.active {
 }
 
-/* Shortcut characters shown next to action and submenu item circles. angle is clockwise from the top; distance is measured from the circle edge and may be negative. Add a bare off declaration to hide all item keys. */
-item-key {
-  font-family: Sans;
-  font-weight: 600;
-  font-size: 12px;
-  color: #ffffff;
-  opacity: 0.75;
-  distance: 10px;
-  angle: 0;
-  scale: 1;
-}
-
-/* Shortcut appearance while its item is active. Every property from item-key can be overridden here. */
-item-key.active {
-  font-weight: 700;
-  font-size: 12px;
-  color: #ffd080;
-  opacity: 1;
-  distance: 12px;
-  angle: 0;
-  scale: 1.15;
-}
-
 /* Appearance of the central circle of the currently open menu. */
 circle.center {
   scale: 1.35;
 }
 
 circle.center.active {
-  scale: 1.4;
+  scale: 1.5;
 }
 
 /* Appearance of every previous menu in the visible navigation history. */
 circle.history {
-  opacity: 0.4;
   scale: 0.85;
 }
 
@@ -146,44 +123,50 @@ circle.history.active {
 
 /* Lines connecting the currently open menu to all previous menus. */
 connector {
-  color: #ff8c00;
-  opacity: 0.4;
-  width: 9px;
+  color: #5f676a;
+  width: 2px;
 }
 
 connector.active {
-  color: #ffaa33;
-  opacity: 0.7;
-  width: 11px;
+  color: #285577;
 }
 
 /* Small circles around a submenu item showing the directions of its children. */
 submenu-indicator {
-  color: #ffaa33;
-  opacity: 0.4;
+  color: #505050;
   width: 30px;
   protrusion: 9px;
   cut-indicators: true;
 }
 
 submenu-indicator.active {
-  color: #ffd080;
-  opacity: 0.7;
-  width: 35px;
+  color: #6ca8c9;
+  width: 40px;
+  protrusion: 10px;
 }
 
 /* Child-direction indicators drawn on the circle that returns to the previous menu. */
 submenu-indicator.return {
-  color: #ff8c00;
-  width: 25px;
 }
 
 submenu-indicator.return.active {
-  color: #ffd080;
-  opacity: 0.7;
-  width: 28px;
 }
 
+/* Shortcut characters shown next to action and submenu item circles. angle is clockwise from the top; distance is measured from the circle edge and may be negative. */
+item-key {
+  /* off */
+  font-weight: 400;
+  font-size: 12px;
+  color: #bababa;
+  opacity: 1;
+  distance: -18;
+  angle: 180;
+  scale: 1;
+}
+
+item-key.active {
+  color: #ffffff;
+}
 
 
 /* CONFIGURATOR SETTINGS */

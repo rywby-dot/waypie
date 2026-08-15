@@ -1,0 +1,210 @@
+/* Style.scc. Change manually */
+/* Colors are support RGBA,
+   but it is recommended to change
+   `opacity` instead */
+
+
+/* Background of the full-screen Waypie layer. Use transparent to keep the desktop visible. */
+overlay {
+  background-color: transparent;
+/* You can use something like */
+  /* background-color: #00000010; */
+/* to make fade background */
+}
+
+/* Animation physics and durations. Spring animation time is derived from damping-ratio, stiffness, and epsilon. */
+animation {
+  /* off */
+/* animation when you hover to item */
+  hover-damping-ratio: 1;
+  hover-stiffness: 1000;
+  hover-epsilon: 0.0001;
+
+/* animation for other circles, who follow the cursor */
+  follow-damping-ratio: 1;
+  follow-stiffness: 1000;
+  follow-epsilon: 0.0001;
+
+/* animation for menu movements (open submenu for exammple) */
+  menu-move-damping-ratio: 1;
+  menu-move-stiffness: 1000;
+  menu-move-epsilon: 0.0001;
+
+/* animation for creation items from submenu */
+  item-create-damping-ratio: 1;
+  item-create-stiffness: 1000;
+  item-create-epsilon: 0.0001;
+
+/* animation when you choose an iteem (before menu close) */
+  action-damping-ratio: 1;
+  action-stiffness: 1000;
+  action-epsilon: 0.0001;
+
+/* animation for submenu indicator */
+  submenu-indicator-damping-ratio: 1;
+  submenu-indicator-stiffness: 1000;
+  submenu-indicator-epsilon: 0.0001;
+
+/* simple animations with only duration */
+/* for opacity and color changes */
+  color-duration: 300ms;
+  opacity-duration: 300ms;
+  icon-duration: 180ms;
+  connector-duration: 180ms;
+  item-delete-duration: 220ms;
+  close-duration: 220ms;
+  action-scale: 1.3;
+}
+
+/* Default appearance inherited by all circles unless a more specific block overrides it. */
+circle {
+  background-color: #242424;
+  border-color: #ff8c00;
+  border-width: 3px;
+
+/* 50% for circle, 0% for square */
+  border-radius: 50%;
+
+  color: #ffffff;
+  text-opacity: 1;
+  font-family: Sans;
+  font-size: 14px;
+  font-weight: 400;
+
+/* fill - how icon and text fill the circle */
+  text-fill: 100%;
+  icon-fill: 57%;
+
+  opacity: 0.8;
+  width: 70px;
+  scale: 1;
+}
+
+/* Appearance while an item is selected by the pointer. distance moves it radially; follow-distance moves nearby items by a percentage of that distance. */
+circle.active {
+  border-color: #f2f2f2;
+  scale: 1.25;
+  distance: 30px;
+  follow-distance: 40%;
+  opacity: 0.95;
+}
+
+/* Appearance of ordinary circles that run commands. */
+circle.item {
+}
+
+circle.item.active {
+}
+
+/* Appearance of selectable circles that open submenus. */
+circle.submenu {
+}
+
+circle.submenu.active {
+}
+
+/* Appearance of the central circle of the currently open menu. */
+circle.center {
+  scale: 1.35;
+}
+
+circle.center.active {
+  scale: 1.4;
+}
+
+/* Appearance of every previous menu in the visible navigation history. */
+circle.history {
+  opacity: 0.4;
+  scale: 0.85;
+}
+
+circle.history.active {
+  scale: 0.95;
+}
+
+/* Lines connecting the currently open menu to all previous menus. */
+connector {
+  color: #ff8c00;
+  opacity: 0.4;
+  width: 9px;
+}
+
+connector.active {
+  color: #ffaa33;
+  opacity: 0.7;
+  width: 11px;
+}
+
+/* Small circles around a submenu item showing the directions of its children. */
+submenu-indicator {
+  color: #ffaa33;
+  opacity: 0.4;
+  width: 30px;
+  protrusion: 9px;
+  cut-indicators: true;
+}
+
+submenu-indicator.active {
+  color: #ffd080;
+  opacity: 0.7;
+  width: 35px;
+}
+
+/* Child-direction indicators drawn on the circle that returns to the previous menu. */
+submenu-indicator.return {
+  color: #ff8c00;
+  width: 25px;
+}
+
+submenu-indicator.return.active {
+  color: #ffd080;
+  opacity: 0.7;
+  width: 28px;
+}
+
+/* Shortcut characters shown next to action and submenu item circles. angle is clockwise from the top; distance is measured from the circle edge and may be negative. */
+item-key {
+
+/* comment next line to turn in on */
+    off
+
+  font-weight: 400;
+  font-size: 12px;
+  color: #bababa;
+  opacity: 0.8;
+  distance: 8;
+  angle: 180;
+  scale: 1;
+}
+
+item-key.active {
+  opacity: 1;
+  scale: 1.2;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+
+/* CONFIGURATOR SETTINGS */
+/* DO NOT AFFECT ON MENU */
+
+
+
+/* CONFIGURATOR ONLY: thick line showing the fixed direction back to the previous menu. */
+parent-link {
+  color: #ff8c00;
+  opacity: 0.35;
+  width: 12px;
+}
+
+/* CONFIGURATOR ONLY: transparency and distance of the complete previous-menu preview. */
+configurator-history {
+  opacity: 0.35;
+  scale: 1.6;
+}
+
+/* CONFIGURATOR ONLY: additional appearance applied to circles in the previous-menu preview. */
+circle.previous {
+  background-color: #242424;
+  opacity: 1;
+}

@@ -573,6 +573,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundled_styles_are_valid() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for path in ["config/style.css", "config/style_foot.css"] {
+            StyleSheet::load(&root.join(path)).unwrap();
+        }
+    }
+
+    #[test]
     fn cascade_and_large_fill_values_match_python() {
         let sheet = StyleSheet::parse(
             "circle { width: 70px; color: #ffffff; text-fill: 130%; }\n\

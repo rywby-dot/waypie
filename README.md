@@ -80,9 +80,10 @@ git pull
 make install
 ```
 
-Existing `config`, `style.css`, and icon files are preserved.
+Existing `config`, `style.css`, `style_foot.css`, and icon files are preserved.
 
-To deliberately replace both configuration files with the repository defaults,
+To deliberately replace the configuration and both style files with the
+repository defaults,
 run:
 
 ```sh
@@ -244,6 +245,13 @@ styles, and animation parameters are stored in:
 ```
 
 Edit this file manually to customize the appearance of the menu.
+
+An alternative bundled style is installed as
+`~/.config/waypie/style_foot.css`. It can be tried for one invocation with:
+
+```sh
+waypie -s ~/.config/waypie/style_foot.css
+```
 
 The graphical configurator reads this file for its preview but never modifies
 it.

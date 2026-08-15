@@ -223,6 +223,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundled_config_is_valid() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/config");
+        Config::load(&path).unwrap();
+    }
+
+    #[test]
     fn empty_submenu_gets_opposite_return_angle() {
         let mut root = Item {
             label: "Root".into(),

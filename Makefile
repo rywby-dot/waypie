@@ -12,6 +12,11 @@ CP ?= cp
 
 RUST_MANIFEST := Cargo.toml
 RUST_BINARY := target/release/waypie
+CONFIG_SOURCE_DIR := config
+DEFAULT_CONFIG := $(CONFIG_SOURCE_DIR)/config
+DEFAULT_STYLE := $(CONFIG_SOURCE_DIR)/style.css
+FOOT_STYLE := $(CONFIG_SOURCE_DIR)/style_foot.css
+ICON_SOURCE_DIR := $(CONFIG_SOURCE_DIR)/icons
 
 .PHONY: all help build check install forceinstall install-runtime install-configurator install-config install-icons force-install-config uninstall clean
 
@@ -73,16 +78,19 @@ install-configurator:
 install-config:
 	$(INSTALL) -d $(CONFIG_DIR)
 	@if [ ! -e "$(CONFIG_DIR)/config" ]; then \
-		$(INSTALL) -m 644 config.example "$(CONFIG_DIR)/config"; \
+		$(INSTALL) -m 644 "$(DEFAULT_CONFIG)" "$(CONFIG_DIR)/config"; \
 	fi
 	@if [ ! -e "$(CONFIG_DIR)/style.css" ]; then \
-		$(INSTALL) -m 644 style.example.css "$(CONFIG_DIR)/style.css"; \
+		$(INSTALL) -m 644 "$(DEFAULT_STYLE)" "$(CONFIG_DIR)/style.css"; \
+	fi
+	@if [ ! -e "$(CONFIG_DIR)/style_foot.css" ]; then \
+		$(INSTALL) -m 644 "$(FOOT_STYLE)" "$(CONFIG_DIR)/style_foot.css"; \
 	fi
 	$(MAKE) install-icons
 
 install-icons:
 	@$(INSTALL) -d "$(CONFIG_DIR)/icons"
-	@$(CP) -R --update=none icons/. "$(CONFIG_DIR)/icons/"
+	@$(CP) -R --update=none "$(ICON_SOURCE_DIR)/." "$(CONFIG_DIR)/icons/"
 
 force-install-config:
 	$(INSTALL) -d $(CONFIG_DIR)
@@ -92,8 +100,12 @@ force-install-config:
 	@if [ -e "$(CONFIG_DIR)/style.css" ]; then \
 		$(CP) -p -f "$(CONFIG_DIR)/style.css" "$(CONFIG_DIR)/style.css.bak"; \
 	fi
-	$(INSTALL) -m 644 config.example "$(CONFIG_DIR)/config"
-	$(INSTALL) -m 644 style.example.css "$(CONFIG_DIR)/style.css"
+	@if [ -e "$(CONFIG_DIR)/style_foot.css" ]; then \
+		$(CP) -p -f "$(CONFIG_DIR)/style_foot.css" "$(CONFIG_DIR)/style_foot.css.bak"; \
+	fi
+	$(INSTALL) -m 644 "$(DEFAULT_CONFIG)" "$(CONFIG_DIR)/config"
+	$(INSTALL) -m 644 "$(DEFAULT_STYLE)" "$(CONFIG_DIR)/style.css"
+	$(INSTALL) -m 644 "$(FOOT_STYLE)" "$(CONFIG_DIR)/style_foot.css"
 	$(MAKE) install-icons
 
 uninstall:
