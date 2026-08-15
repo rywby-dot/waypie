@@ -374,11 +374,10 @@ impl Renderer {
                     content,
                     indicators: matches!(node.role, NodeRole::Item | NodeRole::History)
                         || (node.role == NodeRole::Center
-                            && !node.item_path.is_empty()
                             && !node.is_removing()
                             && node.indicator_factor() > 0.0),
-                    indicators_return: node.role == NodeRole::History,
-                    indicator_skip_index: if node.role == NodeRole::History {
+                    indicators_return: node.indicator_is_return(),
+                    indicator_skip_index: if node.indicator_is_return() {
                         path.get(node.item_path.len()).copied()
                     } else {
                         None

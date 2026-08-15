@@ -12,6 +12,7 @@ overlay {
 
 /* Animation physics and durations. Spring animation time is derived from damping-ratio, stiffness, and epsilon. */
 animation {
+  /* off */
 /* animation when you hover to item */
   hover-damping-ratio: 1;
   hover-stiffness: 1000;

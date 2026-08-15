@@ -349,6 +349,12 @@ def load_styles():
     rules = {}
     for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
         properties = {}
+        if any(
+            line.strip().lower() == "off"
+            for statement in declarations.split(";")
+            for line in statement.splitlines()
+        ):
+            properties["off"] = "true"
         for declaration in declarations.split(";"):
             if ":" not in declaration:
                 continue
@@ -587,6 +593,8 @@ def positive_number_string(value, name):
 
 
 def animation_duration(rules, name, fallback_name=None):
+    if animations_off(rules):
+        return 0.0
     animation = rules.get("animation", {})
     value = animation.get(name)
     if value is None and fallback_name is not None:
@@ -601,6 +609,8 @@ def animation_duration(rules, name, fallback_name=None):
 
 
 def spring_duration(rules, prefix):
+    if animations_off(rules):
+        return 0.0
     damping = animation_number(rules, f"{prefix}-damping-ratio", 1.0)
     stiffness = animation_number(rules, f"{prefix}-stiffness", 1000.0)
     epsilon = animation_number(rules, f"{prefix}-epsilon", 0.0001)
@@ -638,6 +648,8 @@ def spring_duration(rules, prefix):
 
 def spring_value(rules, prefix, progress):
     progress = min(1.0, max(0.0, progress))
+    if animations_off(rules):
+        return 1.0
     if progress in {0.0, 1.0}:
         return progress
     damping = animation_number(rules, f"{prefix}-damping-ratio", 1.0)
@@ -669,6 +681,10 @@ def animation_number(rules, name, default):
     if value is None:
         return default
     return positive_number_string(value.strip(), name)
+
+
+def animations_off(rules):
+    return "off" in rules.get("animation", {})
 
 
 def resolve_radius(value, size):

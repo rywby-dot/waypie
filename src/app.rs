@@ -72,6 +72,14 @@ fn index_after_removal(value: Option<usize>, removed: usize) -> Option<usize> {
     })
 }
 
+fn starts_turbo_on_press(target: Option<Target>) -> bool {
+    matches!(target, Some(Target::Item(_) | Target::Parent(_)))
+}
+
+fn next_gesture_origin(pointer: Option<Point>, activation_position: Point) -> Point {
+    pointer.unwrap_or(activation_position)
+}
+
 #[derive(Clone, Copy)]
 struct AnimationProfile {
     menu_move: Motion,
@@ -101,6 +109,12 @@ impl Default for AnimationProfile {
 
 impl From<AnimationStyle> for AnimationProfile {
     fn from(animation: AnimationStyle) -> Self {
+        if animation.off {
+            return Self {
+                action_scale: 1.0,
+                ..Self::default()
+            };
+        }
         let motion = |spring: Spring| Motion {
             duration: spring.duration(),
             spring,
@@ -149,6 +163,24 @@ mod animation_profile_tests {
     }
 
     #[test]
+    fn animation_off_disables_every_runtime_transition() {
+        let profile =
+            AnimationProfile::from(StyleSheet::parse("animation { off }").animation().unwrap());
+
+        assert_eq!(profile.menu_move.duration, Duration::ZERO);
+        assert_eq!(profile.item_create.duration, Duration::ZERO);
+        assert_eq!(profile.hover.duration, Duration::ZERO);
+        assert_eq!(profile.follow.duration, Duration::ZERO);
+        assert_eq!(profile.effects.deletion_duration, Duration::ZERO);
+        assert_eq!(profile.effects.icon_duration, Duration::ZERO);
+        assert_eq!(profile.effects.connector_duration, Duration::ZERO);
+        assert_eq!(profile.effects.indicator.duration, Duration::ZERO);
+        assert_eq!(profile.close_duration, Duration::ZERO);
+        assert_eq!(profile.action.duration, Duration::ZERO);
+        assert_eq!(profile.action_scale, 1.0);
+    }
+
+    #[test]
     fn pointer_hold_becomes_turbo_after_any_movement() {
         let origin = Point { x: 50.0, y: 80.0 };
         let mut hold = PointerHold::new(origin);
@@ -162,6 +194,26 @@ mod animation_profile_tests {
         assert!(hold.moved);
         assert!(!hold.update(origin));
         assert!(hold.moved);
+    }
+
+    #[test]
+    fn items_and_return_circles_start_turbo_on_press() {
+        assert!(starts_turbo_on_press(Some(Target::Item(0))));
+        assert!(starts_turbo_on_press(Some(Target::Parent(0))));
+        assert!(!starts_turbo_on_press(Some(Target::Center)));
+        assert!(!starts_turbo_on_press(None));
+    }
+
+    #[test]
+    fn navigation_rebases_the_next_gesture_at_the_live_pointer() {
+        let activation_tip = Point { x: 200.0, y: 0.0 };
+        let live_pointer = Point { x: 160.0, y: 20.0 };
+
+        assert_eq!(
+            next_gesture_origin(Some(live_pointer), activation_tip),
+            live_pointer
+        );
+        assert_eq!(next_gesture_origin(None, activation_tip), activation_tip);
     }
 
     #[test]
@@ -845,24 +897,34 @@ impl App {
         };
         self.state
             .update_pointer(position, config, self.center_hitbox());
-        let pressed_item = match self.state.active() {
-            Some(Target::Item(item_index)) => Some((
-                item_index,
-                self.state.current(config).items[item_index].is_submenu(),
-            )),
-            _ => None,
+        let pressed_target = self.state.active();
+        let pressed_submenu = match pressed_target {
+            Some(Target::Item(item_index)) => self
+                .state
+                .current(config)
+                .items
+                .get(item_index)
+                .is_some_and(|item| item.is_submenu()),
+            _ => false,
         };
 
         let mut hold = PointerHold::new(position);
-        hold.turbo_active = pressed_item.is_some();
+        hold.turbo_active = starts_turbo_on_press(pressed_target);
         self.pointer_hold = Some(hold);
 
-        if let Some((item_index, true)) = pressed_item {
+        if let Some(Target::Item(item_index)) = pressed_target
+            && pressed_submenu
+        {
             if let Some(hold) = self.pointer_hold.as_mut() {
                 hold.activated_on_press = true;
             }
             self.open_submenu(item_index, position, index);
-        } else if pressed_item.is_some() {
+        } else if let Some(Target::Parent(depth)) = pressed_target {
+            if let Some(hold) = self.pointer_hold.as_mut() {
+                hold.activated_on_press = true;
+            }
+            self.return_to(depth, position, index);
+        } else if matches!(pressed_target, Some(Target::Item(_))) {
             self.hover_detector
                 .reset(self.state.centers().last().copied());
             self.sync_visual(false);
@@ -896,9 +958,13 @@ impl App {
         }
     }
 
-    fn complete_navigation(&mut self) {
-        self.hover_detector
-            .reset(self.state.centers().last().copied());
+    fn complete_navigation(&mut self, activation_position: Point) {
+        // A menu can be clamped, centered, or still moving visually. Starting
+        // the next stroke at its logical center or at a turn detector's old
+        // activation tip would turn the distance to the live pointer into
+        // fake gesture momentum.
+        let gesture_origin = next_gesture_origin(self.pointer_position, activation_position);
+        self.hover_detector.reset(Some(gesture_origin));
         self.sync_visual(true);
         self.draw();
     }
@@ -910,7 +976,7 @@ impl App {
         };
         self.state
             .return_to(depth, position, config, layer.width, layer.height);
-        self.complete_navigation();
+        self.complete_navigation(position);
     }
 
     fn open_submenu(&mut self, item_index: usize, position: Point, layer_index: usize) {
@@ -920,7 +986,7 @@ impl App {
         };
         self.state
             .open_submenu(item_index, position, config, layer.width, layer.height);
-        self.complete_navigation();
+        self.complete_navigation(position);
     }
 
     fn activate_at(&mut self, position: Point, hover: bool, submenu_only: bool) {
@@ -1026,7 +1092,7 @@ impl App {
                 layer.width,
                 layer.height,
             );
-            self.complete_navigation();
+            self.complete_navigation(position);
         } else if let Some(command) = item.command {
             launch(&command);
             let key = NodeKey::Action(self.state.path().to_vec(), item_index);
@@ -1083,7 +1149,7 @@ impl App {
                     .return_to_anchored(depth, position, config, size.0, size.1)
             });
             if returned {
-                self.complete_navigation();
+                self.complete_navigation(position);
             }
         }
     }

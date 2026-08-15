@@ -99,6 +99,7 @@ pub enum Radius {
 
 #[derive(Clone, Copy, Debug)]
 pub struct AnimationStyle {
+    pub off: bool,
     pub color_duration: Duration,
     pub opacity_duration: Duration,
     pub icon_duration: Duration,
@@ -140,7 +141,11 @@ impl StyleSheet {
             let Some(close) = after_open.find('}') else {
                 break;
             };
-            let declarations = parse_declarations(&after_open[..close]);
+            let block = &after_open[..close];
+            let mut declarations = parse_declarations(block);
+            if has_bare_flag(block, "off") {
+                declarations.insert("off".into(), "true".into());
+            }
             for selector in selectors.split(',') {
                 rules
                     .entry(selector.trim().to_ascii_lowercase())
@@ -173,6 +178,24 @@ impl StyleSheet {
 
     pub fn animation(&self) -> Result<AnimationStyle> {
         let rule = self.rules.get("animation");
+        if rule.is_some_and(|properties| properties.contains_key("off")) {
+            return Ok(AnimationStyle {
+                off: true,
+                color_duration: Duration::ZERO,
+                opacity_duration: Duration::ZERO,
+                icon_duration: Duration::ZERO,
+                item_delete_duration: Duration::ZERO,
+                close_duration: Duration::ZERO,
+                connector_duration: Duration::ZERO,
+                action_scale: 1.0,
+                hover_spring: Spring::default(),
+                follow_spring: Spring::default(),
+                menu_move_spring: Spring::default(),
+                item_create_spring: Spring::default(),
+                action_spring: Spring::default(),
+                submenu_indicator_spring: Spring::default(),
+            });
+        }
         let duration = |name: &str, fallback: Option<&str>| -> Result<Duration> {
             let value = rule
                 .and_then(|values| values.get(name))
@@ -199,6 +222,7 @@ impl StyleSheet {
             })
         };
         Ok(AnimationStyle {
+            off: false,
             color_duration: duration("color-duration", None)?,
             opacity_duration: duration("opacity-duration", None)?,
             icon_duration: duration("icon-duration", None)?,
@@ -262,6 +286,13 @@ fn parse_declarations(source: &str) -> HashMap<String, String> {
         .filter_map(|declaration| declaration.split_once(':'))
         .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
         .collect()
+}
+
+fn has_bare_flag(source: &str, flag: &str) -> bool {
+    source
+        .split(';')
+        .flat_map(str::lines)
+        .any(|line| line.trim().eq_ignore_ascii_case(flag))
 }
 
 fn apply_circle_property(style: &mut CircleStyle, name: &str, value: &str) -> Result<()> {
@@ -511,6 +542,22 @@ mod tests {
         assert_eq!(animation.menu_move_spring.stiffness, 700.0);
         assert_eq!(animation.submenu_indicator_spring.damping_ratio, 0.7);
         assert_eq!(animation.submenu_indicator_spring.stiffness, 600.0);
+    }
+
+    #[test]
+    fn bare_off_flag_disables_all_timed_animation_values() {
+        let sheet =
+            StyleSheet::parse("animation {\n off\n color-duration: 5s; close-duration: 5s; }");
+        let animation = sheet.animation().unwrap();
+
+        assert!(animation.off);
+        assert_eq!(animation.color_duration, Duration::ZERO);
+        assert_eq!(animation.opacity_duration, Duration::ZERO);
+        assert_eq!(animation.icon_duration, Duration::ZERO);
+        assert_eq!(animation.item_delete_duration, Duration::ZERO);
+        assert_eq!(animation.close_duration, Duration::ZERO);
+        assert_eq!(animation.connector_duration, Duration::ZERO);
+        assert_eq!(animation.action_scale, 1.0);
     }
 
     #[test]

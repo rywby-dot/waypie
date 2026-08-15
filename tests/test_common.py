@@ -2,6 +2,8 @@ import unittest
 
 from waypie_common import (
     Item,
+    animation_duration,
+    animations_off,
     autogenerate_keys,
     colored_svg_source,
     computed_style,
@@ -12,6 +14,8 @@ from waypie_common import (
     resolve_angles,
     scaled_icon_size,
     sort_icon_themes,
+    spring_duration,
+    spring_value,
     wrap_text_to_widths,
 )
 
@@ -23,6 +27,22 @@ class FakeSvgPath:
     def read_text(self, encoding):
         self.encoding = encoding
         return self.source
+
+
+class AnimationStyleTests(unittest.TestCase):
+    def test_off_overrides_timed_and_spring_animations(self):
+        rules = {
+            "animation": {
+                "off": "true",
+                "color-duration": "999ms",
+                "hover-stiffness": "1",
+            }
+        }
+
+        self.assertTrue(animations_off(rules))
+        self.assertEqual(animation_duration(rules, "color-duration"), 0)
+        self.assertEqual(spring_duration(rules, "hover"), 0)
+        self.assertEqual(spring_value(rules, "hover", 0.5), 1)
 
 
 class ScaledIconSizeTests(unittest.TestCase):

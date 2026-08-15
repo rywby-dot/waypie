@@ -62,6 +62,7 @@ pub struct VisualNode {
     pub selected_action: bool,
     pub return_connector: bool,
     pub travel_connector: bool,
+    indicator_return: bool,
     base_position: Point,
     base_size: f64,
     hover_offset: Point,
@@ -218,6 +219,10 @@ impl VisualNode {
         self.indicator.value
     }
 
+    pub fn indicator_is_return(&self) -> bool {
+        self.indicator_return
+    }
+
     fn set_connector_target(&mut self, target: f64, duration: Duration, now: Instant) {
         self.connector.set_target(target, duration, now);
     }
@@ -290,6 +295,9 @@ impl VisualNode {
         }
         self.indicator
             .sample(now, |progress| self.indicator_spring.sample(progress));
+        if self.indicator.finished(now) && self.indicator.target <= f64::EPSILON {
+            self.indicator_return = false;
+        }
         if progress >= 1.0 {
             self.base_size = self.target_size;
             self.opacity = self.target_opacity;
@@ -532,6 +540,7 @@ impl Animator {
                 .copied();
             if let Some(node) = self.nodes.get_mut(&key) {
                 let menu_node = matches!(&key, NodeKey::Menu(_));
+                let previous_role = node.role;
                 let had_indicators =
                     menu_node && matches!(node.role, NodeRole::Item | NodeRole::History);
                 let wants_indicators =
@@ -549,6 +558,12 @@ impl Animator {
                 if had_indicators != wants_indicators {
                     node.set_indicator_target(f64::from(wants_indicators), indicator, now);
                 }
+                node.indicator_return = match target.role {
+                    NodeRole::History => true,
+                    NodeRole::Item => false,
+                    NodeRole::Center if previous_role == NodeRole::History => node.indicator_return,
+                    NodeRole::Center => false,
+                };
                 node.item_path = target.item_path;
                 node.role = target.role;
                 node.active = target.active;
@@ -609,6 +624,7 @@ impl Animator {
                             && matches!(&key, NodeKey::Menu(_)),
                     );
                     node.indicator.reset(indicator_value, now);
+                    node.indicator_return = target.role == NodeRole::History;
                     node.position_anchor = match (parent, parent_target) {
                         (Some(parent), Some(parent_target)) => Some(PositionAnchor {
                             parent,
@@ -665,6 +681,7 @@ impl Animator {
                         selected_action: false,
                         return_connector: false,
                         travel_connector: false,
+                        indicator_return: target.role == NodeRole::History,
                         base_position: creation_origin,
                         base_size: target.rest_size * initial,
                         hover_offset: Point::default(),
@@ -1111,6 +1128,49 @@ mod tests {
         assert_eq!(node.role, NodeRole::History);
         assert_eq!(node.indicator.target, 1.0);
         assert_eq!(node.indicator.duration, indicator.duration);
+    }
+
+    #[test]
+    fn return_circle_keeps_its_indicators_until_the_hide_animation_finishes() {
+        let key = NodeKey::Menu(vec![]);
+        let mut animator = Animator::default();
+        animator.reconcile(
+            vec![target(key.clone(), NodeRole::History, Point::default())],
+            Motion::default(),
+            Motion::default(),
+            Duration::ZERO,
+            false,
+        );
+        let indicator = Motion {
+            duration: Duration::from_secs(1),
+            spring: Spring::default(),
+        };
+        animator.reconcile_with_effects(
+            vec![target(key.clone(), NodeRole::Center, Point::default())],
+            Motion {
+                duration: Duration::from_secs(1),
+                spring: Spring::default(),
+            },
+            Motion::default(),
+            TransitionEffects {
+                indicator,
+                ..TransitionEffects::default()
+            },
+            true,
+        );
+
+        let node = &animator.nodes[&key];
+        assert_eq!(node.role, NodeRole::Center);
+        assert!(node.indicator_is_return());
+        assert_eq!(node.indicator.target, 0.0);
+        assert!(node.indicator_factor() > 0.0);
+
+        animator.nodes.get_mut(&key).unwrap().indicator.started =
+            Instant::now() - Duration::from_secs(2);
+        animator.sample_all(Instant::now());
+        let node = &animator.nodes[&key];
+        assert_eq!(node.indicator_factor(), 0.0);
+        assert!(!node.indicator_is_return());
     }
 
     #[test]
