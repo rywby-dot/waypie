@@ -181,6 +181,15 @@ Except for the optional central hitbox, selection is determined by the pointer's
 direction relative to the current menu center. The entire angular sector remains
 selectable even when the pointer moves beyond the visible circle.
 
+* **Hover mode** selects an item after the pointer stops over it or turns toward
+  another direction.
+* **Turbo mode** lets you keep the modifier used to open Waypie held while
+  navigating, then select the current item by releasing it.
+* **Hold to turbo** provides the same behavior while the left mouse button is
+  held and the pointer is moving. A regular click keeps its normal action.
+* **Travel item animation** makes the selected circle follow the pointer in
+  Hover and Turbo modes.
+
 Opening a submenu moves its circle to the new center. Its children grow and
 spread outward from the moving circle. Previous menus remain connected by lines
 and can be selected by moving in their return direction. Clicking the center of
@@ -245,6 +254,21 @@ styles, and animation parameters are stored in:
 ```
 
 Edit this file manually to customize the appearance of the menu.
+Waypie validates its supported CSS subset before opening the menu, so malformed
+blocks, unknown selectors or properties, invalid colors, and unsafe animation
+values are reported in the terminal instead of failing later while drawing.
+
+To show an item's activation keys next to its circle, remove `off` from the
+`item-key` block. Their normal and selected appearance can be styled separately
+with `item-key` and `item-key.active`.
+
+All animations can be disabled at once:
+
+```css
+animation {
+  off
+}
+```
 
 An alternative bundled style is installed as
 `~/.config/waypie/style_foot.css`. It can be tried for one invocation with:
