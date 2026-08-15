@@ -72,7 +72,21 @@ struct ItemFrame<'a> {
 enum ItemContent<'a> {
     Default,
     Label(&'a str),
-    IconOrBlank,
+    IconOrLabel,
+}
+
+fn visible_label<'a>(
+    content: ItemContent<'a>,
+    default_label: &'a str,
+    icon_drawn: bool,
+) -> Option<&'a str> {
+    if icon_drawn && !matches!(content, ItemContent::Label(_)) {
+        return None;
+    }
+    Some(match content {
+        ItemContent::Default | ItemContent::IconOrLabel => default_label,
+        ItemContent::Label(label) => label,
+    })
 }
 
 fn connector_is_active(role: NodeRole, active: bool) -> bool {
@@ -631,10 +645,10 @@ impl Renderer {
                         .items
                         .get(index)
                         .map_or(ItemContent::Default, |item| ItemContent::Label(&item.label)),
-                    Some(Target::Parent(_)) => ItemContent::IconOrBlank,
+                    Some(Target::Parent(_)) => ItemContent::IconOrLabel,
                     _ => ItemContent::Default,
                 },
-                NodeRole::History if node.active => ItemContent::IconOrBlank,
+                NodeRole::History if node.active => ItemContent::IconOrLabel,
                 _ => ItemContent::Default,
             };
             self.draw_item(
@@ -870,7 +884,7 @@ impl Renderer {
         let icon_is_content = frame.item.icon.is_some()
             && matches!(
                 frame.content,
-                ItemContent::Default | ItemContent::IconOrBlank
+                ItemContent::Default | ItemContent::IconOrLabel
             );
         let draw_icon =
             frame.item.icon.is_some() && (icon_is_content || frame.icon_opacity > f64::EPSILON);
@@ -885,18 +899,9 @@ impl Renderer {
                 &icon_style,
                 frame.icon_root,
             );
-        if icon_drawn && !matches!(frame.content, ItemContent::Label(_)) {
-            return;
-        }
-        if matches!(frame.content, ItemContent::IconOrBlank) {
-            return;
-        }
-        let label = match frame.content {
-            ItemContent::Default => &frame.item.label,
-            ItemContent::Label(label) => label,
-            ItemContent::IconOrBlank => unreachable!(),
-        };
-        if !label.is_empty() {
+        if let Some(label) = visible_label(frame.content, &frame.item.label, icon_drawn)
+            && !label.is_empty()
+        {
             let base_scale = frame
                 .styles
                 .circle(&["circle"])
@@ -1512,6 +1517,30 @@ fn padded_pixmap(source: &Pixmap) -> Option<Pixmap> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_icon_falls_back_to_the_item_label() {
+        assert_eq!(
+            visible_label(ItemContent::IconOrLabel, "Submenu", false),
+            Some("Submenu")
+        );
+        assert_eq!(
+            visible_label(ItemContent::Default, "Action", false),
+            Some("Action")
+        );
+    }
+
+    #[test]
+    fn drawn_icon_replaces_the_default_label_but_not_an_explicit_label() {
+        assert_eq!(
+            visible_label(ItemContent::IconOrLabel, "Submenu", true),
+            None
+        );
+        assert_eq!(
+            visible_label(ItemContent::Label("Hovered"), "Center", true),
+            Some("Hovered")
+        );
+    }
 
     #[test]
     fn connector_is_active_only_for_a_focused_history_circle() {
