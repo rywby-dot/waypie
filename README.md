@@ -5,7 +5,8 @@
 * It supports Point-and-Click Mode, Marking Mode, Turbo Mode, Hover Mode, and Centered Mode, inspired by [Kando's interaction modes](https://kando.menu/usage/).
 * It is recommended that you [read about Kando](https://kando.menu/intro/) before using Waypie.
 
-https://github.com/user-attachments/assets/bbad9bca-8f19-4e19-b169-acb0bc045aef
+
+https://github.com/user-attachments/assets/9a103a3d-474e-484e-b687-93899f1d0e1b
 
 <img width="960" height="540" alt="ScreenShot-2026-08-05_16-59-58" src="https://github.com/user-attachments/assets/8e091dbd-4aa2-4a95-9c4c-378b9c34664b" />
 
@@ -196,7 +197,7 @@ a submenu returns to its parent unless **Close on click** is enabled.
 
 ## Configuration
 
-<img width="960" height="540" alt="ScreenShot-2026-08-05_15-55-54" src="https://github.com/user-attachments/assets/017347b0-3fd8-4184-b0ea-c885308e1a80" />
+<img width="1747" height="1177" alt="image" src="https://github.com/user-attachments/assets/20c10c6d-61bf-400d-93eb-f6127a208731" />
 
 Open the graphical configurator with:
 
