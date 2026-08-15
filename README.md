@@ -230,6 +230,8 @@ again. Icons continue to be loaded from `~/.config/waypie/icons/`.
 * **Center layout** (`Ctrl+A`) centers the currently open menu. **Center all
   layouts** (`Ctrl+Shift+A`) centers the root first, followed by every submenu
   level in breadth-first order.
+* Actions and entire submenus can be copied, cut, and pasted with `Ctrl+C`,
+  `Ctrl+X`, and `Ctrl+V`.
 * **Center mode**, **Hover mode**, **Turbo mode**, **Hold to turbo**,
   **Travel item animation**, and **Close on click** control the corresponding
   runtime behavior.
