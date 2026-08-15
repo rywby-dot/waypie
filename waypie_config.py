@@ -25,6 +25,7 @@ from waypie_common import (
     angular_distance,
     animation_duration,
     autogenerate_keys,
+    centered_submenu_angles,
     colored_svg_source,
     computed_style,
     content_opacity,
@@ -1960,11 +1961,7 @@ class Configurator(Gtk.Application):
         if not menu.items:
             return
         if not root:
-            step = 360 / (len(menu.items) + 1)
-            angles = [
-                round(menu.return_angle + (index + 1) * step) % 360
-                for index in range(len(menu.items))
-            ]
+            menu.return_angle, angles = centered_submenu_angles(menu)
         else:
             step = 360 / len(menu.items)
             candidates = (

@@ -7,10 +7,12 @@ from waypie_common import (
     animation_duration,
     animations_off,
     autogenerate_keys,
+    centered_submenu_angles,
     colored_svg_source,
     computed_item_key_style,
     computed_style,
     fixed_text_geometry,
+    geometric_return_angle,
     load_config,
     load_styles,
     menus_breadth_first,
@@ -265,6 +267,19 @@ class ColoredSvgSourceTests(unittest.TestCase):
 
 
 class EmptySubmenuTests(unittest.TestCase):
+    def test_geometric_return_direction_does_not_depend_on_child_gaps(self):
+        submenu = Item(
+            "Submenu",
+            angle=90,
+            items=[
+                Item("First", command="true", angle=10),
+                Item("Second", command="true", angle=40),
+            ],
+        )
+
+        self.assertEqual(geometric_return_angle(submenu), 270)
+        self.assertEqual(centered_submenu_angles(submenu), (270, [30, 150]))
+
     def test_item_without_command_can_be_an_empty_submenu(self):
         root = parse_item(
             {

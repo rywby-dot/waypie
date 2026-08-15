@@ -437,6 +437,19 @@ def resolve_angles(item, root=False):
         item.return_angle = round(item.return_angle) % 360
 
 
+def geometric_return_angle(item):
+    return round((item.angle or 0) + 180) % 360
+
+
+def centered_submenu_angles(item):
+    return_angle = geometric_return_angle(item)
+    step = 360 / (len(item.items) + 1)
+    return return_angle, [
+        round(return_angle + (index + 1) * step) % 360
+        for index in range(len(item.items))
+    ]
+
+
 def largest_gap_angle(angles, preferred=None):
     if not angles:
         return None
