@@ -54,6 +54,8 @@ impl HoverDetector {
         };
         let tip_length = tip.x.hypot(tip.y);
         if tip_length > JITTER_THRESHOLD {
+            self.pause_deadline = None;
+            self.pause_position = None;
             let cosine = ((tip.x * stroke.x + tip.y * stroke.y) / (tip_length * stroke_length))
                 .clamp(-1.0, 1.0);
             if cosine.acos().to_degrees() > MIN_STROKE_ANGLE {
@@ -62,12 +64,10 @@ impl HoverDetector {
             }
             self.stroke_end = Some(position);
         }
-        // A pause is the absence of pointer events, not merely the absence of
-        // one large event. During an animated transition Wayland may deliver a
-        // continuous movement as many sub-jitter steps; keeping the old timer
-        // would then select an item while the pointer was still moving.
-        self.pause_deadline = Some(now + PAUSE_TIMEOUT);
-        self.pause_position = Some(position);
+        if self.pause_deadline.is_none() {
+            self.pause_deadline = Some(now + PAUSE_TIMEOUT);
+            self.pause_position = Some(position);
+        }
         None
     }
 
@@ -113,12 +113,13 @@ mod tests {
     }
 
     #[test]
-    fn continuous_small_motion_postpones_pause_selection() {
+    fn sub_jitter_motion_does_not_postpone_pause_selection() {
         let start = Instant::now();
         let mut detector = HoverDetector::default();
         detector.reset(Some(Point { x: 0.0, y: 0.0 }));
         detector.on_motion(Point { x: 20.0, y: 0.0 }, start);
         detector.on_motion(Point { x: 180.0, y: 0.0 }, start);
+        detector.on_motion(Point { x: 181.0, y: 0.0 }, start);
         detector.on_motion(
             Point { x: 185.0, y: 0.0 },
             start + Duration::from_millis(90),
@@ -126,11 +127,7 @@ mod tests {
 
         assert_eq!(
             detector.on_timeout(start + Duration::from_millis(110)),
-            None
-        );
-        assert_eq!(
-            detector.on_timeout(start + Duration::from_millis(191)),
-            Some(Point { x: 185.0, y: 0.0 })
+            Some(Point { x: 181.0, y: 0.0 })
         );
     }
 }
