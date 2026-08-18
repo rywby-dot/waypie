@@ -1,6 +1,6 @@
 [project]
 name = "waypie"
-version = "2.0.0"
+version = "2.0.1"
 description = "GTK configurator for the Rust Waypie radial menu"
 readme = "README.md"
 license = "MIT"
