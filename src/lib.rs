@@ -2,6 +2,7 @@ pub mod animation;
 pub mod app;
 mod appearance;
 pub mod config;
+mod frame;
 pub mod geometry;
 pub mod hover;
 pub mod model;

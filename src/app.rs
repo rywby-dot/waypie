@@ -50,6 +50,7 @@ use crate::{
     animation::Spring,
     appearance::{node_size, node_style},
     config::{Config, item_at_path, key_matches},
+    frame::FrameSchedule,
     geometry::{Point, angular_distance, direction_angle, radial_position},
     hover::HoverDetector,
     model::{MenuState, Target},
@@ -313,7 +314,7 @@ pub struct App {
     active_layer: Option<usize>,
     visible: bool,
     buffers: Option<RenderBuffers>,
-    redraw_pending: bool,
+    frames: FrameSchedule<wl_surface::WlSurface>,
     renderer: Renderer,
     config: Option<Config>,
     styles: Option<StyleSheet>,
@@ -373,7 +374,7 @@ impl App {
             active_layer: None,
             visible: false,
             buffers: None,
-            redraw_pending: false,
+            frames: FrameSchedule::default(),
             renderer: Renderer::new(),
             config: None,
             styles: None,
@@ -466,6 +467,7 @@ impl App {
         self.animator.clear();
         self.closing_until = None;
         self.active_layer = None;
+        self.frames.reset();
         self.visible = true;
         self.input_inhibitor = self
             .input_inhibit_manager
@@ -502,7 +504,7 @@ impl App {
         }
         if self.active_layer.is_some() && !self.state.centers().is_empty() {
             self.sync_visual(false);
-            self.draw();
+            self.request_redraw();
         }
         Ok(())
     }
@@ -559,11 +561,11 @@ impl App {
             return;
         }
         self.closing_until = Some(Instant::now() + total_duration);
-        self.draw();
+        self.request_redraw();
     }
 
     fn finish_hide(&mut self) {
-        self.redraw_pending = false;
+        self.frames.reset();
         self.layers.clear();
         self.exit = true;
     }
@@ -696,7 +698,7 @@ impl App {
         self.state.update_pointer(pointer, config, hitbox);
         self.hover_detector.reset(Some(center));
         self.sync_visual(false);
-        self.draw();
+        self.request_redraw();
     }
 
     fn release_input_inhibitor(&mut self) {
@@ -883,7 +885,7 @@ impl App {
         let following = matches!(self.state.active(), Some(Target::Item(_)));
         if changed || following {
             self.sync_visual(false);
-            self.draw();
+            self.request_redraw();
         }
         if let Some(selection) = selection {
             self.activate_at(selection, true, self.turbo_gesture_active());
@@ -943,7 +945,7 @@ impl App {
             self.hover_detector
                 .reset(self.state.centers().last().copied());
             self.sync_visual(false);
-            self.draw();
+            self.request_redraw();
         }
     }
 
@@ -966,7 +968,7 @@ impl App {
         } else if hold.moved || hold.turbo_active {
             self.hover_detector.reset(None);
             self.sync_visual(false);
-            self.draw();
+            self.request_redraw();
             self.activate_at(position, true, false);
         } else {
             self.activate(position);
@@ -981,7 +983,7 @@ impl App {
         let gesture_origin = next_gesture_origin(self.pointer_position, activation_position);
         self.hover_detector.reset(Some(gesture_origin));
         self.sync_visual(true);
-        self.draw();
+        self.request_redraw();
     }
 
     fn return_to(&mut self, depth: usize, position: Point, layer_index: usize) {
@@ -1183,7 +1185,7 @@ impl App {
             self.activate_at(position, true, self.turbo_gesture_active());
         }
         if self.animator.tick() || self.renderer.is_animating() {
-            self.draw();
+            self.request_redraw();
         }
         if self
             .closing_until
@@ -1193,8 +1195,11 @@ impl App {
         }
     }
 
-    fn draw(&mut self) {
-        self.redraw_pending = true;
+    fn request_redraw(&mut self) {
+        self.frames.request();
+    }
+
+    fn render_frame(&mut self) {
         let (Some(index), Some(config), Some(styles)) = (
             self.active_layer,
             self.config.as_ref(),
@@ -1259,15 +1264,20 @@ impl App {
             .wl_surface()
             .damage_buffer(0, 0, width as i32, height as i32);
         if buffer.attach_to(surface.wl_surface()).is_ok() {
+            // One callback per rendered commit; input-only commits do not
+            // consume the frame budget. The first frame needs no callback.
+            surface
+                .wl_surface()
+                .frame(&self.qh, surface.wl_surface().clone());
             surface.commit();
             buffers.next = (slot_index + 1) % buffers.slots.len();
-            self.redraw_pending = false;
+            self.frames.submitted(surface.wl_surface().clone());
         }
     }
 
     pub fn flush_redraw(&mut self) {
-        if self.redraw_pending {
-            self.draw();
+        if self.frames.ready() && !self.exit {
+            self.render_frame();
         }
     }
 
@@ -1352,7 +1362,16 @@ impl CompositorHandler for App {
         _: wl_output::Transform,
     ) {
     }
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+    fn frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        // Render after the whole event batch, using the latest pointer state.
+        self.frames.frame_done(surface);
+    }
     fn surface_enter(
         &mut self,
         _: &Connection,
@@ -1405,7 +1424,7 @@ impl LayerShellHandler for App {
         self.layers[index].width = configure.new_size.0;
         self.layers[index].height = configure.new_size.1;
         if self.active_layer == Some(index) {
-            self.draw();
+            self.request_redraw();
         } else {
             self.attach_transparent(index);
             self.refresh_full_input_region(index);

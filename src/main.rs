@@ -222,6 +222,7 @@ fn run() -> Result<()> {
     event_queue.roundtrip(&mut app)?;
     conn.flush()?;
     app.finish_show()?;
+    app.flush_redraw();
     conn.flush()?;
     WaylandSource::new(conn, event_queue).insert(handle.clone())?;
     while !app.exit {
