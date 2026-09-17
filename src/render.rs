@@ -1519,7 +1519,7 @@ fn load_raster(path: &Path, size: u32) -> Option<Pixmap> {
         .resize(size, size, image::imageops::FilterType::Lanczos3)
         .to_rgba8()
         .into_raw();
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0 {
         let alpha = pixel[3] as u16;
         pixel[0] = (pixel[0] as u16 * alpha / 255) as u8;
         pixel[1] = (pixel[1] as u16 * alpha / 255) as u8;

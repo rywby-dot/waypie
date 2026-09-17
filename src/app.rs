@@ -1354,8 +1354,10 @@ impl App {
 fn copy_pixmap_to_argb(pixmap: &Pixmap, canvas: &mut [u8]) {
     for (source, target) in pixmap
         .data()
-        .chunks_exact(4)
-        .zip(canvas.chunks_exact_mut(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(canvas.as_chunks_mut::<4>().0)
     {
         target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
     }
