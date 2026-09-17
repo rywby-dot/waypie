@@ -49,6 +49,7 @@ use wayland_protocols_wlr::input_inhibitor::v1::client::{
 use crate::{
     animation::Spring,
     appearance::{node_size, node_style},
+    blur::BackgroundBlur,
     config::{Config, item_at_path, key_matches},
     frame::FrameSchedule,
     geometry::{Point, angular_distance, direction_angle, radial_position},
@@ -297,6 +298,7 @@ impl RenderBuffers {
 }
 
 pub struct App {
+    pub(crate) background_blur: BackgroundBlur,
     pub registry_state: RegistryState,
     pub seat_state: SeatState,
     pub output_state: OutputState,
@@ -359,6 +361,7 @@ impl App {
             .join("waypie");
         Self {
             registry_state,
+            background_blur: BackgroundBlur::default(),
             seat_state,
             output_state,
             compositor,
@@ -496,6 +499,7 @@ impl App {
         self.animation = AnimationProfile::from(animation_style);
         self.renderer.configure_fonts(styles.font_requests());
         self.renderer.configure_animations(animation_style);
+        self.renderer.configure_shadow(styles.shadow()?);
         self.styles = Some(styles);
 
         if let (Some(position), Some(config)) = (self.pointer_position, self.config.as_ref()) {
@@ -565,6 +569,7 @@ impl App {
     }
 
     fn finish_hide(&mut self) {
+        self.background_blur.clear();
         self.frames.reset();
         self.layers.clear();
         self.exit = true;
@@ -1195,7 +1200,7 @@ impl App {
         }
     }
 
-    fn request_redraw(&mut self) {
+    pub(crate) fn request_redraw(&mut self) {
         self.frames.request();
     }
 
@@ -1245,6 +1250,9 @@ impl App {
             return;
         };
         let nodes = self.animator.nodes();
+        self.renderer.set_blur_enabled(
+            self.background_blur.available() && styles.blur_enabled().unwrap_or(false),
+        );
         self.renderer.render(
             &mut pixmap,
             &Scene {
@@ -1264,6 +1272,14 @@ impl App {
             .wl_surface()
             .damage_buffer(0, 0, width as i32, height as i32);
         if buffer.attach_to(surface.wl_surface()).is_ok() {
+            self.background_blur.apply(
+                surface.wl_surface(),
+                &self.compositor,
+                &self.qh,
+                self.renderer.blur_shapes(),
+                width,
+                height,
+            );
             // One callback per rendered commit; input-only commits do not
             // consume the frame budget. The first frame needs no callback.
             surface
@@ -1279,6 +1295,10 @@ impl App {
         if self.frames.ready() && !self.exit {
             self.render_frame();
         }
+    }
+
+    pub fn bind_background_effect(&mut self, globals: &wayland_client::globals::GlobalList) {
+        self.background_blur.bind(globals, &self.qh);
     }
 
     fn attach_transparent(&mut self, index: usize) {

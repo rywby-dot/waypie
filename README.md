@@ -264,6 +264,15 @@ To show an item's activation keys next to its circle, remove `off` from the
 `item-key` block. Their normal and selected appearance can be styled separately
 with `item-key` and `item-key.active`.
 
+Remove `off` from `blur` or `shadow` in the style file to enable background blur
+under all circles or outer shadows. Blur requires the compositor's
+`ext-background-effect-v1` support; its strength and passes are configured in the
+compositor, not Waypie. Older compositor versions may not support this protocol,
+even if they can blur windows. Without it, the menu works normally without blur.
+Shadows work independently of compositor support; color, opacity, blur radius,
+spread, and offsets are set in `shadow`. Both effects are disabled by default.
+These effects apply to the runtime menu, not the configurator canvas.
+
 All animations can be disabled at once:
 
 ```css

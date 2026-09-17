@@ -4,6 +4,24 @@
    `opacity` instead */
 
 
+/* Blur behind all circles. Remove off to request native compositor blur.
+   Requires ext-background-effect-v1; strength/passes belong to the compositor. */
+blur {
+  off
+}
+
+/* Outer shadows for all circles. Remove off to enable; follows circle animations.
+   blur-radius: 0..256px; spread: -256..256px; offsets: -4096..4096px. */
+shadow {
+  off
+  color: #000000;
+  opacity: 0.35;
+  blur-radius: 12px;
+  spread: 0px;
+  offset-x: 0px;
+  offset-y: 4px;
+}
+
 /* Background of the full-screen Waypie layer. Use transparent to keep the desktop visible. */
 overlay {
   background-color: transparent;

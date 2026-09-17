@@ -23,10 +23,12 @@ const INDICATOR_CLIP_OVERLAP: f64 = 1.0;
 use crate::{
     animation::{Spring, smoothstep},
     appearance::node_style,
+    blur::BlurShape,
     config::{Config, Item, item_at_path},
     geometry::{Point, radial_position},
     model::{MenuState, Target},
-    style::{AnimationStyle, CircleStyle, Color, ItemKeyStyle, StyleSheet},
+    shadow::Shadows,
+    style::{AnimationStyle, CircleStyle, Color, ItemKeyStyle, ShadowStyle, StyleSheet},
     visual::{NodeKey, NodeRole, VisualNode},
 };
 
@@ -64,6 +66,7 @@ struct ItemFrame<'a> {
     indicator_skip_index: Option<usize>,
     indicator_reveal: f64,
     geometry_size: f64,
+    shadow_reference_size: f64,
     opacity: f64,
     icon_opacity: f64,
 }
@@ -325,6 +328,9 @@ where
 }
 
 pub struct Renderer {
+    shadows: Shadows,
+    blur_enabled: bool,
+    blur_shapes: Vec<BlurShape>,
     fonts: FontSystem,
     glyphs: SwashCache,
     icons: HashMap<(PathBuf, u32, [u8; 4]), Pixmap>,
@@ -359,6 +365,9 @@ impl Default for Renderer {
 impl Renderer {
     pub fn new() -> Self {
         Self {
+            shadows: Shadows::default(),
+            blur_enabled: false,
+            blur_shapes: Vec::new(),
             fonts: empty_font_system(),
             glyphs: SwashCache::new(),
             icons: HashMap::new(),
@@ -594,7 +603,20 @@ impl Renderer {
         transition.sample(now)
     }
 
+    pub(crate) fn configure_shadow(&mut self, style: Option<ShadowStyle>) {
+        self.shadows.configure(style);
+    }
+
+    pub(crate) fn set_blur_enabled(&mut self, enabled: bool) {
+        self.blur_enabled = enabled;
+    }
+
+    pub(crate) fn blur_shapes(&self) -> &[BlurShape] {
+        &self.blur_shapes
+    }
+
     pub fn render(&mut self, pixmap: &mut Pixmap, scene: &Scene<'_>) {
+        self.blur_shapes.clear();
         let mut overlay = scene.styles.circle(&["overlay"]).unwrap_or_default();
         overlay.background_color =
             self.animated_color(ColorAnimationKey::Overlay, overlay.background_color);
@@ -639,6 +661,19 @@ impl Renderer {
                 ColorAnimationKey::NodeContent(node.key.clone()),
                 style.color,
             );
+            if self.blur_enabled && node.opacity * style.opacity > 0.0 && node.size > 0.0 {
+                self.blur_shapes.push(BlurShape {
+                    center: node.position,
+                    size: node.size,
+                    radius: style.radius(node.size),
+                });
+            }
+            let shadow_reference_size = if self.shadows.enabled() {
+                let resting = node_style(scene.styles, item, node.role, false);
+                resting.width.unwrap_or(0.0) * resting.scale
+            } else {
+                0.0
+            };
             let content = match node.role {
                 NodeRole::Center if node.item_path == path => match scene.state.active() {
                     Some(Target::Item(index)) => current
@@ -676,6 +711,7 @@ impl Renderer {
                         .clamp(0.0, 1.0)
                         .sqrt(),
                     geometry_size: node.size,
+                    shadow_reference_size,
                     opacity: node.opacity,
                     icon_opacity: node.icon_opacity(),
                 },
@@ -856,6 +892,14 @@ impl Renderer {
         let mut visual_style = frame.style.clone();
         visual_style.text_opacity = Some(frame.style.content_opacity() * frame.opacity);
         visual_style.opacity *= frame.opacity;
+        self.shadows.draw(
+            pixmap,
+            frame.center,
+            size,
+            frame.shadow_reference_size,
+            frame.style.radius(frame.shadow_reference_size),
+            visual_style.opacity,
+        );
         if frame.indicators && frame.item.is_submenu() {
             let base_size = frame.style.width.unwrap_or(0.0) * frame.style.scale;
             self.draw_indicators(
@@ -1283,21 +1327,24 @@ impl Renderer {
     }
 }
 
-fn draw_rounded_box(pixmap: &mut Pixmap, center: Point, size: f64, style: &CircleStyle) {
-    let Some(rect) = Rect::from_xywh(
+pub(crate) fn rounded_box_path(center: Point, size: f64, radius: f64) -> Option<tiny_skia::Path> {
+    let rect = Rect::from_xywh(
         (center.x - size / 2.0) as f32,
         (center.y - size / 2.0) as f32,
         size as f32,
         size as f32,
-    ) else {
-        return;
-    };
-    let radius = style.radius(size) as f32;
-    let path = if radius >= size as f32 / 2.0 - f32::EPSILON {
+    )?;
+    let radius = radius as f32;
+    if radius >= size as f32 / 2.0 - f32::EPSILON {
         PathBuilder::from_circle(center.x as f32, center.y as f32, size as f32 / 2.0)
-            .expect("a positive circle size")
     } else {
-        rounded_rect(rect, radius)
+        Some(rounded_rect(rect, radius))
+    }
+}
+
+fn draw_rounded_box(pixmap: &mut Pixmap, center: Point, size: f64, style: &CircleStyle) {
+    let Some(path) = rounded_box_path(center, size, style.radius(size)) else {
+        return;
     };
     let mut fill = Paint::default();
     fill.set_color(to_skia(style.background_color, style.opacity));

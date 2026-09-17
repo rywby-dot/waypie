@@ -540,7 +540,37 @@ def load_styles(path=STYLE_PATH):
 
 def validate_styles(rules):
     for selector in rules:
-        if selector == "animation":
+        if selector in {"blur", "shadow"}:
+            allowed = (
+                {"off"}
+                if selector == "blur"
+                else {
+                    "off",
+                    "color",
+                    "opacity",
+                    "blur-radius",
+                    "spread",
+                    "offset-x",
+                    "offset-y",
+                }
+            )
+            unknown = set(rules[selector]) - allowed
+            if unknown:
+                raise SystemExit(f"waypie: unknown {selector} property: {min(unknown)}")
+            for name, value in rules[selector].items():
+                if name == "color":
+                    parse_color(value, name)
+                elif name == "opacity":
+                    parse_opacity(value)
+                elif name != "off":
+                    number = parse_signed_pixels(value, name)
+                    limit = 4096 if name.startswith("offset-") else 256
+                    if abs(number) > limit or (name == "blur-radius" and number < 0):
+                        raise SystemExit(
+                            f"waypie: shadow {name} must be between "
+                            f"{0 if name == 'blur-radius' else -limit} and {limit}px"
+                        )
+        elif selector == "animation":
             unknown = set(rules[selector]) - ANIMATION_PROPERTIES
             if unknown:
                 raise SystemExit(f"waypie: unknown animation property: {min(unknown)}")

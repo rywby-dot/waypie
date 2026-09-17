@@ -1,11 +1,13 @@
 pub mod animation;
 pub mod app;
 mod appearance;
+mod blur;
 pub mod config;
 mod frame;
 pub mod geometry;
 pub mod hover;
 pub mod model;
 pub mod render;
+mod shadow;
 pub mod style;
 pub mod visual;

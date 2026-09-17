@@ -218,6 +218,7 @@ fn run() -> Result<()> {
         cli.style_path.clone(),
         qh,
     );
+    app.bind_background_effect(&globals);
     app.begin_show(activation_token)?;
     event_queue.roundtrip(&mut app)?;
     conn.flush()?;

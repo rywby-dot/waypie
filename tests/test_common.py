@@ -24,11 +24,38 @@ from waypie_common import (
     sort_icon_themes,
     spring_duration,
     spring_value,
+    validate_styles,
     wrap_text_to_widths,
 )
 
 
 class AlternatePathTests(unittest.TestCase):
+    def test_background_effect_styles_are_accepted(self):
+        validate_styles(
+            {
+                "blur": {},
+                "shadow": {
+                    "offset-x": "-4px",
+                    "spread": "-2px",
+                    "blur-radius": "12px",
+                    "opacity": "0.35",
+                    "color": "#000000",
+                },
+            }
+        )
+        validate_styles({"blur": {"off": "true"}, "shadow": {"off": "true"}})
+
+    def test_invalid_background_effect_styles_are_rejected(self):
+        for rules in [
+            {"blur": {"passes": "3"}},
+            {"shadow": {"blur-radius": "-1px"}},
+            {"shadow": {"spread": "NaN"}},
+            {"shadow": {"offset-x": "4097px"}},
+            {"shadow": {"opacity": "1.1"}},
+        ]:
+            with self.subTest(rules=rules), self.assertRaises(SystemExit):
+                validate_styles(rules)
+
     def test_bundled_configs_are_valid_for_the_configurator(self):
         root = Path(__file__).resolve().parents[1]
         configs = sorted(

@@ -88,6 +88,34 @@ pub struct CircleStyle {
     pub width: Option<f64>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowStyle {
+    pub color: Color,
+    pub opacity: f64,
+    pub blur_radius: f64,
+    pub spread: f64,
+    pub offset_x: f64,
+    pub offset_y: f64,
+}
+
+impl Default for ShadowStyle {
+    fn default() -> Self {
+        Self {
+            color: Color {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 1.0,
+            },
+            opacity: 0.35,
+            blur_radius: 12.0,
+            spread: 0.0,
+            offset_x: 0.0,
+            offset_y: 4.0,
+        }
+    }
+}
+
 impl Default for CircleStyle {
     fn default() -> Self {
         Self {
@@ -200,6 +228,14 @@ impl StyleSheet {
 
     fn validate(&self) -> Result<()> {
         for (selector, properties) in &self.rules {
+            if selector == "blur" {
+                self.blur_enabled()?;
+                continue;
+            }
+            if selector == "shadow" {
+                self.shadow()?;
+                continue;
+            }
             if selector == "animation" {
                 for name in properties.keys() {
                     if !is_animation_property(name) {
@@ -279,6 +315,50 @@ impl StyleSheet {
 
     pub fn color_style(&self, selector: &str) -> Result<CircleStyle> {
         self.circle(&[selector])
+    }
+
+    pub fn blur_enabled(&self) -> Result<bool> {
+        let Some(rule) = self.rules.get("blur") else {
+            return Ok(false);
+        };
+        for name in rule.keys() {
+            if name != "off" {
+                bail!(
+                    "unknown blur property: {name}; blur strength is configured in the compositor"
+                );
+            }
+        }
+        Ok(!rule.contains_key("off"))
+    }
+
+    pub fn shadow(&self) -> Result<Option<ShadowStyle>> {
+        let Some(rule) = self.rules.get("shadow") else {
+            return Ok(None);
+        };
+        let mut style = ShadowStyle::default();
+        for (name, value) in rule {
+            match name.as_str() {
+                "off" => {}
+                "color" => style.color = parse_color(value, name)?,
+                "opacity" => style.opacity = parse_opacity(value, name)?,
+                "blur-radius" => style.blur_radius = parse_signed_pixels(value, name)?,
+                "spread" => style.spread = parse_signed_pixels(value, name)?,
+                "offset-x" => style.offset_x = parse_signed_pixels(value, name)?,
+                "offset-y" => style.offset_y = parse_signed_pixels(value, name)?,
+                _ => bail!("unknown shadow property: {name}"),
+            }
+        }
+        if !(0.0..=256.0).contains(&style.blur_radius)
+            || style.spread.abs() > 256.0
+            || style.offset_x.abs() > 4096.0
+            || style.offset_y.abs() > 4096.0
+        {
+            bail!("shadow blur-radius must be 0..256px; spread -256..256px; offsets -4096..4096px");
+        }
+        Ok(
+            (!rule.contains_key("off") && style.opacity > 0.0 && style.color.alpha > 0.0)
+                .then_some(style),
+        )
     }
 
     pub fn item_key(&self, active: bool) -> Result<ItemKeyStyle> {
@@ -778,6 +858,36 @@ fn parse_duration(value: &str, name: &str) -> Result<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effects_are_opt_in_and_off_wins() {
+        let sheet = StyleSheet::parse("");
+        assert!(!sheet.blur_enabled().unwrap());
+        assert!(sheet.shadow().unwrap().is_none());
+        let sheet = StyleSheet::parse("blur {} shadow { offset-x: -4px; spread: -2px; }");
+        sheet.validate().unwrap();
+        assert!(sheet.blur_enabled().unwrap());
+        assert_eq!(sheet.shadow().unwrap().unwrap().offset_x, -4.0);
+        let sheet = StyleSheet::parse("blur { off } shadow { off\n opacity: 1; }");
+        assert!(!sheet.blur_enabled().unwrap());
+        assert!(sheet.shadow().unwrap().is_none());
+    }
+
+    #[test]
+    fn invalid_effect_values_are_rejected() {
+        for source in [
+            "blur { size: 8; }",
+            "shadow { blur-radius: -1px; }",
+            "shadow { spread: NaN; }",
+            "shadow { offset-x: inf; }",
+            "shadow { blur-radius: 257px; }",
+            "shadow { offset-y: 4097px; }",
+            "shadow { opacity: 1.1; }",
+            "shadow { passes: 3; }",
+        ] {
+            assert!(StyleSheet::parse(source).validate().is_err(), "{source}");
+        }
+    }
 
     #[test]
     fn bundled_styles_are_valid() {
