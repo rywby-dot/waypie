@@ -1,6 +1,7 @@
 import json
 import math
 import re
+import shutil
 import time
 import tomllib
 from dataclasses import dataclass, field
@@ -254,6 +255,30 @@ def load_config(path=CONFIG_PATH):
         configurator_show_icons,
         root,
     )
+
+
+def write_config(path, text):
+    path = Path(path)
+    temporary = None
+    try:
+        target = path.resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Stage next to the resolved target for same-filesystem replace,
+        # while keeping .bak alongside path out of symlinked repos.
+        temporary = target.with_name(f".{target.name}.tmp")
+        temporary.write_text(text, encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        backup = path.with_name(f"{path.name}.bak")
+        if target.exists() and not backup.exists():
+            shutil.copy2(target, backup)
+        temporary.replace(target)
+    except Exception:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
 
 
 def parse_item(source, location, root=False):

@@ -2,7 +2,6 @@ import argparse
 import copy
 import json
 import math
-import shutil
 import sys
 from collections import OrderedDict
 from pathlib import Path
@@ -51,6 +50,7 @@ from waypie_common import (
     spring_duration,
     spring_value,
     theme_icons,
+    write_config,
 )
 
 ALIGNMENT_ANGLES = tuple(range(0, 360, 5))
@@ -2222,17 +2222,7 @@ class Configurator(Gtk.Application):
             validate_activation_keys(self.settings.back_keys, "back-keys")
             parse_key_sets(self.settings.autogenerate_key_sets)
             validate_editable_tree(self.settings.root)
-            text = serialize_config(self.settings)
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            backup = self.config_path.with_name(f"{self.config_path.name}.bak")
-            if self.config_path.exists() and not backup.exists():
-                shutil.copy2(
-                    self.config_path,
-                    backup,
-                )
-            temporary = self.config_path.with_name(f".{self.config_path.name}.tmp")
-            temporary.write_text(text, encoding="utf-8")
-            temporary.replace(self.config_path)
+            write_config(self.config_path, serialize_config(self.settings))
         except (OSError, ValueError, SystemExit) as error:
             self.set_status(str(error), error=True)
             return
