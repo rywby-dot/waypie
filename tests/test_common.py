@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,7 @@ from waypie_common import (
     spring_value,
     validate_styles,
     wrap_text_to_widths,
+    write_config,
 )
 
 
@@ -95,6 +97,125 @@ class AlternatePathTests(unittest.TestCase):
 
             with self.assertRaises(SystemExit):
                 load_config(path)
+
+
+class ConfigWriteTests(unittest.TestCase):
+    def test_regular_save_creates_backup_once_and_replaces_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config"
+            config_path.write_text('[menu]\nlabel = "First"\n', encoding="utf-8")
+
+            write_config(config_path, '[menu]\nlabel = "Second"\n')
+            write_config(config_path, '[menu]\nlabel = "Third"\n')
+
+            self.assertFalse(config_path.is_symlink())
+            self.assertEqual(
+                config_path.read_text(encoding="utf-8"),
+                '[menu]\nlabel = "Third"\n',
+            )
+            self.assertEqual(
+                (Path(directory) / "config.bak").read_text(encoding="utf-8"),
+                '[menu]\nlabel = "First"\n',
+            )
+            self.assertFalse((Path(directory) / ".config.tmp").exists())
+
+    def test_symlink_chain_is_preserved_and_backup_stays_beside_config_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_dir = root / "dotfiles"
+            repo_dir.mkdir()
+            target_path = repo_dir / "config.toml"
+            target_path.write_text('[menu]\nlabel = "Initial"\n', encoding="utf-8")
+
+            hop_path = root / "intermediate-link"
+            hop_path.symlink_to(target_path)
+
+            xdg_dir = root / "xdg"
+            xdg_dir.mkdir()
+            config_path = xdg_dir / "config"
+            config_path.symlink_to(hop_path)
+
+            write_config(config_path, '[menu]\nlabel = "Updated"\n')
+
+            self.assertTrue(config_path.is_symlink())
+            self.assertTrue(hop_path.is_symlink())
+            self.assertEqual(
+                target_path.read_text(encoding="utf-8"),
+                '[menu]\nlabel = "Updated"\n',
+            )
+            self.assertEqual(
+                (xdg_dir / "config.bak").read_text(encoding="utf-8"),
+                '[menu]\nlabel = "Initial"\n',
+            )
+            self.assertFalse((repo_dir / "config.toml.bak").exists())
+            self.assertFalse((repo_dir / ".config.toml.tmp").exists())
+
+    def test_dangling_symlink_creates_target_without_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_path = root / "dotfiles" / "nested" / "config.toml"
+            xdg_dir = root / "xdg"
+            xdg_dir.mkdir()
+            config_path = xdg_dir / "config"
+            config_path.symlink_to(target_path)
+
+            write_config(config_path, '[menu]\nlabel = "Created"\n')
+
+            self.assertTrue(config_path.is_symlink())
+            self.assertEqual(
+                target_path.read_text(encoding="utf-8"),
+                '[menu]\nlabel = "Created"\n',
+            )
+            self.assertFalse((xdg_dir / "config.bak").exists())
+
+    @unittest.skipIf(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        "root bypasses directory write permissions",
+    )
+    def test_failed_save_leaves_no_temporary_or_orphaned_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ro_dir = root / "readonly"
+            ro_dir.mkdir()
+            ro_target = ro_dir / "config.toml"
+            ro_target.write_text('[menu]\nlabel = "Readonly"\n', encoding="utf-8")
+            xdg_dir = root / "xdg"
+            xdg_dir.mkdir()
+            config_path = xdg_dir / "config"
+            config_path.symlink_to(ro_target)
+            ro_dir.chmod(0o555)
+            try:
+                with self.assertRaises(OSError):
+                    write_config(config_path, '[menu]\nlabel = "Blocked"\n')
+            finally:
+                ro_dir.chmod(0o755)
+
+            self.assertTrue(config_path.is_symlink())
+            self.assertFalse((xdg_dir / "config.bak").exists())
+            self.assertFalse((ro_dir / ".config.toml.tmp").exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_dir = root / "dotfiles"
+            repo_dir.mkdir()
+            target_path = repo_dir / "config.toml"
+            target_path.write_text('[menu]\nlabel = "Initial"\n', encoding="utf-8")
+            xdg_dir = root / "xdg"
+            xdg_dir.mkdir()
+            config_path = xdg_dir / "config"
+            config_path.symlink_to(target_path)
+            xdg_dir.chmod(0o555)
+            try:
+                with self.assertRaises(OSError):
+                    write_config(config_path, '[menu]\nlabel = "Blocked"\n')
+            finally:
+                xdg_dir.chmod(0o755)
+
+            self.assertEqual(
+                target_path.read_text(encoding="utf-8"),
+                '[menu]\nlabel = "Initial"\n',
+            )
+            self.assertFalse((repo_dir / ".config.toml.tmp").exists())
 
 
 class FakeSvgPath:
